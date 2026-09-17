@@ -1,0 +1,14 @@
+[package]
+name = "dental-canvas"
+version = "1.0.0"
+description = "Dental Canvas - Chamber Management System"
+edition = "2021"
+rust-version = "1.77.2"
+license = "MIT"
+default-run = "dental-canvas"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
