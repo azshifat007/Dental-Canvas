@@ -22,11 +22,49 @@ export interface PracticeSettings {
   slot_minutes: number;
 }
 
+/** Auto-backup schedule (see src/client/hooks/use-auto-backup.ts). */
+export interface BackupSchedule {
+  auto_backup_interval_minutes: number;
+  auto_backup_keep: number;
+}
+
+/** Practice profile (doctor identity) shown on the dashboard and editable in Settings → Profile. */
+export interface ProfileSettings {
+  doctor_name: string;
+  doctor_specialty: string;
+  clinic_name: string;
+  doctor_email: string;
+  doctor_phone: string;
+  doctor_license: string;
+  clinic_address: string;
+}
+
 const DEFAULT_SETTINGS: PracticeSettings = {
   day_start_minute: 7 * 60,
   day_end_minute: 19 * 60,
   slot_minutes: 15,
 };
+
+export const DEFAULT_PROFILE: ProfileSettings = {
+  doctor_name: "",
+  doctor_specialty: "Dentist",
+  clinic_name: "",
+  doctor_email: "",
+  doctor_phone: "",
+  doctor_license: "",
+  clinic_address: "",
+};
+
+const PROFILE_KEYS = Object.keys(DEFAULT_PROFILE) as (keyof ProfileSettings)[];
+
+function parseBackupSchedule(raw: Record<string, string>): BackupSchedule {
+  const interval = parseInt(raw.auto_backup_interval_minutes, 10);
+  const keep = parseInt(raw.auto_backup_keep, 10);
+  return {
+    auto_backup_interval_minutes: Number.isFinite(interval) && interval >= 0 ? interval : 0,
+    auto_backup_keep: Number.isFinite(keep) && keep >= 1 ? Math.min(keep, 100) : 10,
+  };
+}
 
 function parseSettings(raw: Record<string, string>): PracticeSettings {
   const num = (key: keyof PracticeSettings) => {
@@ -40,6 +78,14 @@ function parseSettings(raw: Record<string, string>): PracticeSettings {
   };
 }
 
+function parseProfile(raw: Record<string, string>): ProfileSettings {
+  const out = { ...DEFAULT_PROFILE };
+  for (const k of PROFILE_KEYS) {
+    if (typeof raw[k] === "string") out[k] = raw[k];
+  }
+  return out;
+}
+
 export function useAppState() {
   const [operatories, setOperatories] = useState<Operatory[]>([]);
   const [practitioners, setPractitioners] = useState<Practitioner[]>([]);
@@ -48,6 +94,11 @@ export function useAppState() {
   const [waitingList, setWaitingList] = useState<WaitingListEntry[]>([]);
   const [appointmentsToMake, setAppointmentsToMake] = useState<AppointmentToMake[]>([]);
   const [settings, setSettings] = useState<PracticeSettings>(DEFAULT_SETTINGS);
+  const [profile, setProfile] = useState<ProfileSettings>(DEFAULT_PROFILE);
+  const [backupSchedule, setBackupSchedule] = useState<BackupSchedule>({
+    auto_backup_interval_minutes: 0,
+    auto_backup_keep: 10,
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -62,6 +113,26 @@ export function useAppState() {
     setPractitioners(prs.practitioners);
     setTreatmentTypes(tts.treatment_types);
     setSettings(parseSettings(st.settings));
+    setProfile(parseProfile(st.settings));
+    setBackupSchedule(parseBackupSchedule(st.settings));
+  }, []);
+
+  const updateBackupSchedule = useCallback(async (patch: Partial<BackupSchedule>) => {
+    const body: Record<string, string> = {};
+    for (const [k, v] of Object.entries(patch)) {
+      if (v !== undefined) body[k] = String(v);
+    }
+    const res = await api<{ settings: Record<string, string> }>("PUT", "/api/settings", body);
+    setBackupSchedule(parseBackupSchedule(res.settings));
+  }, []);
+
+  const updateProfile = useCallback(async (patch: Partial<ProfileSettings>) => {
+    const body: Record<string, string> = {};
+    for (const [k, v] of Object.entries(patch)) {
+      if (v !== undefined) body[k] = String(v);
+    }
+    const res = await api<{ settings: Record<string, string> }>("PUT", "/api/settings", body);
+    setProfile(parseProfile(res.settings));
   }, []);
 
   const updateSettings = useCallback(async (patch: Partial<PracticeSettings>) => {
@@ -136,7 +207,7 @@ export function useAppState() {
     // data
     operatories, practitioners, treatmentTypes, appointments,
     waitingList, appointmentsToMake,
-    settings,
+    settings, profile, backupSchedule,
     loading, error,
     setError,
     // refresh
@@ -144,7 +215,7 @@ export function useAppState() {
     // mutations
     createAppointment, updateAppointment, deleteAppointment,
     searchPatients, createPatient,
-    updateSettings,
+    updateSettings, updateProfile, updateBackupSchedule,
   };
 }
 

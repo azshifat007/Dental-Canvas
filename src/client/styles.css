@@ -6,7 +6,9 @@
 /* Color tokens for appointment cards / badges referenced dynamically. Keeping
    them in @source ensures Tailwind emits utilities even though class names are
    composed at runtime. */
-@source inline("{bg,text,ring,border}-{sky,rose,amber,emerald,violet,fuchsia,teal,orange,slate}-{50,100,200,300,400,500,600,700,800}");
+@source inline("{bg,text,ring,border}-{sky,rose,amber,emerald,violet,fuchsia,teal,orange,slate}-{50,100,200,300,400,500,600,700,800,900}");
+/* Dark variants of the same tokens (composed at runtime by colorClasses etc.). */
+@source inline("dark:{bg,text,ring,border}-{sky,rose,amber,emerald,violet,fuchsia,teal,orange,slate}-{50,100,200,300,400,500,600,700,800,900}");
 
 @theme inline {
   --color-background: var(--background);
@@ -67,23 +69,65 @@
   --sidebar-border: oklch(0.91 0.01 220);
 }
 
+/* Dark palette — activated by the .dark class on <html> (see use-theme.ts).
+   Keeps the teal/cyan clinical hue on near-black surfaces so the appointment
+   color badges retain their identity without glare. */
+.dark {
+  --background: oklch(0.16 0.01 240);
+  --foreground: oklch(0.93 0.005 240);
+  --card: oklch(0.2 0.012 240);
+  --card-foreground: oklch(0.93 0.005 240);
+  --popover: oklch(0.21 0.012 240);
+  --popover-foreground: oklch(0.93 0.005 240);
+  --primary: oklch(0.72 0.12 195);
+  --primary-foreground: oklch(0.16 0.02 240);
+  --secondary: oklch(0.26 0.015 240);
+  --secondary-foreground: oklch(0.93 0.01 240);
+  --muted: oklch(0.26 0.012 240);
+  --muted-foreground: oklch(0.65 0.02 240);
+  --accent: oklch(0.3 0.03 195);
+  --accent-foreground: oklch(0.88 0.04 195);
+  --destructive: oklch(0.65 0.2 27);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: oklch(0.3 0.015 240);
+  --input: oklch(0.3 0.015 240);
+  --ring: oklch(0.72 0.12 195);
+  --sidebar: oklch(0.18 0.012 240);
+  --sidebar-foreground: oklch(0.9 0.005 240);
+  --sidebar-accent: oklch(0.28 0.03 195);
+  --sidebar-accent-foreground: oklch(0.88 0.04 195);
+  --sidebar-border: oklch(0.28 0.015 240);
+}
+
 @layer base {
   * { @apply border-border; }
+  /* Explicit, not `light dark`: the theme hook (and the no-flash script in
+     index.html) always apply .dark before paint, so the used scheme must not
+     drift with the OS while a manual light theme is selected. */
+  html { color-scheme: light; }
+  .dark { color-scheme: dark; }
   body {
     @apply bg-background text-foreground;
     font-family: "Inter", system-ui, -apple-system, sans-serif;
   }
 }
 
-/* Striped pattern used for past/closed time slots in the agenda */
+/* Striped pattern used for past/closed time slots in the agenda.
+   The stripe color is a variable (not light-dark()) so the gradient survives
+   in browsers without light-dark() support. */
 .agenda-stripes {
+  --stripe-color: rgb(0 0 0 / 0.03);
   background-image: repeating-linear-gradient(
     -45deg,
     transparent 0,
     transparent 8px,
-    rgb(0 0 0 / 0.03) 8px,
-    rgb(0 0 0 / 0.03) 9px
+    var(--stripe-color) 8px,
+    var(--stripe-color) 9px
   );
+}
+
+.dark .agenda-stripes {
+  --stripe-color: rgb(255 255 255 / 0.05);
 }
 
 /* react-odontogram: suppress the browser focus ring on tooth <g> elements.

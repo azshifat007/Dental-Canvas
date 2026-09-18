@@ -1,5 +1,38 @@
 // ── Core entities ──────────────────────────────────────────────────
 
+export type PrescriptionTemplate = "classic" | "modern" | "compact" | "elegant" | "minimal" | "bold" | "watermark";
+
+export interface PrescriptionItem {
+  id?: number;
+  drug_name: string;
+  dosage?: string | null;
+  frequency?: string | null;
+  duration?: string | null;
+  instructions?: string | null;
+  sort_order?: number;
+}
+
+export interface Prescription {
+  id: number;
+  patient_id: number;
+  practitioner_id: number | null;
+  issued_date: string;
+  template: PrescriptionTemplate;
+  diagnosis: string | null;
+  advice: string | null;
+  follow_up: string | null;
+  share_token: string | null;
+  share_revoked: number;
+  created_at: string;
+  practitioner_name?: string | null;
+  item_count?: number;
+  items?: PrescriptionItem[];
+  patient_first_name?: string | null;
+  patient_last_name?: string | null;
+  patient_date_of_birth?: string | null;
+  patient_medical_alerts?: string | null;
+}
+
 export interface Operatory {
   id: number;
   name: string;
@@ -146,6 +179,29 @@ export interface Invoice {
   total: number;
   amount_paid: number;
   notes: string | null;
+  /** Computed by the API: total - amount_paid. */
+  balance?: number;
+}
+
+export type PaymentMethod = "cash" | "card" | "transfer" | "insurance" | "other";
+
+export interface InvoiceItem {
+  id?: number;
+  invoice_id?: number;
+  treatment_type_id?: number | null;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  sort_order?: number;
+}
+
+export interface InvoicePayment {
+  id: number;
+  invoice_id: number;
+  amount: number;
+  method: PaymentMethod;
+  paid_at: string;
+  note: string | null;
 }
 
 export interface WaitingListEntry {

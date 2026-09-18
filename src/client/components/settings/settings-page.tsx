@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
-import { Plus, Trash2, Pencil, Check, X, Clock } from "lucide-react";
+import { Plus, Trash2, Pencil, Check, X, Clock, UserRound, DatabaseBackup, Palette, Monitor, Sun, Moon } from "lucide-react";
 import { useApp } from "@/context";
 import { api } from "@/api";
+import { BackupTab } from "./backup-tab";
+import { useTheme, type ThemePreference } from "@/hooks/use-theme";
+import { cn, colorClasses } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { cn, colorClasses } from "@/lib/utils";
 import type { Operatory, Practitioner, PractitionerRole, TreatmentType } from "@/types";
 
 const COLOR_TOKENS = ["sky", "emerald", "amber", "rose", "violet", "fuchsia", "teal", "orange", "slate"] as const;
@@ -21,13 +23,24 @@ export function SettingsPage() {
         <h1 className="text-lg font-semibold tracking-tight">Settings</h1>
       </div>
       <div className="flex-1 overflow-auto p-4">
-        <Tabs defaultValue="operatories">
+        <Tabs defaultValue="profile">
           <TabsList>
+            <TabsTrigger value="profile">Profile</TabsTrigger>
+            <TabsTrigger value="appearance">Appearance</TabsTrigger>
             <TabsTrigger value="operatories">Operatories</TabsTrigger>
             <TabsTrigger value="practitioners">Practitioners</TabsTrigger>
             <TabsTrigger value="treatments">Treatment types</TabsTrigger>
             <TabsTrigger value="hours">Hours</TabsTrigger>
+            <TabsTrigger value="backup" className="gap-1.5">
+              <DatabaseBackup className="h-3.5 w-3.5" /> Backup
+            </TabsTrigger>
           </TabsList>
+          <TabsContent value="profile" className="mt-4">
+            <ProfileTab />
+          </TabsContent>
+          <TabsContent value="appearance" className="mt-4">
+            <AppearanceTab />
+          </TabsContent>
           <TabsContent value="operatories" className="mt-4">
             <OperatoriesTab />
           </TabsContent>
@@ -40,9 +53,175 @@ export function SettingsPage() {
           <TabsContent value="hours" className="mt-4">
             <HoursTab />
           </TabsContent>
+          <TabsContent value="backup" className="mt-4">
+            <BackupTab />
+          </TabsContent>
         </Tabs>
       </div>
     </div>
+  );
+}
+
+// ── Profile (doctor identity) ──────────────────────────────────────
+
+function ProfileTab() {
+  const app = useApp();
+  const [form, setForm] = useState(app.profile);
+  const [busy, setBusy] = useState(false);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  useEffect(() => {
+    setForm(app.profile);
+  }, [app.profile]);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.doctor_name.trim()) {
+      app.setError("Doctor name is required so the dashboard greeting can address you.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await app.updateProfile({
+        doctor_name: form.doctor_name.trim(),
+        doctor_specialty: form.doctor_specialty.trim(),
+        clinic_name: form.clinic_name.trim(),
+        doctor_email: form.doctor_email.trim(),
+        doctor_phone: form.doctor_phone.trim(),
+        doctor_license: form.doctor_license.trim(),
+        clinic_address: form.clinic_address.trim(),
+      });
+      setSavedAt(Date.now());
+    } catch (err) {
+      app.setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <UserRound className="h-4 w-4" />
+          Doctor profile
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Shown on the dashboard greeting and avatar. The name appears as “Dr. &lt;name&gt;” automatically.
+        </p>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={save} className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <FieldGroup label="Doctor name *">
+            <Input
+              value={form.doctor_name}
+              onChange={(e) => setForm({ ...form, doctor_name: e.target.value })}
+              placeholder="e.g. Sarah"
+              required
+            />
+          </FieldGroup>
+          <FieldGroup label="Specialty">
+            <Input
+              value={form.doctor_specialty}
+              onChange={(e) => setForm({ ...form, doctor_specialty: e.target.value })}
+              placeholder="e.g. Orthodontist"
+            />
+          </FieldGroup>
+          <FieldGroup label="Clinic name">
+            <Input
+              value={form.clinic_name}
+              onChange={(e) => setForm({ ...form, clinic_name: e.target.value })}
+              placeholder="e.g. Bright Smile Dental"
+            />
+          </FieldGroup>
+          <FieldGroup label="Email">
+            <Input
+              type="email"
+              value={form.doctor_email}
+              onChange={(e) => setForm({ ...form, doctor_email: e.target.value })}
+              placeholder="dr.sarah@clinic.com"
+            />
+          </FieldGroup>
+          <FieldGroup label="Phone">
+            <Input
+              type="tel"
+              value={form.doctor_phone}
+              onChange={(e) => setForm({ ...form, doctor_phone: e.target.value })}
+              placeholder="+1 555 010 2030"
+            />
+          </FieldGroup>
+          <FieldGroup label="License no. (prescriptions)">
+            <Input
+              value={form.doctor_license}
+              onChange={(e) => setForm({ ...form, doctor_license: e.target.value })}
+              placeholder="e.g. DDS-102938"
+            />
+          </FieldGroup>
+          <FieldGroup label="Clinic address (prescriptions)">
+            <Input
+              value={form.clinic_address}
+              onChange={(e) => setForm({ ...form, clinic_address: e.target.value })}
+              placeholder="123 Main St, Springfield"
+            />
+          </FieldGroup>
+          <div className="flex items-center gap-3">
+            <Button type="submit" disabled={busy}>
+              {busy ? "Saving…" : "Save profile"}
+            </Button>
+            {savedAt && <span className="text-xs text-emerald-700">Saved ✓</span>}
+          </div>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Appearance (theme) ─────────────────────────────────────────────
+
+function AppearanceTab() {
+  const { pref, setTheme } = useTheme();
+  const options: { value: ThemePreference; label: string; description: string; icon: typeof Monitor }[] = [
+    { value: "system", label: "System", description: "Follow the OS setting automatically", icon: Monitor },
+    { value: "light", label: "Light", description: "Always use the light theme", icon: Sun },
+    { value: "dark", label: "Dark", description: "Always use the dark theme", icon: Moon },
+  ];
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Palette className="h-4 w-4" />
+          Theme
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          “System” follows your device's dark mode and switches instantly when it changes. Your choice is remembered per browser.
+        </p>
+      </CardHeader>
+      <CardContent>
+        <div className="grid gap-3 sm:grid-cols-3">
+          {options.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              onClick={() => setTheme(o.value)}
+              aria-pressed={pref === o.value}
+              className={cn(
+                "flex flex-col gap-1 rounded-lg border p-3 text-left transition-colors",
+                pref === o.value
+                  ? "border-primary bg-accent/50 ring-1 ring-primary"
+                  : "hover:bg-accent/30",
+              )}
+            >
+              <span className="flex items-center gap-2 text-sm font-medium">
+                <o.icon className="h-4 w-4" />
+                {o.label}
+              </span>
+              <span className="text-xs text-muted-foreground">{o.description}</span>
+            </button>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

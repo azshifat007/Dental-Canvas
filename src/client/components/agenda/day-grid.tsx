@@ -72,11 +72,11 @@ export function DayGrid({ date, operatories, appointments, onSlotClick, onAppoin
   }
 
   return (
-    <div className="relative flex-1 overflow-auto bg-white">
+    <div className="relative flex-1 overflow-auto bg-white dark:bg-background">
       <div className="flex min-w-fit">
         {/* Hour gutter */}
-        <div className="sticky left-0 z-20 w-16 shrink-0 bg-white">
-          <div className="sticky top-0 z-10 border-b border-border/50 bg-white" style={{ height: HEADER_H }} />
+        <div className="sticky left-0 z-20 w-16 shrink-0 bg-white dark:bg-card">
+          <div className="sticky top-0 z-10 border-b border-border/50 bg-white dark:bg-card" style={{ height: HEADER_H }} />
           <div className="relative" style={{ height: totalHeight }}>
             {hourLabels.map(({ hour, topPx }) => (
               <div
@@ -98,11 +98,11 @@ export function DayGrid({ date, operatories, appointments, onSlotClick, onAppoin
           return (
             <div
               key={op.id}
-              className={cn("flex w-56 shrink-0 flex-col bg-white", !isFirst && "border-l border-border/50")}
+              className={cn("flex w-56 shrink-0 flex-col bg-white dark:bg-card", !isFirst && "border-l border-border/50")}
             >
               {/* Header */}
               <div
-                className="sticky top-0 z-10 flex flex-col justify-center border-b border-border/50 bg-white px-4"
+                className="sticky top-0 z-10 flex flex-col justify-center border-b border-border/50 bg-white dark:bg-card px-4"
                 style={{ height: HEADER_H }}
               >
                 <div className="flex items-center gap-2">
@@ -187,8 +187,8 @@ export function DayGrid({ date, operatories, appointments, onSlotClick, onAppoin
 
         {/* Filler column — fills any remaining horizontal space when there are
             few operatories so the right side reads as the same canvas. */}
-        <div className="flex min-w-0 flex-1 flex-col border-l border-border/50 bg-white">
-          <div className="sticky top-0 z-10 border-b border-border/50 bg-white" style={{ height: HEADER_H }} />
+        <div className="flex min-w-0 flex-1 flex-col border-l border-border/50 bg-white dark:bg-background">
+          <div className="sticky top-0 z-10 border-b border-border/50 bg-white dark:bg-card" style={{ height: HEADER_H }} />
           <div className="relative" style={{ height: totalHeight }}>
             {hourLabels.map(({ hour, topPx }) => (
               <div

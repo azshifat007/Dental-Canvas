@@ -9,7 +9,11 @@ import { AgendaSidePanel } from "./side-panel";
 
 export function AgendaPage() {
   const app = useApp();
-  const [date, setDate] = useState<string>(() => toIsoDate(new Date()));
+  // Accepts an optional ?date=YYYY-MM-DD (e.g. from the dashboard calendar).
+  const [date, setDate] = useState<string>(() => {
+    const q = new URLSearchParams(window.location.search).get("date");
+    return q && /^\d{4}-\d{2}-\d{2}$/.test(q) ? q : toIsoDate(new Date());
+  });
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Appointment | null>(null);
   const [defaults, setDefaults] = useState<{ operatoryId: number; minutesFromMidnight: number } | undefined>();

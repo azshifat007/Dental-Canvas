@@ -51,7 +51,7 @@ export function PatientOverview({ patient }: { patient: Patient }) {
           ) : (
             <div className="flex flex-wrap gap-2">
               {alerts.map((a) => (
-                <Badge key={a} variant="outline" className="border-amber-300 bg-amber-50 text-amber-900">
+                <Badge key={a} variant="outline" className="border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
                   {a}
                 </Badge>
               ))}

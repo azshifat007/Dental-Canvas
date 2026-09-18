@@ -1,19 +1,31 @@
 import { useState, useEffect, useCallback } from "react";
 
 export type Route =
+  | { name: "dashboard" }
   | { name: "agenda" }
   | { name: "patients" }
   | { name: "patient"; id: number }
+  | { name: "patient-prescription"; id: number; prescriptionId: number }
+  | { name: "patient-invoice"; id: number; invoiceId: number }
   | { name: "reports" }
   | { name: "lab" }
   | { name: "settings" }
+  | { name: "public-prescription"; token: string }
   | { name: "not-found" };
 
 function parse(path: string): Route {
-  if (path === "/" || path === "/agenda") return { name: "agenda" };
+  // Public share link — must win over every internal route.
+  const pub = path.match(/^\/p\/([a-f0-9]{16,64})$/);
+  if (pub) return { name: "public-prescription", token: pub[1] };
+  if (path === "/" || path === "/dashboard") return { name: "dashboard" };
+  if (path === "/agenda") return { name: "agenda" };
   if (path === "/patients") return { name: "patients" };
   const m = path.match(/^\/patients\/(\d+)$/);
   if (m) return { name: "patient", id: parseInt(m[1], 10) };
+  const rx = path.match(/^\/patients\/(\d+)\/prescriptions\/(\d+)$/);
+  if (rx) return { name: "patient-prescription", id: parseInt(rx[1], 10), prescriptionId: parseInt(rx[2], 10) };
+  const inv = path.match(/^\/patients\/(\d+)\/invoices\/(\d+)$/);
+  if (inv) return { name: "patient-invoice", id: parseInt(inv[1], 10), invoiceId: parseInt(inv[2], 10) };
   if (path === "/reports") return { name: "reports" };
   if (path === "/lab") return { name: "lab" };
   if (path === "/settings") return { name: "settings" };

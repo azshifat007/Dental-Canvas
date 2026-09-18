@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Search } from "lucide-react";
+import { Pencil, Plus, Search, UserPlus } from "lucide-react";
 import { useApp } from "@/context";
 import { api } from "@/api";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,9 @@ export function PatientsList({ navigate }: { navigate: (to: string) => void }) {
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [balances, setBalances] = useState<Record<string, number>>({});
+  /** Patient being quick-edited from its row; null = registering a new one. */
+  const [editing, setEditing] = useState<Patient | null>(null);
 
   // Debounced search
   useEffect(() => {
@@ -23,11 +26,18 @@ export function PatientsList({ navigate }: { navigate: (to: string) => void }) {
     const t = setTimeout(async () => {
       try {
         setLoading(true);
-        const res = await api<{ patients: Patient[] }>(
-          "GET",
-          q.trim() ? `/api/patients?q=${encodeURIComponent(q.trim())}` : "/api/patients",
-        );
-        if (!cancelled) setPatients(res.patients);
+        const [pRes, bRes] = await Promise.all([
+          api<{ patients: Patient[] }>(
+            "GET",
+            q.trim() ? `/api/patients?q=${encodeURIComponent(q.trim())}` : "/api/patients",
+          ),
+          // Balances come from the reports endpoint (open-invoice sums per patient).
+          api<{ balances: Record<string, number> }>("GET", "/api/reports/balances").catch(() => ({ balances: {} })),
+        ]);
+        if (!cancelled) {
+          setPatients(pRes.patients);
+          setBalances(bRes.balances ?? {});
+        }
       } catch (err) {
         if (!cancelled) app.setError((err as Error).message);
       } finally {
@@ -55,7 +65,13 @@ export function PatientsList({ navigate }: { navigate: (to: string) => void }) {
             className="pl-9"
           />
         </div>
-        <Button onClick={() => setDialogOpen(true)} size="sm">
+        <Button
+          onClick={() => {
+            setEditing(null);
+            setDialogOpen(true);
+          }}
+          size="sm"
+        >
           <Plus className="h-4 w-4" />
           New patient
         </Button>
@@ -80,10 +96,31 @@ export function PatientsList({ navigate }: { navigate: (to: string) => void }) {
                     Loading…
                   </TableCell>
                 </TableRow>
-              ) : visible.length === 0 ? (
+              ) : visible.length === 0 && !q ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-12 text-center">
+                    <div className="mx-auto flex max-w-sm flex-col items-center gap-3">
+                      <UserPlus className="h-8 w-8 text-muted-foreground/60" />
+                      <p className="text-sm text-muted-foreground">
+                        No patients yet. Register your first patient — a name is all it takes.
+                      </p>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          setEditing(null);
+                          setDialogOpen(true);
+                        }}
+                      >
+                        <Plus className="h-4 w-4" />
+                        Register patient
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ) : visible.length === 0 && q ? (
                 <TableRow>
                   <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
-                    {q ? "No patients match your search." : "No patients yet. Click “New patient” to add one."}
+                    No patients match your search.
                   </TableCell>
                 </TableRow>
               ) : (
@@ -91,7 +128,7 @@ export function PatientsList({ navigate }: { navigate: (to: string) => void }) {
                   <TableRow
                     key={p.id}
                     onClick={() => navigate(`/patients/${p.id}`)}
-                    className="cursor-pointer"
+                    className="group cursor-pointer"
                   >
                     <TableCell className="font-medium">
                       {p.last_name}, {p.first_name}
@@ -102,13 +139,38 @@ export function PatientsList({ navigate }: { navigate: (to: string) => void }) {
                     <TableCell className="text-muted-foreground">{p.email ?? "—"}</TableCell>
                     <TableCell className="text-muted-foreground">{p.phone ?? "—"}</TableCell>
                     <TableCell>
-                      {p.medical_alerts ? (
-                        <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-800">
-                          {p.medical_alerts.split(",").length} alert{p.medical_alerts.split(",").length === 1 ? "" : "s"}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {(balances[p.id] ?? 0) > 0 && (
+                          <span
+                            className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-800 dark:bg-rose-950 dark:text-rose-200"
+                            title="Outstanding balance"
+                          >
+                            owes {balances[p.id].toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 })}
+                          </span>
+                        )}
+                        <div className="flex items-center justify-between gap-2">
+                        {p.medical_alerts ? (
+                          <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-800 dark:bg-rose-950 dark:text-rose-200">
+                            {p.medical_alerts.split(",").length} alert{p.medical_alerts.split(",").length === 1 ? "" : "s"}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                        <button
+                          type="button"
+                          title="Quick edit"
+                          aria-label={`Quick edit ${p.first_name} ${p.last_name}`}
+                          className="rounded p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditing(p);
+                            setDialogOpen(true);
+                          }}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        </div>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))
@@ -118,14 +180,26 @@ export function PatientsList({ navigate }: { navigate: (to: string) => void }) {
         </Card>
       </div>
 
+      {/* Quick register / row quick-edit. Creating keeps you on the list; the
+          success screen offers “Open record” for when you do want to continue. */}
       <PatientDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        patient={null}
+        patient={editing}
         onSaved={(p) => {
-          setPatients((prev) => [p, ...prev]);
-          navigate(`/patients/${p.id}`);
+          setPatients((prev) => {
+            const rest = prev.filter((x) => x.id !== p.id);
+            // Keep the list's alphabetical order (server sorts by last, first).
+            const next = [...rest, p];
+            next.sort(
+              (a, b) =>
+                a.last_name.localeCompare(b.last_name) || a.first_name.localeCompare(b.first_name),
+            );
+            return next;
+          });
         }}
+        onOpenPatient={(p) => navigate(`/patients/${p.id}`)}
+        openPatientLabel="Open record"
       />
     </div>
   );

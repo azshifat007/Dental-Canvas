@@ -143,6 +143,21 @@ CREATE TABLE IF NOT EXISTS invoice_items (
 
 CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice ON invoice_items(invoice_id);
 
+-- ── Invoice payments ────────────────────────────────────────────
+-- Partial-payment ledger. `invoices.amount_paid` is derived: kept in sync by
+-- the payments API (sum of a payment rows), never written directly.
+CREATE TABLE IF NOT EXISTS invoice_payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+  amount REAL NOT NULL,
+  method TEXT NOT NULL DEFAULT 'cash', -- 'cash' | 'card' | 'transfer' | 'insurance' | 'other'
+  paid_at TEXT NOT NULL DEFAULT (datetime('now')),
+  note TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoice_payments_invoice ON invoice_payments(invoice_id);
+
 -- ── Waiting list ────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS waiting_list (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -211,6 +226,64 @@ CREATE TABLE IF NOT EXISTS appointments_to_make (
   status TEXT NOT NULL DEFAULT 'open',  -- 'open' | 'scheduled' | 'cancelled'
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ── Dentist notes (dashboard sticky notes) ─────────────────────
+CREATE TABLE IF NOT EXISTS dentist_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  body TEXT NOT NULL,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ── Backups (portable snapshots of every data table) ───────────
+-- Each row stores a complete JSON export of the practice data. `kind`
+-- distinguishes timer-driven auto backups from manual ones; `trigger` records
+-- what started it (timer, user, or a pre-import/pre-restore safety copy).
+CREATE TABLE IF NOT EXISTS backups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL DEFAULT 'auto',    -- 'auto' | 'manual'
+  trigger TEXT NOT NULL DEFAULT 'timer',-- 'timer' | 'user' | 'pre-import' | 'pre-restore'
+  payload TEXT NOT NULL,                -- full JSON export (see src/server/backup.ts)
+  table_counts TEXT,                    -- JSON map of table name → row count
+  size_bytes INTEGER,                   -- approximate payload size
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ── Prescriptions ──────────────────────────────────────────────
+-- A prescription is a named document owned by a patient, written by a
+-- practitioner, carrying a one-time share token for a public read-only view.
+CREATE TABLE IF NOT EXISTS prescriptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  practitioner_id INTEGER REFERENCES practitioners(id) ON DELETE SET NULL,
+  issued_date TEXT NOT NULL DEFAULT (date('now')),
+  template TEXT NOT NULL DEFAULT 'classic', -- 'classic' | 'modern' | 'compact'
+  diagnosis TEXT,
+  advice TEXT,                          -- general instructions to the patient
+  follow_up TEXT,                       -- e.g. 'Recheck in 2 weeks'
+  share_token TEXT UNIQUE,              -- null = not shared
+  share_revoked INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_rx_patient ON prescriptions(patient_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rx_token ON prescriptions(share_token) WHERE share_token IS NOT NULL;
+
+-- Medication rows. Dosing is free-text (e.g. '1 tab TDS x 5 days') because
+-- dental regimens vary too much for rigid dose/frequency columns.
+CREATE TABLE IF NOT EXISTS prescription_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  prescription_id INTEGER NOT NULL REFERENCES prescriptions(id) ON DELETE CASCADE,
+  drug_name TEXT NOT NULL,
+  dosage TEXT,                          -- e.g. '500 mg'
+  frequency TEXT,                       -- e.g. '3x daily', 'every 8 h'
+  duration TEXT,                        -- e.g. '5 days'
+  instructions TEXT,                    -- e.g. 'after meals'
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_rx_items_prescription ON prescription_items(prescription_id);
 
 -- ── Full-text search (FTS5) ────────────────────────────────────
 -- One inverted index across every searchable entity. `title` and `body` are the

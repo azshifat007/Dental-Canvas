@@ -13,10 +13,10 @@ import type { TreatmentPlanItem, TreatmentPlanStatus } from "@/types";
 
 const STATUSES: TreatmentPlanStatus[] = ["planned", "accepted", "completed", "declined"];
 const STATUS_STYLE: Record<TreatmentPlanStatus, string> = {
-  planned:   "bg-sky-100 text-sky-800 border-sky-200",
-  accepted:  "bg-emerald-100 text-emerald-800 border-emerald-200",
-  completed: "bg-slate-100 text-slate-700 border-slate-200",
-  declined:  "bg-rose-100 text-rose-800 border-rose-200",
+  planned:   "bg-sky-100 text-sky-800 border-sky-200 dark:bg-sky-950 dark:text-sky-200 dark:border-sky-800",
+  accepted:  "bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:border-emerald-800",
+  completed: "bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700",
+  declined:  "bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-200 dark:border-rose-800",
 };
 
 export function TreatmentPlan({ patientId }: { patientId: number }) {

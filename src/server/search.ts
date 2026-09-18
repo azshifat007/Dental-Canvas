@@ -106,6 +106,17 @@ async function rebuildType(type: SearchEntityType, sql: string): Promise<number>
   return rows.length;
 }
 
+/**
+ * Force the next search to rebuild the index. Used after a backup import
+ * replaces every row: clearing the DB marker alone is not enough because the
+ * per-isolate `backfilled` flag would still short-circuit the lazy backfill.
+ */
+export async function invalidateSearchIndex(): Promise<void> {
+  backfilled = false;
+  backfilling = null;
+  await run("DELETE FROM settings WHERE key = 'search_backfilled_v1'").catch(() => undefined);
+}
+
 async function backfillSearchIndex(): Promise<void> {
   for (const [type, sql] of BACKFILL_SQLS) {
     try {

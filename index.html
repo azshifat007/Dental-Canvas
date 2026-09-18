@@ -9,6 +9,25 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    // Apply the theme before first paint to avoid a light/dark flash.
+    // Mirrors src/client/hooks/use-theme.ts — keep the two in sync.
+    (function () {
+      try {
+        var pref = localStorage.getItem("dental-canvas:theme");
+        var dark =
+          pref === "dark" ||
+          (pref !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.classList.toggle("dark", dark);
+      } catch (e) {
+        /* no storage — fall back to system */
+        document.documentElement.classList.toggle(
+          "dark",
+          matchMedia("(prefers-color-scheme: dark)").matches
+        );
+      }
+    })();
+  </script>
 </head>
 <body>
   <div id="app"></div>

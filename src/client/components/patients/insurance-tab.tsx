@@ -14,9 +14,9 @@ import { cn, formatDate } from "@/lib/utils";
 import type { InsurancePlan, InsuranceRank } from "@/types";
 
 const RANK_STYLE: Record<InsuranceRank, string> = {
-  primary:   "bg-emerald-100 text-emerald-800 border-emerald-200",
-  secondary: "bg-sky-100 text-sky-800 border-sky-200",
-  tertiary:  "bg-violet-100 text-violet-800 border-violet-200",
+  primary:   "bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:border-emerald-800",
+  secondary: "bg-sky-100 text-sky-800 border-sky-200 dark:bg-sky-950 dark:text-sky-200 dark:border-sky-800",
+  tertiary:  "bg-violet-100 text-violet-800 border-violet-200 dark:bg-violet-950 dark:text-violet-200 dark:border-violet-800",
 };
 
 export function InsuranceTab({ patientId }: { patientId: number }) {

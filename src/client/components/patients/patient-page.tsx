@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Pencil, Trash2 } from "lucide-react";
+import { ArrowLeft, Pencil, Trash2, UserRound } from "lucide-react";
 import { api } from "@/api";
 import { useApp } from "@/context";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { TreatmentPlan } from "./treatment-plan";
 import { ClinicalNotes } from "./clinical-notes";
 import { Billing } from "./billing";
 import { InsuranceTab } from "./insurance-tab";
+import { PrescriptionsTab } from "@/components/prescriptions/prescriptions-tab";
 import { PatientDialog } from "./patient-dialog";
 
 interface Props {
@@ -70,6 +71,15 @@ export function PatientPage({ id, navigate }: Props) {
 
   const alerts = (patient.medical_alerts ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 
+  // Profile completeness — quick registrations skip most fields, so surface
+  // what's missing and offer a one-click way back into the edit dialog.
+  const missing: string[] = [];
+  if (!patient.date_of_birth) missing.push("date of birth");
+  if (!patient.phone) missing.push("phone");
+  if (!patient.email) missing.push("email");
+  if (!patient.address) missing.push("address");
+  const profileIncomplete = missing.length > 0;
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <div className="border-b bg-card px-4 py-3">
@@ -88,7 +98,7 @@ export function PatientPage({ id, navigate }: Props) {
               {alerts.length > 0 && (
                 <div className="flex flex-wrap gap-1">
                   {alerts.map((a) => (
-                    <Badge key={a} variant="outline" className="border-amber-300 bg-amber-50 text-[10px] text-amber-900">
+                    <Badge key={a} variant="outline" className="border-amber-300 bg-amber-50 text-[10px] text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
                       {a}
                     </Badge>
                   ))}
@@ -108,9 +118,22 @@ export function PatientPage({ id, navigate }: Props) {
       </div>
 
       <div className="flex-1 overflow-auto p-4">
+        {profileIncomplete && (
+          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-dashed bg-muted/40 px-4 py-3">
+            <UserRound className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">Profile is {100 - Math.round((missing.length / 4) * 100)}% complete.</span>{" "}
+              Missing: {missing.join(", ")}.
+            </p>
+            <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+              Complete profile
+            </Button>
+          </div>
+        )}
         <Tabs defaultValue="overview">
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="prescriptions">Prescriptions</TabsTrigger>
             <TabsTrigger value="insurance">Insurance</TabsTrigger>
             <TabsTrigger value="chart">Tooth Chart</TabsTrigger>
             <TabsTrigger value="plan">Treatment Plan</TabsTrigger>
@@ -119,6 +142,9 @@ export function PatientPage({ id, navigate }: Props) {
           </TabsList>
           <TabsContent value="overview" className="mt-4">
             <PatientOverview patient={patient} />
+          </TabsContent>
+          <TabsContent value="prescriptions" className="mt-4">
+            <PrescriptionsTab patientId={patient.id} navigate={navigate} />
           </TabsContent>
           <TabsContent value="insurance" className="mt-4">
             <InsuranceTab patientId={patient.id} />
@@ -133,7 +159,7 @@ export function PatientPage({ id, navigate }: Props) {
             <ClinicalNotes patientId={patient.id} />
           </TabsContent>
           <TabsContent value="billing" className="mt-4">
-            <Billing patientId={patient.id} />
+            <Billing patientId={patient.id} navigate={navigate} />
           </TabsContent>
         </Tabs>
       </div>

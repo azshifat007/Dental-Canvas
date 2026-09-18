@@ -16,11 +16,11 @@ const STATUSES: LabStatus[] = ["sent", "in_lab", "received", "seated", "cancelle
 const CASE_TYPES = ["Crown", "Bridge", "Inlay/Onlay", "Veneer", "Denture", "Partial", "Aligner", "Night Guard", "Implant Abutment", "Other"];
 
 const STATUS_STYLE: Record<LabStatus, string> = {
-  sent:      "bg-amber-100 text-amber-800 border-amber-200",
-  in_lab:    "bg-sky-100 text-sky-800 border-sky-200",
-  received:  "bg-emerald-100 text-emerald-800 border-emerald-200",
-  seated:    "bg-violet-100 text-violet-800 border-violet-200",
-  cancelled: "bg-slate-100 text-slate-700 border-slate-200",
+  sent:      "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:border-amber-800",
+  in_lab:    "bg-sky-100 text-sky-800 border-sky-200 dark:bg-sky-950 dark:text-sky-200 dark:border-sky-800",
+  received:  "bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:border-emerald-800",
+  seated:    "bg-violet-100 text-violet-800 border-violet-200 dark:bg-violet-950 dark:text-violet-200 dark:border-violet-800",
+  cancelled: "bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700",
 };
 
 export function LabPage({ navigate }: { navigate: (to: string) => void }) {

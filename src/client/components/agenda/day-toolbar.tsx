@@ -19,7 +19,7 @@ export function DayToolbar({ date, onChange, onCreate }: Props) {
   };
 
   return (
-    <div className="flex items-center gap-3 border-b bg-white px-6 py-4">
+    <div className="flex items-center gap-3 border-b bg-white px-6 py-4 dark:bg-card">
       <div>
         <h2 className="text-lg font-semibold tracking-tight">
           {formatDate(date, { month: "long", year: "numeric" })}

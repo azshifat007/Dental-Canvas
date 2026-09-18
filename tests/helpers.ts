@@ -94,6 +94,9 @@ export async function createTestContext(): Promise<TestContext> {
       // Drop in dependency order (children first) — D1's FK enforcement can
       // not be toggled reliably per-session, and PRAGMA has no effect here.
       const order = [
+        "invoice_payments",
+        "prescription_items",
+        "prescriptions",
         "invoice_items",
         "invoices",
         "treatment_plan_items",
@@ -103,6 +106,8 @@ export async function createTestContext(): Promise<TestContext> {
         "insurance_plans",
         "lab_cases",
         "appointments_to_make",
+        "dentist_notes",
+        "backups",
         "appointments",
         "patients",
         "treatment_types",
