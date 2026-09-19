@@ -17,6 +17,8 @@ export interface PrescriptionSheetData {
   clinic_name?: string | null;
   clinic_address?: string | null;
   clinic_phone?: string | null;
+  /** Data URL of the clinic logo; rendered on every template's letterhead. */
+  clinic_logo?: string | null;
   doctor_name: string;
   doctor_specialty?: string | null;
   doctor_license?: string | null;
@@ -26,6 +28,12 @@ export interface PrescriptionSheetData {
   practitioner_name?: string | null;
   issued_date: string;
   template: PrescriptionTemplate;
+  /** Enlarged type for visually impaired patients — scales the clinical content. */
+  large_print?: boolean;
+  /** Tooth the prescription relates to, rendered beside the linked procedure. */
+  tooth?: string | null;
+  /** Name of the linked treatment-plan procedure, if any. */
+  plan_treatment_name?: string | null;
   diagnosis?: string | null;
   advice?: string | null;
   follow_up?: string | null;
@@ -34,6 +42,7 @@ export interface PrescriptionSheetData {
 
 /** All templates, in gallery order. */
 export const PRESCRIPTION_TEMPLATES: { id: PrescriptionTemplate; label: string; blurb: string }[] = [
+  { id: "chamber",    label: "Chamber",    blurb: "Chamber pad: green header, clinical sidebar" },
   { id: "classic",    label: "Classic",    blurb: "Double-rule letterhead, formal" },
   { id: "modern",     label: "Modern",     blurb: "Full-color gradient header" },
   { id: "compact",    label: "Compact",    blurb: "Minimal header, ruled rows" },
@@ -99,6 +108,25 @@ const BASE_PAGE: React.CSSProperties = {
 };
 
 const TEMPLATES: Record<PrescriptionTemplate, TemplateStyle> = {
+  chamber: {
+    headerBg: "transparent",
+    headerColor: "#14532d",
+    headerRule: "none",
+    headerPad: "0",
+    headerMuted: "#3f6212",
+    doctorName: { fontSize: "15pt", fontWeight: 700, color: "#14532d" },
+    clinicTitle: { fontSize: "9.5pt", fontWeight: 700, color: "#3f6212" },
+    clinicDetail: { fontSize: "7.5pt", fontWeight: 400, color: "#3f6212", whiteSpace: "pre-line" },
+    bodyPad: "6mm 8mm",
+    bodyText: "#1f2937",
+    mutedText: "#6b7280",
+    accent: "#166534",
+    rxStyle: { fontSize: "20pt", fontWeight: 700, fontStyle: "normal", color: "#1f2937", margin: "1mm 0 2mm" },
+    medRowRule: "none",
+    signatureRule: "1px solid #9ca3af",
+    footerRule: "none",
+    footerMuted: "#374151",
+  },
   classic: {
     headerBg: "transparent",
     headerColor: "#0f172a",
@@ -240,6 +268,30 @@ const TEMPLATES: Record<PrescriptionTemplate, TemplateStyle> = {
   },
 };
 
+/**
+ * The clinic logo, normalized for print: `<img>` with a fixed box and
+ * object-contain so any aspect ratio fits without distorting. Data URLs are
+ * self-contained — the print iframe and public page need no extra requests.
+ */
+function LetterheadLogo({ src, heightMm }: { src: string; heightMm: number }) {
+  return (
+    <img
+      src={src}
+      alt=""
+      style={{
+        height: `${heightMm}mm`,
+        maxWidth: "55mm",
+        objectFit: "contain",
+        display: "block",
+      }}
+    />
+  );
+}
+
+/** Shared tooth glyph for watermarks. */
+const TOOTH_PATH =
+  "M12 2C8.5 2 7 4.5 7 8c0 2.2.4 3.4.4 5.2 0 1.9-.9 4.6-.9 6.3 0 1.4.8 2.5 2 2.5 1.6 0 2-2.3 2.6-4.6.3-1.2.5-1.9.9-1.9s.6.7.9 1.9c.6 2.3 1 4.6 2.6 4.6 1.2 0 2-1.1 2-2.5 0-1.7-.9-4.4-.9-6.3C16.6 11.4 17 10.2 17 8c0-3.5-1.5-6-5-6Z";
+
 /** Decorative background layer (watermark template only). */
 function Watermark() {
   return (
@@ -257,29 +309,296 @@ function Watermark() {
         pointerEvents: "none",
       }}
     >
-      <path d="M12 2C8.5 2 7 4.5 7 8c0 2.2.4 3.4.4 5.2 0 1.9-.9 4.6-.9 6.3 0 1.4.8 2.5 2 2.5 1.6 0 2-2.3 2.6-4.6.3-1.2.5-1.9.9-1.9s.6.7.9 1.9c.6 2.3 1 4.6 2.6 4.6 1.2 0 2-1.1 2-2.5 0-1.7-.9-4.4-.9-6.3C16.6 11.4 17 10.2 17 8c0-3.5-1.5-6-5-6Z" />
+      <path d={TOOTH_PATH} />
     </svg>
+  );
+}
+
+/**
+ * Chamber-pad template: the South Asian dental chamber style — green
+ * three-part letterhead, a patient bar, a pale-blue clinical sidebar
+ * (C/C, O/E, H/O, Treatment Plan, X-ray) beside a white ℞ panel with a
+ * center watermark and signature block, and a green advice footer.
+ * Prompt labels that the app has no data for still render (like the printed
+ * pad), so the sheet doubles as a handwriting form.
+ */
+function ChamberSheet({ data }: { data: PrescriptionSheetData }) {
+  const doctorLabel = data.doctor_name.startsWith("Dr") ? data.doctor_name : `Dr. ${data.doctor_name}`;
+  const title = data.clinic_name || "Dental Practice";
+  const contactParts = [data.clinic_address, data.clinic_phone].filter(Boolean);
+  const GREEN = "#166534";
+  const GREEN_DARK = "#14532d";
+
+  const sideLabel: React.CSSProperties = {
+    fontSize: "10.5pt",
+    fontWeight: 600,
+    color: "#374151",
+    marginBottom: "2mm",
+  };
+  const sideValue: React.CSSProperties = {
+    fontSize: "9.5pt",
+    color: "#1f2937",
+    whiteSpace: "pre-line",
+    lineHeight: 1.45,
+  };
+  const headLabel: React.CSSProperties = { fontSize: "7.5pt", color: GREEN, fontWeight: 600 };
+  const headValue: React.CSSProperties = { fontSize: "9pt", color: "#1f2937" };
+
+  return (
+    <div style={{ ...BASE_PAGE, fontFamily: 'Inter, "Segoe UI", system-ui, sans-serif' }} data-template="chamber">
+      {/* ── Letterhead ─────────────────────────────────────── */}
+      <div
+        style={{
+          borderTop: `2.5mm solid ${GREEN_DARK}`,
+          background: "linear-gradient(90deg, #dcead2 0%, #eaf3e2 55%, #f4f8ee 100%)",
+          borderBottom: `2px solid ${GREEN}`,
+          padding: "4mm 8mm 3mm",
+          display: "grid",
+          gridTemplateColumns: "1fr auto 1fr",
+          gap: "5mm",
+          alignItems: "center",
+        }}
+      >
+        {/* Left: chamber / address block */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "1.2mm" }}>
+          <div style={{ ...headLabel, fontSize: "8pt" }}>Chamber</div>
+          {contactParts.length > 0 ? (
+            contactParts.map((part, i) => (
+              <div key={i} style={{ fontSize: "8pt", color: "#3f5147", whiteSpace: "pre-line", lineHeight: 1.35 }}>
+                {part}
+              </div>
+            ))
+          ) : (
+            <div style={{ fontSize: "8pt", color: "#8aa394" }}>—</div>
+          )}
+        </div>
+
+        {/* Center: logo + clinic name */}
+        <div style={{ textAlign: "center" }}>
+          {data.clinic_logo && (
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: "1.5mm" }}>
+              <LetterheadLogo src={data.clinic_logo} heightMm={11} />
+            </div>
+          )}
+          <div style={{ fontSize: "14pt", fontWeight: 800, color: GREEN_DARK, letterSpacing: "0.01em" }}>{title}</div>
+          {data.doctor_specialty && (
+            <div style={{ fontSize: "7.5pt", color: "#3f6212", marginTop: "0.5mm" }}>{data.doctor_specialty}</div>
+          )}
+        </div>
+
+        {/* Right: doctor block */}
+        <div style={{ textAlign: "right", display: "flex", flexDirection: "column", gap: "1.2mm" }}>
+          <div style={{ fontSize: "13.5pt", fontWeight: 700, color: GREEN_DARK }}>{doctorLabel}</div>
+          {data.doctor_license && <div style={headValue}>License {data.doctor_license}</div>}
+          {data.clinic_phone && <div style={headValue}>Mobile : {data.clinic_phone}</div>}
+        </div>
+      </div>
+
+      {/* ── Patient bar ────────────────────────────────────── */}
+      <div
+        style={{
+          display: "flex",
+          gap: "14mm",
+          padding: "3.5mm 8mm",
+          borderBottom: `2px solid ${GREEN}`,
+          fontSize: "10pt",
+          color: "#1f2937",
+        }}
+      >
+        <div style={{ flex: 1 }}>
+          <span style={{ color: "#6b7280" }}>Name : </span>
+          <strong>{data.patient_name}</strong>
+          {data.patient_medical_alerts && (
+            <span style={{ marginLeft: "4mm", color: "#b45309", fontWeight: 600, fontSize: "8.5pt" }}>
+              ⚠ {data.patient_medical_alerts}
+            </span>
+          )}
+        </div>
+        <div style={{ width: "30mm" }}>
+          <span style={{ color: "#6b7280" }}>Age : </span>
+          {data.patient_age ?? ""}
+        </div>
+        <div style={{ width: "38mm" }}>
+          <span style={{ color: "#6b7280" }}>Date : </span>
+          {formatDate(data.issued_date)}
+        </div>
+      </div>
+
+      {/* ── Body: clinical sidebar + ℞ panel ───────────────── */}
+      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        {/* Sidebar */}
+        <div
+          style={{
+            width: "27%",
+            background: "#dfeaf3",
+            borderRight: "1px solid #b6c8d8",
+            padding: "7mm 5mm",
+            display: "flex",
+            flexDirection: "column",
+            gap: "9mm",
+          }}
+        >
+          <div>
+            <div style={sideLabel}>C/C :</div>
+            {data.diagnosis && <div style={sideValue}>{data.diagnosis}</div>}
+          </div>
+          <div>
+            <div style={sideLabel}>O/E :</div>
+            {data.tooth && <div style={sideValue}>Tooth {data.tooth}</div>}
+            {data.practitioner_name && data.practitioner_name !== data.doctor_name && (
+              <div style={{ ...sideValue, color: "#6b7280" }}>Seen by {data.practitioner_name}</div>
+            )}
+          </div>
+          <div>
+            <div style={sideLabel}>H/O:</div>
+            {data.patient_medical_alerts && <div style={sideValue}>{data.patient_medical_alerts}</div>}
+          </div>
+          <div>
+            <div style={sideLabel}>Treatment Plan</div>
+            {data.plan_treatment_name && <div style={sideValue}>{data.plan_treatment_name}</div>}
+          </div>
+          <div>
+            <div style={sideLabel}>X-ray</div>
+            <svg width="58" height="58" viewBox="0 0 58 58" aria-hidden style={{ marginTop: "1mm" }}>
+              <path d="M29 6v46M6 29h46" stroke="#4a7fa5" strokeWidth="1.2" fill="none" />
+            </svg>
+          </div>
+        </div>
+
+        {/* ℞ panel */}
+        <div style={{ flex: 1, position: "relative", padding: "6mm 8mm", display: "flex", flexDirection: "column", background: "#ffffff" }}>
+          {/* Center watermark: clinic logo, or the tooth glyph */}
+          <div
+            aria-hidden
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              pointerEvents: "none",
+            }}
+          >
+            {data.clinic_logo ? (
+              <img src={data.clinic_logo} alt="" style={{ width: "90mm", opacity: 0.1, objectFit: "contain" }} />
+            ) : (
+              <svg viewBox="0 0 24 24" style={{ width: "100mm", color: "rgba(22, 101, 52, 0.07)", fill: "currentColor" }}>
+                <path d={TOOTH_PATH} />
+              </svg>
+            )}
+          </div>
+
+          <div style={{ ...TEMPLATES.chamber.rxStyle, position: "relative" }}>℞</div>
+
+          <div style={{ position: "relative" }}>
+            {data.items.length === 0 ? (
+              <div style={{ color: "#94a3b8", fontSize: "10pt" }}>No medications.</div>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "11pt" }}>
+                <tbody>
+                  {data.items.map((item, i) => (
+                    <tr key={i}>
+                      <td style={{ width: "8mm", verticalAlign: "top", color: GREEN, fontWeight: 700, padding: "2.5mm 0" }}>
+                        {i + 1}.
+                      </td>
+                      <td style={{ verticalAlign: "top", padding: "2.5mm 0" }}>
+                        <div style={{ fontWeight: 700 }}>
+                          {item.drug_name}
+                          {item.dosage ? <span style={{ fontWeight: 400 }}> {item.dosage}</span> : null}
+                        </div>
+                        <div style={{ fontSize: "9.5pt", color: "#374151", marginTop: 1 }}>
+                          {[item.frequency, item.duration ? `for ${item.duration}` : null, item.instructions].filter(Boolean).join(" · ")}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            {data.advice && (
+              <div style={{ marginTop: "6mm", fontSize: "9.5pt", lineHeight: 1.45 }}>
+                <div style={{ fontWeight: 700, color: GREEN, fontSize: "8.5pt", letterSpacing: "0.05em", marginBottom: 1 }}>ADVICE</div>
+                <div style={{ whiteSpace: "pre-line" }}>{data.advice}</div>
+              </div>
+            )}
+            {data.follow_up && (
+              <div style={{ marginTop: "4mm", fontSize: "9.5pt", color: "#1f2937" }}>
+                <span style={{ color: "#6b7280" }}>Follow-up: </span>
+                {data.follow_up}
+              </div>
+            )}
+          </div>
+
+          {/* Signature */}
+          <div style={{ marginTop: "auto", display: "flex", justifyContent: "flex-end", position: "relative" }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ borderTop: "1px solid #9ca3af", width: "46mm", paddingTop: "1.5mm", fontSize: "9.5pt", color: "#374151" }}>
+                Signature
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Footer ─────────────────────────────────────────── */}
+      <div
+        style={{
+          background: "#eef6ea",
+          borderTop: `2px solid ${GREEN}`,
+          padding: "3mm 8mm",
+          display: "flex",
+          justifyContent: "space-between",
+          gap: "8mm",
+          fontSize: "7.5pt",
+          color: GREEN,
+          lineHeight: 1.4,
+        }}
+      >
+        <div>
+          {title}
+          {contactParts.length > 0 ? ` — ${contactParts.join(" · ")}` : ""}
+        </div>
+        <div style={{ textAlign: "right", fontWeight: 600 }}>
+          {doctorLabel}
+          {data.doctor_license ? ` · License ${data.doctor_license}` : ""}
+        </div>
+      </div>
+    </div>
   );
 }
 
 /** One A4 prescription sheet. Pure presentational — no fetching, no hooks. */
 export function PrescriptionSheet({ data }: { data: PrescriptionSheetData }) {
+  if (data.template === "chamber") return <ChamberSheet data={data} />;
+
   const t = TEMPLATES[data.template] ?? TEMPLATES.classic;
   const doctorLabel = data.doctor_name.startsWith("Dr") ? data.doctor_name : `Dr. ${data.doctor_name}`;
+
+  // Large-print mode scales every clinical font size (patient block, ℞,
+  // medications, advice, follow-up) — not the letterhead/signature, which the
+  // practice writes and the patient never needs to read. 1.45× ≈ 15-16 pt body
+  // text, the range low-vision guidelines recommend for printed documents.
+  const L = data.large_print ? 1.45 : 1;
 
   const title = data.clinic_name || "Dental Practice";
   const subtitleParts = [data.doctor_specialty, data.doctor_license ? `License ${data.doctor_license}` : null].filter(Boolean);
   const contactParts = [data.clinic_address, data.clinic_phone].filter(Boolean);
 
+  const logo = data.clinic_logo ? <LetterheadLogo src={data.clinic_logo} heightMm={12} /> : null;
+
   const headerInner = (
     <>
-      <div>
-        <div style={t.doctorName}>{doctorLabel}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: "5mm" }}>
+        {logo}
+        <div>
+          <div style={t.doctorName}>{doctorLabel}</div>
         {subtitleParts.length > 0 && (
           <div style={{ fontSize: "9pt", marginTop: 2, color: t.headerMuted, ...(t.doctorName.fontFamily ? { fontFamily: t.doctorName.fontFamily as string } : {}) }}>
             {subtitleParts.join(" · ")}
           </div>
         )}
+        </div>
       </div>
       <div style={{ textAlign: "right", ...t.clinicTitle, lineHeight: 1.35 }}>
         {title}
@@ -294,6 +613,12 @@ export function PrescriptionSheet({ data }: { data: PrescriptionSheetData }) {
 
   const centeredHeaderInner = (
     <div style={{ textAlign: "center" }}>
+      {logo && (
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: "3mm" }}>
+          {/* Centered layouts sit the logo above the name, crest-style. */}
+          <span style={{ display: "inline-flex" }}>{logo}</span>
+        </div>
+      )}
       <div style={{ ...t.clinicTitle, marginBottom: 2 }}>{title}</div>
       {contactParts.length > 0 && (
         <div style={{ ...t.clinicDetail, textAlign: "center" }}>
@@ -339,7 +664,7 @@ export function PrescriptionSheet({ data }: { data: PrescriptionSheetData }) {
           display: "flex",
           justifyContent: "space-between",
           gap: 12,
-          fontSize: "9.5pt",
+          fontSize: `${9.5 * L}pt`,
           alignItems: "flex-start",
           color: t.bodyText,
         }}
@@ -378,31 +703,51 @@ export function PrescriptionSheet({ data }: { data: PrescriptionSheetData }) {
 
       {/* Rx + medications */}
       <div style={{ padding: t.bodyPad, paddingTop: 2, flex: 1, color: t.bodyText }}>
-        {data.diagnosis && (
-          <div style={{ fontSize: "9.5pt", marginBottom: 8 }}>
-            <span style={{ color: t.mutedText }}>Diagnosis: </span>
-            {data.diagnosis}
+        {(data.diagnosis || data.tooth || data.plan_treatment_name) && (
+          <div
+            style={{
+              fontSize: `${9.5 * L}pt`,
+              marginBottom: 8 * L,
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "baseline",
+              gap: `${2 * L}mm`,
+              rowGap: 2,
+            }}
+          >
+            {data.diagnosis && (
+              <span>
+                <span style={{ color: t.mutedText }}>Diagnosis: </span>
+                {data.diagnosis}
+              </span>
+            )}
+            {data.tooth && (
+              <span style={{ fontWeight: 700, color: t.accent, whiteSpace: "nowrap" }}>Tooth {data.tooth}</span>
+            )}
+            {data.plan_treatment_name && (
+              <span style={{ color: t.mutedText }}>For: {data.plan_treatment_name}</span>
+            )}
           </div>
         )}
 
         <div style={t.rxStyle}>{data.template === "bold" ? "Rx" : "℞"}</div>
 
         {data.items.length === 0 ? (
-          <div style={{ color: "#94a3b8", fontSize: "9.5pt" }}>No medications.</div>
+          <div style={{ color: "#94a3b8", fontSize: `${9.5 * L}pt` }}>No medications.</div>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "10.5pt" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: `${10.5 * L}pt`, lineHeight: L > 1 ? 1.5 : undefined }}>
             <tbody>
               {data.items.map((item, i) => (
                 <tr key={i} style={{ borderBottom: t.medRowRule === "none" ? undefined : t.medRowRule }}>
-                  <td style={{ width: "7mm", verticalAlign: "top", color: t.accent, fontWeight: 700, padding: "2.5mm 0" }}>
+                  <td style={{ width: "7mm", verticalAlign: "top", color: t.accent, fontWeight: 700, padding: `${2.5 * L}mm 0` }}>
                     {i + 1}.
                   </td>
-                  <td style={{ verticalAlign: "top", padding: "2.5mm 0" }}>
+                  <td style={{ verticalAlign: "top", padding: `${2.5 * L}mm 0` }}>
                     <div style={{ fontWeight: 700 }}>
                       {item.drug_name}
                       {item.dosage ? <span style={{ fontWeight: 400 }}> {item.dosage}</span> : null}
                     </div>
-                    <div style={{ fontSize: "9.5pt", color: "#334155", marginTop: 1 }}>
+                    <div style={{ fontSize: `${9.5 * L}pt`, color: "#334155", marginTop: 1 }}>
                       {[
                         item.frequency,
                         item.duration ? `for ${item.duration}` : null,
@@ -419,13 +764,13 @@ export function PrescriptionSheet({ data }: { data: PrescriptionSheetData }) {
         )}
 
         {data.advice && (
-          <div style={{ marginTop: "6mm", fontSize: "9.5pt" }}>
+          <div style={{ marginTop: `${6 * L}mm`, fontSize: `${9.5 * L}pt`, lineHeight: L > 1 ? 1.5 : undefined }}>
             <div
               style={{
                 fontWeight: 700,
                 color: t.accent,
                 textTransform: "uppercase",
-                fontSize: "8pt",
+                fontSize: `${8 * L}pt`,
                 letterSpacing: "0.06em",
                 marginBottom: 1,
                 ...t.adviceLabel,
@@ -449,7 +794,7 @@ export function PrescriptionSheet({ data }: { data: PrescriptionSheetData }) {
           </div>
         </div>
         {data.follow_up && (
-          <div style={{ marginTop: "6mm", fontSize: "9.5pt", color: t.bodyText }}>
+          <div style={{ marginTop: `${6 * L}mm`, fontSize: `${9.5 * L}pt`, color: t.bodyText }}>
             <span style={{ color: t.mutedText }}>Follow-up: </span>
             {data.follow_up}
           </div>

@@ -1,6 +1,14 @@
 // ── Core entities ──────────────────────────────────────────────────
 
-export type PrescriptionTemplate = "classic" | "modern" | "compact" | "elegant" | "minimal" | "bold" | "watermark";
+export type PrescriptionTemplate =
+  | "chamber"
+  | "classic"
+  | "modern"
+  | "compact"
+  | "elegant"
+  | "minimal"
+  | "bold"
+  | "watermark";
 
 export interface PrescriptionItem {
   id?: number;
@@ -18,11 +26,17 @@ export interface Prescription {
   practitioner_id: number | null;
   issued_date: string;
   template: PrescriptionTemplate;
+  /** Enlarged type for visually impaired patients — flows to every render surface. */
+  large_print: number;
+  /** Tooth this prescription relates to, e.g. '14' (FDI). */
+  tooth: string | null;
+  /** Linked treatment-plan procedure (informational — SET NULL on plan deletion). */
+  plan_item_id: number | null;
+  plan_treatment_name?: string | null;
+  plan_treatment_code?: string | null;
   diagnosis: string | null;
   advice: string | null;
   follow_up: string | null;
-  share_token: string | null;
-  share_revoked: number;
   created_at: string;
   practitioner_name?: string | null;
   item_count?: number;

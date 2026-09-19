@@ -76,8 +76,9 @@ export function DashboardPage({
 
   return (
     <div className="flex-1 overflow-auto bg-gradient-to-b from-sky-50/60 to-background dark:from-sky-950/30">
-      {/* Top bar: search + notifications */}
-      <div className="flex items-center gap-3 px-4 pt-4 md:px-6">
+      {/* Top bar: search + notifications — redundant on phones (the mobile
+          top bar already carries search/register). */}
+      <div className="hidden items-center gap-3 px-4 pt-4 md:flex md:px-6">
         <button
           type="button"
           onClick={() => (openSearch ? openSearch() : navigate("/patients"))}

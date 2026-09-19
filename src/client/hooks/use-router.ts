@@ -10,13 +10,9 @@ export type Route =
   | { name: "reports" }
   | { name: "lab" }
   | { name: "settings" }
-  | { name: "public-prescription"; token: string }
   | { name: "not-found" };
 
 function parse(path: string): Route {
-  // Public share link — must win over every internal route.
-  const pub = path.match(/^\/p\/([a-f0-9]{16,64})$/);
-  if (pub) return { name: "public-prescription", token: pub[1] };
   if (path === "/" || path === "/dashboard") return { name: "dashboard" };
   if (path === "/agenda") return { name: "agenda" };
   if (path === "/patients") return { name: "patients" };

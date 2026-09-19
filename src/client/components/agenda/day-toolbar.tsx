@@ -1,4 +1,5 @@
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { formatDate, toIsoDate } from "@/lib/utils";
 
@@ -6,9 +7,11 @@ interface Props {
   date: string;
   onChange: (date: string) => void;
   onCreate: () => void;
+  /** Extra actions rendered beside "Add appointment" (e.g. Register & book). */
+  children?: ReactNode;
 }
 
-export function DayToolbar({ date, onChange, onCreate }: Props) {
+export function DayToolbar({ date, onChange, onCreate, children }: Props) {
   const today = toIsoDate(new Date());
   const isToday = date === today;
 
@@ -69,6 +72,8 @@ export function DayToolbar({ date, onChange, onCreate }: Props) {
         />
 
         <div className="h-6 w-px bg-border" />
+
+        {children}
 
         <Button onClick={onCreate} size="sm">
           <Plus className="h-4 w-4" /> Add appointment

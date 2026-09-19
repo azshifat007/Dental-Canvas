@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
+import { UserPlus } from "lucide-react";
 import { useApp } from "@/context";
+import { Button } from "@/components/ui/button";
 import { toIsoDate } from "@/lib/utils";
-import type { Appointment } from "@/types";
+import type { Appointment, Patient } from "@/types";
 import { DayToolbar } from "./day-toolbar";
 import { DayGrid } from "./day-grid";
 import { AppointmentDialog } from "./appointment-dialog";
 import { AgendaSidePanel } from "./side-panel";
+import { RegisterAndBookDialog } from "./register-and-book-dialog";
 
 export function AgendaPage() {
   const app = useApp();
@@ -17,6 +20,10 @@ export function AgendaPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Appointment | null>(null);
   const [defaults, setDefaults] = useState<{ operatoryId: number; minutesFromMidnight: number } | undefined>();
+  /** Register & book dialog state. */
+  const [rbOpen, setRbOpen] = useState(false);
+  /** The patient just registered — lets us offer "open their record". */
+  const [justBooked, setJustBooked] = useState<Patient | null>(null);
 
   // Reload appointments whenever the day or operatory list changes.
   useEffect(() => {
@@ -40,10 +47,35 @@ export function AgendaPage() {
     setDialogOpen(true);
   }
 
+  function handleBooked(patient: Patient, _appointment: Appointment) {
+    void _appointment;
+    setJustBooked(patient);
+    // Clear the notice after a moment so the toolbar stays tidy.
+    window.setTimeout(() => setJustBooked(null), 8000);
+  }
+
   return (
     <div className="flex flex-1 overflow-hidden">
       <div className="flex flex-1 flex-col overflow-hidden">
-        <DayToolbar date={date} onChange={setDate} onCreate={() => openCreate()} />
+        <DayToolbar date={date} onChange={setDate} onCreate={() => openCreate()}>
+          <Button variant="outline" size="sm" onClick={() => setRbOpen(true)}>
+            <UserPlus className="h-4 w-4" /> Register &amp; book
+          </Button>
+          {justBooked && (
+            <button
+              type="button"
+              onClick={() => {
+                setJustBooked(null);
+                window.history.pushState(null, "", `/patients/${justBooked.id}`);
+                window.dispatchEvent(new PopStateEvent("popstate"));
+              }}
+              className="rounded-md bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800 transition-colors hover:bg-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:hover:bg-emerald-900"
+              title="Open the new patient's record"
+            >
+              {justBooked.first_name} {justBooked.last_name} registered &amp; booked — open record
+            </button>
+          )}
+        </DayToolbar>
         <DayGrid
           date={date}
           operatories={app.operatories}
@@ -59,6 +91,12 @@ export function AgendaPage() {
         appointment={editing}
         date={date}
         defaults={defaults}
+      />
+      <RegisterAndBookDialog
+        open={rbOpen}
+        onOpenChange={setRbOpen}
+        date={date}
+        onBooked={handleBooked}
       />
     </div>
   );

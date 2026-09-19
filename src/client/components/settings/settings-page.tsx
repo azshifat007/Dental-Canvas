@@ -1,9 +1,13 @@
-import { useEffect, useState } from "react";
-import { Plus, Trash2, Pencil, Check, X, Clock, UserRound, DatabaseBackup, Palette, Monitor, Sun, Moon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Plus, Trash2, Pencil, Check, X, Clock, UserRound, DatabaseBackup, Palette, Monitor, Sun, Moon, ImageUp } from "lucide-react";
 import { useApp } from "@/context";
 import { api } from "@/api";
 import { BackupTab } from "./backup-tab";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
+import { useAccessibility, type A11yPreference } from "@/hooks/use-accessibility";
+import { useBrandAccent } from "@/hooks/use-brand-accent";
+import { brandAccentFromHex } from "@/lib/color";
+import { Contrast } from "lucide-react";
 import { cn, colorClasses } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Operatory, Practitioner, PractitionerRole, TreatmentType } from "@/types";
+import { fileToLogoDataUrl } from "@/lib/logo";
 
 const COLOR_TOKENS = ["sky", "emerald", "amber", "rose", "violet", "fuchsia", "teal", "orange", "slate"] as const;
 const ROLES: PractitionerRole[] = ["dentist", "hygienist", "assistant"];
@@ -38,8 +43,10 @@ export function SettingsPage() {
           <TabsContent value="profile" className="mt-4">
             <ProfileTab />
           </TabsContent>
-          <TabsContent value="appearance" className="mt-4">
+          <TabsContent value="appearance" className="mt-4 space-y-4">
             <AppearanceTab />
+            <AccentColorCard />
+            <AccessibilityCard />
           </TabsContent>
           <TabsContent value="operatories" className="mt-4">
             <OperatoriesTab />
@@ -69,6 +76,7 @@ function ProfileTab() {
   const [form, setForm] = useState(app.profile);
   const [busy, setBusy] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const logoInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setForm(app.profile);
@@ -90,6 +98,7 @@ function ProfileTab() {
         doctor_phone: form.doctor_phone.trim(),
         doctor_license: form.doctor_license.trim(),
         clinic_address: form.clinic_address.trim(),
+        clinic_logo: form.clinic_logo,
       });
       setSavedAt(Date.now());
     } catch (err) {
@@ -112,6 +121,60 @@ function ProfileTab() {
       </CardHeader>
       <CardContent>
         <form onSubmit={save} className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Clinic logo (prescriptions &amp; invoices)</Label>
+            <div className="flex items-center gap-3">
+              <div
+                className={cn(
+                  "flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted/40",
+                  !form.clinic_logo && "text-muted-foreground/50",
+                )}
+                aria-hidden
+              >
+                {form.clinic_logo ? (
+                  <img src={form.clinic_logo} alt="Clinic logo" className="max-h-full max-w-full object-contain" />
+                ) : (
+                  <ImageUp className="h-5 w-5" />
+                )}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => logoInputRef.current?.click()}>
+                    {form.clinic_logo ? "Replace" : "Upload logo"}
+                  </Button>
+                  {form.clinic_logo && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="text-muted-foreground hover:text-destructive"
+                      onClick={() => setForm({ ...form, clinic_logo: "" })}
+                    >
+                      Remove
+                    </Button>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">PNG or SVG with transparency works best.</p>
+              </div>
+              <input
+                ref={logoInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = ""; // allow re-choosing the same file
+                  if (!file) return;
+                  try {
+                    const dataUrl = await fileToLogoDataUrl(file);
+                    setForm((f) => ({ ...f, clinic_logo: dataUrl }));
+                  } catch (err) {
+                    app.setError((err as Error).message);
+                  }
+                }}
+              />
+            </div>
+          </div>
           <FieldGroup label="Doctor name *">
             <Input
               value={form.doctor_name}
@@ -220,6 +283,182 @@ function AppearanceTab() {
             </button>
           ))}
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Accent color ───────────────────────────────────────────────
+
+/** Curated presets: hue family + display swatch. Default teal first. */
+const ACCENT_PRESETS: { hex: string; name: string }[] = [
+  { hex: "#0e7490", name: "Teal (default)" },
+  { hex: "#059669", name: "Emerald" },
+  { hex: "#2563eb", name: "Blue" },
+  { hex: "#7c3aed", name: "Violet" },
+  { hex: "#db2777", name: "Pink" },
+  { hex: "#dc2626", name: "Red" },
+  { hex: "#ea580c", name: "Orange" },
+  { hex: "#ca8a04", name: "Gold" },
+  { hex: "#4d7c0f", name: "Olive" },
+  { hex: "#0f766e", name: "Viridian" },
+];
+
+function AccentColorCard() {
+  const { accent, setAccent } = useBrandAccent();
+  const isDefault = accent === null;
+  // The live swatch for a custom pick needs its own preview; derive it from
+  // the same conversion the CSS uses.
+  const customPreview = accent && !ACCENT_PRESETS.some((p) => p.hex.toLowerCase() === accent.toLowerCase())
+    ? accent
+    : null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Palette className="h-4 w-4" />
+          Accent color
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Recolors buttons, highlights and focus rings across the app — an easy way to match your practice's branding. Works with every theme and with high contrast.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2">
+          {ACCENT_PRESETS.map((p) => (
+            <button
+              key={p.hex}
+              type="button"
+              title={p.name}
+              aria-label={`Accent: ${p.name}`}
+              aria-pressed={accent?.toLowerCase() === p.hex.toLowerCase()}
+              onClick={() => setAccent(p.hex === "#0e7490" ? null : p.hex)}
+              className={cn(
+                "h-9 w-9 rounded-full border-2 transition-transform hover:scale-110",
+                accent?.toLowerCase() === p.hex.toLowerCase()
+                  ? "border-foreground ring-2 ring-ring ring-offset-2 ring-offset-background"
+                  : "border-transparent",
+              )}
+              style={{ backgroundColor: p.hex }}
+            />
+          ))}
+          {customPreview && (
+            <span
+              className="h-9 w-9 rounded-full border-2 border-foreground ring-2 ring-ring ring-offset-2 ring-offset-background"
+              style={{ backgroundColor: customPreview }}
+              title={accent ?? undefined}
+            />
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <input
+              type="color"
+              value={accent ?? "#0e7490"}
+              onChange={(e) => setAccent(e.target.value)}
+              className="h-9 w-12 cursor-pointer rounded border bg-background p-1"
+              aria-label="Custom accent color"
+            />
+            Custom color
+          </label>
+          <Input
+            value={accent ?? ""}
+            onChange={(e) => {
+              const v = e.target.value;
+              setAccent(brandAccentFromHex(v) ? (v.startsWith("#") ? v : `#${v}`) : null);
+            }}
+            placeholder="#0e7490"
+            className="w-36"
+            aria-label="Accent color hex"
+          />
+          <Button variant="ghost" size="sm" disabled={isDefault} onClick={() => setAccent(null)}>
+            Reset to default
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Accessibility ───────────────────────────────────────────────
+
+function AccessibilityCard() {
+  const { contrast, setContrast, reduceMotion, setReduceMotion } = useAccessibility();
+
+  const settings: {
+    key: "contrast" | "motion";
+    title: string;
+    description: string;
+    value: A11yPreference;
+    onChange: (p: A11yPreference) => void;
+  }[] = [
+    {
+      key: "contrast",
+      title: "High contrast",
+      description:
+        "Stronger text and border contrast, plus clearly visible focus outlines. Follows your OS high-contrast setting by default.",
+      value: contrast,
+      onChange: setContrast,
+    },
+    {
+      key: "motion",
+      title: "Reduce motion",
+      description:
+        "Minimizes animations and smooth scrolling, which can cause discomfort or dizziness. Follows your OS reduced-motion setting by default.",
+      value: reduceMotion,
+      onChange: setReduceMotion,
+    },
+  ];
+
+  const options: { value: A11yPreference; label: string }[] = [
+    { value: "system", label: "System" },
+    { value: "on", label: "On" },
+    { value: "off", label: "Off" },
+  ];
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Contrast className="h-4 w-4" />
+          Accessibility
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Defaults follow your device's own accessibility settings and switch instantly when they change. Your choice is remembered per browser.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {settings.map((s) => (
+          <div
+            key={s.key}
+            className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <div className="min-w-0">
+              <p className="text-sm font-medium">{s.title}</p>
+              <p className="text-xs text-muted-foreground">{s.description}</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1 rounded-lg border bg-background p-0.5">
+              {options.map((o) => (
+                <button
+                  key={o.value}
+                  type="button"
+                  onClick={() => s.onChange(o.value)}
+                  aria-pressed={s.value === o.value}
+                  className={cn(
+                    "rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                    s.value === o.value
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-accent",
+                  )}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
       </CardContent>
     </Card>
   );

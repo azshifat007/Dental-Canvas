@@ -102,8 +102,62 @@ async function ensureSeeded(): Promise<void> {
   }
 }
 
+/**
+ * Runtime column migrations for databases created before a schema change.
+ * schema.sql only runs as DDL on fresh databases (CREATE TABLE IF NOT EXISTS),
+ * so columns added later must be added with ALTER TABLE here. Idempotent and
+ * failure-tolerant: a partially-migrated DB must never fail a request.
+ */
+async function ensureColumnMigrations(): Promise<void> {
+  try {
+    const cols = await query<{ name: string }>("PRAGMA table_info(prescriptions)");
+    const names = new Set(cols.map((c) => c.name));
+    if (!names.has("large_print")) {
+      await run("ALTER TABLE prescriptions ADD COLUMN large_print INTEGER NOT NULL DEFAULT 0");
+    }
+    if (!names.has("tooth")) {
+      await run("ALTER TABLE prescriptions ADD COLUMN tooth TEXT");
+    }
+    // Nullable FK: legal in ALTER TABLE because the default is NULL. The plan
+    // link is informational (ON DELETE SET NULL) — deleting a plan item must
+    // never take a prescription with it.
+    if (!names.has("plan_item_id")) {
+      await run(
+        "ALTER TABLE prescriptions ADD COLUMN plan_item_id INTEGER REFERENCES treatment_plan_items(id) ON DELETE SET NULL",
+      );
+    }
+    // Databases created before the chamber template kept the old column
+    // default; new rows should default to the chamber pad.
+    const dflt = await query<{ dflt_value: string | null }>(
+      "SELECT dflt_value FROM pragma_table_info('prescriptions') WHERE name = 'template'",
+    );
+    if (dflt[0]?.dflt_value && !dflt[0].dflt_value.includes("chamber")) {
+      await run("ALTER TABLE prescriptions ALTER COLUMN template SET DEFAULT 'chamber'");
+    }
+  } catch {
+    // Table missing (fresh DB pre-DDL) or PRAGMA unsupported — schema.sql will
+    // create the table with the column when it runs.
+  }
+}
+
+let migrated = false;
+let migrating: Promise<void> | null = null;
+
+async function ensureMigrated(): Promise<void> {
+  if (migrated) return;
+  migrating ??= ensureColumnMigrations()
+    .then(() => {
+      migrated = true;
+    })
+    .catch(() => {
+      migrating = null; // retry on the next request
+    });
+  await migrating;
+}
+
 app.use("*", async (_c, next) => {
   await ensureSeeded();
+  await ensureMigrated();
   await next();
 });
 
@@ -383,7 +437,10 @@ const PrescriptionInput = z.object({
   patient_id: z.number().int(),
   practitioner_id: z.number().int().nullable().optional(),
   issued_date: z.string().optional().nullable(),
-  template: z.enum(["classic", "modern", "compact", "elegant", "minimal", "bold", "watermark"]).optional(),
+  template: z.enum(["chamber", "classic", "modern", "compact", "elegant", "minimal", "bold", "watermark"]).optional(),
+  large_print: z.boolean().optional(),
+  tooth: z.string().max(32).optional().nullable(),
+  plan_item_id: z.number().int().nullable().optional(),
   diagnosis: z.string().optional().nullable(),
   advice: z.string().optional().nullable(),
   follow_up: z.string().optional().nullable(),
@@ -414,36 +471,28 @@ const PrescriptionUpdateInput = PrescriptionInput.partial().extend({
     .optional(),
 });
 
-function newShareToken(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-/** Letterhead fields for a printable/shared prescription sheet. */
-async function getSettingsForPrescription() {
-  const rows = await query<{ key: string; value: string }>(
-    "SELECT key, value FROM settings WHERE key IN ('doctor_name','doctor_specialty','doctor_license','clinic_name','clinic_address','doctor_phone')",
-  ).catch(() => [] as { key: string; value: string }[]);
-  const map = Object.fromEntries(rows.map((r) => [r.key, r.value]));
-  return {
-    doctor_name: map.doctor_name || "Doctor",
-    doctor_specialty: map.doctor_specialty || "Dentist",
-    doctor_license: map.doctor_license || "",
-    clinic_name: map.clinic_name || "",
-    clinic_address: map.clinic_address || "",
-    doctor_phone: map.doctor_phone || "",
-  };
+/** A logo must be a small image/* data URL — anything else is refused. */
+function isSafeLogoDataUrl(v: unknown): v is string {
+  return (
+    typeof v === "string" &&
+    v.startsWith("data:image/") &&
+    v.length <= 400_000 &&
+    !v.includes("<") &&
+    !v.includes(">")
+  );
 }
 
 async function loadPrescription(id: number) {
   const rx = await get(`
     SELECT rx.*, pr.name as practitioner_name, pr.role as practitioner_role,
            p.first_name as patient_first_name, p.last_name as patient_last_name,
-           p.date_of_birth as patient_date_of_birth, p.medical_alerts as patient_medical_alerts
+           p.date_of_birth as patient_date_of_birth, p.medical_alerts as patient_medical_alerts,
+           tt.name as plan_treatment_name, tt.code as plan_treatment_code
     FROM prescriptions rx
     LEFT JOIN practitioners pr ON pr.id = rx.practitioner_id
     LEFT JOIN patients p ON p.id = rx.patient_id
+    LEFT JOIN treatment_plan_items tpi ON tpi.id = rx.plan_item_id
+    LEFT JOIN treatment_types tt ON tt.id = tpi.treatment_type_id
     WHERE rx.id = ?
   `, [id]);
   if (!rx) return null;
@@ -459,9 +508,12 @@ app.get("/api/patients/:id/prescriptions", async (c) => {
   if (!id) return c.json({ error: "Invalid ID" }, 400);
   const rows = await query(
     `SELECT rx.*, pr.name as practitioner_name,
+            tt.name as plan_treatment_name,
             (SELECT COUNT(*) FROM prescription_items ri WHERE ri.prescription_id = rx.id) as item_count
      FROM prescriptions rx
      LEFT JOIN practitioners pr ON pr.id = rx.practitioner_id
+     LEFT JOIN treatment_plan_items tpi ON tpi.id = rx.plan_item_id
+     LEFT JOIN treatment_types tt ON tt.id = tpi.treatment_type_id
      WHERE rx.patient_id = ?
      ORDER BY rx.issued_date DESC, rx.id DESC`,
     [id],
@@ -482,13 +534,16 @@ app.post("/api/prescriptions", async (c) => {
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   const d = parsed.data;
   const result = await run(
-    `INSERT INTO prescriptions (patient_id, practitioner_id, issued_date, template, diagnosis, advice, follow_up)
-     VALUES (?, ?, COALESCE(?, date('now')), ?, ?, ?, ?)`,
+    `INSERT INTO prescriptions (patient_id, practitioner_id, issued_date, template, large_print, tooth, plan_item_id, diagnosis, advice, follow_up)
+     VALUES (?, ?, COALESCE(?, date('now')), ?, ?, ?, ?, ?, ?, ?)`,
     [
       d.patient_id,
       d.practitioner_id ?? null,
       d.issued_date ?? null,
-      d.template ?? "classic",
+      d.template ?? "chamber",
+      d.large_print ? 1 : 0,
+      d.tooth ?? null,
+      d.plan_item_id ?? null,
       d.diagnosis ?? null,
       d.advice ?? null,
       d.follow_up ?? null,
@@ -516,11 +571,11 @@ app.put("/api/prescriptions/:id", async (c) => {
 
   const sets: string[] = [];
   const params: unknown[] = [];
-  for (const key of ["practitioner_id", "issued_date", "template", "diagnosis", "advice", "follow_up"] as const) {
+  for (const key of ["practitioner_id", "issued_date", "template", "large_print", "tooth", "plan_item_id", "diagnosis", "advice", "follow_up"] as const) {
     const v = d[key];
     if (v !== undefined) {
       sets.push(`${key} = ?`);
-      params.push(v ?? null);
+      params.push(key === "large_print" ? (v ? 1 : 0) : (v ?? null));
     }
   }
   if (sets.length) {
@@ -546,57 +601,6 @@ app.delete("/api/prescriptions/:id", async (c) => {
   const r = await run("DELETE FROM prescriptions WHERE id = ?", [id]);
   if (!r.changes) return c.json({ error: "Not found" }, 404);
   return c.json({ ok: true });
-});
-
-// Share management: create/rotate the public link, or revoke it.
-app.post("/api/prescriptions/:id/share", async (c) => {
-  const id = intParam(c.req.param("id"));
-  if (!id) return c.json({ error: "Invalid ID" }, 400);
-  const token = newShareToken();
-  const r = await run(
-    "UPDATE prescriptions SET share_token = ?, share_revoked = 0 WHERE id = ?",
-    [token, id],
-  );
-  if (!r.changes) return c.json({ error: "Not found" }, 404);
-  return c.json({ share_token: token });
-});
-
-app.delete("/api/prescriptions/:id/share", async (c) => {
-  const id = intParam(c.req.param("id"));
-  if (!id) return c.json({ error: "Invalid ID" }, 400);
-  const r = await run(
-    "UPDATE prescriptions SET share_token = NULL, share_revoked = 0 WHERE id = ?",
-    [id],
-  );
-  if (!r.changes) return c.json({ error: "Not found" }, 404);
-  return c.json({ ok: true });
-});
-
-// Public read-only view. No auth: access is by unguessable 128-bit token and
-// the token can be revoked at any time. Deliberately returns only what the
-// prescription sheet needs — no practice-wide data, no patient contact fields.
-app.get("/api/public/prescriptions/:token", async (c) => {
-  const token = c.req.param("token");
-  if (!token || token.length < 16) return c.json({ error: "Not found" }, 404);
-  const rx = await get(`
-    SELECT rx.id, rx.issued_date, rx.template, rx.diagnosis, rx.advice, rx.follow_up,
-           pr.name as practitioner_name,
-           p.first_name as patient_first_name, p.last_name as patient_last_name,
-           p.date_of_birth as patient_date_of_birth
-    FROM prescriptions rx
-    LEFT JOIN practitioners pr ON pr.id = rx.practitioner_id
-    LEFT JOIN patients p ON p.id = rx.patient_id
-    WHERE rx.share_token = ? AND rx.share_revoked = 0
-  `, [token]);
-  if (!rx) return c.json({ error: "Not found" }, 404);
-  const items = await query(
-    "SELECT drug_name, dosage, frequency, duration, instructions FROM prescription_items WHERE prescription_id = ? ORDER BY sort_order, id",
-    [rx.id],
-  );
-  // Letterhead fields are part of the document itself, so they ride along;
-  // everything else about the practice stays private.
-  const letterhead = await getSettingsForPrescription();
-  return c.json({ prescription: { ...rx, items, practice: letterhead } });
 });
 
 // ── Appointments ───────────────────────────────────────────────────
@@ -1790,13 +1794,15 @@ app.get("/api/dashboard/consultation", async (c) => {
     get<{
       last_checked: string | null; observation: string | null;
       prescription: string | null;
+      last_prescribed: string | null;
     }>(
       `SELECT
          (SELECT MAX(substr(start_time, 1, 10)) FROM appointments
           WHERE patient_id = ? AND status = 'completed') as last_checked,
          (SELECT body FROM clinical_notes WHERE patient_id = ? ORDER BY note_date DESC LIMIT 1) as observation,
-         (SELECT GROUP_CONCAT(DISTINCT tc.condition) FROM tooth_conditions tc WHERE tc.patient_id = ?) as prescription`,
-      [id, id, id],
+         (SELECT GROUP_CONCAT(DISTINCT tc.condition) FROM tooth_conditions tc WHERE tc.patient_id = ?) as prescription,
+         (SELECT MAX(issued_date) FROM prescriptions WHERE patient_id = ?) as last_prescribed`,
+      [id, id, id, id],
     ),
     query<{ condition: string; n: number }>(
       "SELECT condition, COUNT(*) as n FROM tooth_conditions WHERE patient_id = ? GROUP BY condition",
@@ -1809,6 +1815,7 @@ app.get("/api/dashboard/consultation", async (c) => {
     last_checked: lastAppt?.last_checked ?? null,
     observation: lastAppt?.observation ?? null,
     prescription: lastAppt?.prescription ?? null,
+    last_prescribed: lastAppt?.last_prescribed ?? null,
     conditions,
   });
 });
@@ -1879,6 +1886,11 @@ app.put("/api/settings", async (c) => {
   const entries = Object.entries(body as Record<string, unknown>)
     .filter(([, v]) => v !== undefined && v !== null);
   for (const [key, value] of entries) {
+    // The logo is the one setting that could smuggle markup into printed
+    // documents — enforce the data-URL shape (empty string clears it).
+    if (key === "clinic_logo" && value !== "" && !isSafeLogoDataUrl(value)) {
+      return c.json({ error: "Logo must be an image data URL under 400 KB" }, 400);
+    }
     await run(
       `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,

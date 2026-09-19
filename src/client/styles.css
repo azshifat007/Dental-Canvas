@@ -42,30 +42,38 @@
 }
 
 :root {
-  --background: oklch(0.99 0.005 200);
+  /* Brand accent (see hooks/use-brand-accent.ts): every primary-derived
+     token takes its hue from --brand-hue, so one variable recolors buttons,
+     focus rings, active tabs and sidebar highlights. --brand-chroma-scale
+     lets a custom pick match its source color's saturation. Defaults are the
+     original clinical teal. */
+  --brand-hue: 195;
+  --brand-chroma-scale: 1;
+
+  --background: oklch(0.99 0.005 calc(var(--brand-hue) + 5));
   --foreground: oklch(0.18 0.02 240);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.18 0.02 240);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.18 0.02 240);
-  --primary: oklch(0.55 0.13 195);
+  --primary: oklch(0.55 calc(0.13 * var(--brand-chroma-scale)) var(--brand-hue));
   --primary-foreground: oklch(0.99 0 0);
   --secondary: oklch(0.96 0.01 200);
   --secondary-foreground: oklch(0.22 0.03 240);
   --muted: oklch(0.96 0.005 220);
   --muted-foreground: oklch(0.52 0.02 240);
-  --accent: oklch(0.94 0.02 195);
-  --accent-foreground: oklch(0.22 0.06 195);
+  --accent: oklch(0.94 calc(0.02 * var(--brand-chroma-scale)) var(--brand-hue));
+  --accent-foreground: oklch(0.22 calc(0.06 * var(--brand-chroma-scale)) var(--brand-hue));
   --destructive: oklch(0.6 0.22 27);
   --destructive-foreground: oklch(0.99 0 0);
   --border: oklch(0.91 0.01 220);
   --input: oklch(0.91 0.01 220);
-  --ring: oklch(0.55 0.13 195);
+  --ring: oklch(0.55 calc(0.13 * var(--brand-chroma-scale)) var(--brand-hue));
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0.005 200);
+  --sidebar: oklch(0.985 0.005 calc(var(--brand-hue) + 5));
   --sidebar-foreground: oklch(0.22 0.02 240);
-  --sidebar-accent: oklch(0.94 0.03 195);
-  --sidebar-accent-foreground: oklch(0.3 0.1 195);
+  --sidebar-accent: oklch(0.94 calc(0.03 * var(--brand-chroma-scale)) var(--brand-hue));
+  --sidebar-accent-foreground: oklch(0.3 calc(0.1 * var(--brand-chroma-scale)) var(--brand-hue));
   --sidebar-border: oklch(0.91 0.01 220);
 }
 
@@ -79,23 +87,23 @@
   --card-foreground: oklch(0.93 0.005 240);
   --popover: oklch(0.21 0.012 240);
   --popover-foreground: oklch(0.93 0.005 240);
-  --primary: oklch(0.72 0.12 195);
+  --primary: oklch(0.72 calc(0.12 * var(--brand-chroma-scale)) var(--brand-hue));
   --primary-foreground: oklch(0.16 0.02 240);
   --secondary: oklch(0.26 0.015 240);
   --secondary-foreground: oklch(0.93 0.01 240);
   --muted: oklch(0.26 0.012 240);
   --muted-foreground: oklch(0.65 0.02 240);
-  --accent: oklch(0.3 0.03 195);
-  --accent-foreground: oklch(0.88 0.04 195);
+  --accent: oklch(0.3 calc(0.03 * var(--brand-chroma-scale)) var(--brand-hue));
+  --accent-foreground: oklch(0.88 calc(0.04 * var(--brand-chroma-scale)) var(--brand-hue));
   --destructive: oklch(0.65 0.2 27);
   --destructive-foreground: oklch(0.99 0 0);
   --border: oklch(0.3 0.015 240);
   --input: oklch(0.3 0.015 240);
-  --ring: oklch(0.72 0.12 195);
+  --ring: oklch(0.72 calc(0.12 * var(--brand-chroma-scale)) var(--brand-hue));
   --sidebar: oklch(0.18 0.012 240);
   --sidebar-foreground: oklch(0.9 0.005 240);
-  --sidebar-accent: oklch(0.28 0.03 195);
-  --sidebar-accent-foreground: oklch(0.88 0.04 195);
+  --sidebar-accent: oklch(0.28 calc(0.03 * var(--brand-chroma-scale)) var(--brand-hue));
+  --sidebar-accent-foreground: oklch(0.88 calc(0.04 * var(--brand-chroma-scale)) var(--brand-hue));
   --sidebar-border: oklch(0.28 0.015 240);
 }
 
@@ -103,13 +111,85 @@
   * { @apply border-border; }
   /* Explicit, not `light dark`: the theme hook (and the no-flash script in
      index.html) always apply .dark before paint, so the used scheme must not
-     drift with the OS while a manual light theme is selected. */
+     drift with the OS setting while a manual light theme is selected. */
   html { color-scheme: light; }
   .dark { color-scheme: dark; }
   body {
     @apply bg-background text-foreground;
     font-family: "Inter", system-ui, -apple-system, sans-serif;
   }
+}
+
+/* ── Accessibility preferences (see hooks/use-accessibility.ts) ─────── */
+
+/* High contrast: deepen text/surface separation and make focus and borders
+   unmissable. Applied via the .a11y-contrast class on <html>; follows the OS
+   `prefers-contrast: more` by default. Works in both light and dark themes. */
+html.a11y-contrast {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.12 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.12 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.12 0 0);
+  --primary: oklch(0.42 calc(0.16 * var(--brand-chroma-scale)) var(--brand-hue));
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.94 0.01 200);
+  --secondary-foreground: oklch(0.1 0 0);
+  --muted: oklch(0.94 0 0);
+  --muted-foreground: oklch(0.32 0 0);
+  --accent: oklch(0.9 calc(0.03 * var(--brand-chroma-scale)) var(--brand-hue));
+  --accent-foreground: oklch(0.1 0 0);
+  --destructive: oklch(0.5 0.24 27);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.55 0 0);
+  --input: oklch(0.55 0 0);
+  --ring: oklch(0.3 calc(0.14 * var(--brand-chroma-scale)) var(--brand-hue));
+  --ring-offset-color: oklch(1 0 0);
+  --sidebar: oklch(0.97 0 0);
+  --sidebar-foreground: oklch(0.12 0 0);
+  --sidebar-accent: oklch(0.88 calc(0.04 * var(--brand-chroma-scale)) var(--brand-hue));
+  --sidebar-accent-foreground: oklch(0.1 0 0);
+  --sidebar-border: oklch(0.55 0 0);
+}
+.dark.a11y-contrast {
+  --background: oklch(0.1 0 0);
+  --foreground: oklch(0.98 0 0);
+  --card: oklch(0.13 0 0);
+  --card-foreground: oklch(0.98 0 0);
+  --popover: oklch(0.13 0 0);
+  --popover-foreground: oklch(0.98 0 0);
+  --primary: oklch(0.85 calc(0.14 * var(--brand-chroma-scale)) var(--brand-hue));
+  --primary-foreground: oklch(0.05 0 0);
+  --secondary: oklch(0.24 0 0);
+  --secondary-foreground: oklch(0.98 0 0);
+  --muted: oklch(0.24 0 0);
+  --muted-foreground: oklch(0.82 0 0);
+  --accent: oklch(0.28 calc(0.04 * var(--brand-chroma-scale)) var(--brand-hue));
+  --accent-foreground: oklch(0.98 0 0);
+  --destructive: oklch(0.7 0.22 27);
+  --destructive-foreground: oklch(0.05 0 0);
+  --border: oklch(0.6 0 0);
+  --input: oklch(0.6 0 0);
+  --ring: oklch(0.85 calc(0.14 * var(--brand-chroma-scale)) var(--brand-hue));
+  --sidebar: oklch(0.11 0 0);
+  --sidebar-foreground: oklch(0.98 0 0);
+  --sidebar-accent: oklch(0.28 calc(0.04 * var(--brand-chroma-scale)) var(--brand-hue));
+  --sidebar-accent-foreground: oklch(0.98 0 0);
+  --sidebar-border: oklch(0.6 0 0);
+}
+
+/* Reduced motion: kill decorative animation and smooth scrolling globally.
+   Transition-based interactions (dropdown fade, hover tints) are treated as
+   essential feedback and keep their END state visible instantly via 0.01ms.
+   Respects the OS `prefers-reduced-motion: reduce` by default. */
+html.a11y-reduce-motion *,
+html.a11y-reduce-motion *::before,
+html.a11y-reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
 }
 
 /* Striped pattern used for past/closed time slots in the agenda.

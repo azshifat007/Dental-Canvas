@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Pencil, Trash2, UserRound } from "lucide-react";
 import { api } from "@/api";
 import { useApp } from "@/context";
@@ -26,6 +26,11 @@ export function PatientPage({ id, navigate }: Props) {
   const [patient, setPatient] = useState<Patient | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
+  // Keep a ref to the context so the fetch effect doesn't depend on `app` —
+  // the context object can change identity across renders, and this effect
+  // must not re-run (it would remount the page and reset tab/dialog state).
+  const appRef = useRef(app);
+  appRef.current = app;
 
   useEffect(() => {
     let cancelled = false;
@@ -34,16 +39,18 @@ export function PatientPage({ id, navigate }: Props) {
         setLoading(true);
         const data = await api<{ patient: Patient }>("GET", `/api/patients/${id}`);
         if (!cancelled) setPatient(data.patient);
-      } catch (err) {
-        if (!cancelled) app.setError((err as Error).message);
-      } finally {
         if (!cancelled) setLoading(false);
+      } catch (err) {
+        if (!cancelled) {
+          appRef.current.setError((err as Error).message);
+          setLoading(false);
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [id, app]);
+  }, [id]);
 
   async function deletePatient() {
     if (!patient) return;

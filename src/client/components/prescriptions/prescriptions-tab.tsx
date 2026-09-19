@@ -1,13 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
-import { FileText, Plus, Printer, Share2, Trash2 } from "lucide-react";
+import { Copy, Eye, FileText, Plus, Printer, Trash2 } from "lucide-react";
 import { api } from "@/api";
 import { useApp } from "@/context";
-import type { Prescription, PrescriptionItem, PrescriptionTemplate } from "@/types";
+import type {
+  Patient,
+  Prescription,
+  PrescriptionItem,
+  PrescriptionTemplate,
+  TreatmentPlanItem,
+} from "@/types";
 import { formatDate } from "@/lib/utils";
+import { PrescriptionPreviewModal } from "./prescription-preview-modal";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -17,6 +25,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TemplatePickerGrid } from "./template-picker";
+import type { PrescriptionSheetData } from "./prescription-sheet";
+import { DrugAutocomplete } from "./drug-autocomplete";
+import type { DrugPreset } from "@/lib/dental-drugs";
 
 /**
  * Prescriptions tab on the patient record: lists issued prescriptions and
@@ -35,6 +46,25 @@ export function PrescriptionsTab({
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Prescription | null>(null);
   const [creating, setCreating] = useState(false);
+  const [duplicating, setDuplicating] = useState<Prescription | null>(null);
+  // Patient display name for the preview sheet's patient block.
+  const [patientName, setPatientName] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    api<{ patient: Patient }>("GET", `/api/patients/${patientId}`)
+      .then((res) => {
+        if (!cancelled) {
+          setPatientName(`${res.patient.first_name ?? ""} ${res.patient.last_name ?? ""}`.trim());
+        }
+      })
+      .catch(() => {
+        /* preview falls back to "Patient" — not worth an error banner */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [patientId]);
 
   const reload = useCallback(async () => {
     try {
@@ -57,6 +87,16 @@ export function PrescriptionsTab({
     try {
       await api("DELETE", `/api/prescriptions/${id}`);
       setList((prev) => prev.filter((p) => p.id !== id));
+    } catch (err) {
+      app.setError((err as Error).message);
+    }
+  }
+
+  /** Fetch the full prescription (with items) and open the editor pre-filled as a new one. */
+  async function duplicate(rx: Prescription) {
+    try {
+      const res = await api<{ prescription: Prescription }>("GET", `/api/prescriptions/${rx.id}`);
+      setDuplicating(res.prescription);
     } catch (err) {
       app.setError((err as Error).message);
     }
@@ -91,7 +131,6 @@ export function PrescriptionsTab({
                 <th className="px-3 py-2 font-semibold">Date</th>
                 <th className="px-3 py-2 font-semibold">Medications</th>
                 <th className="px-3 py-2 font-semibold">Prescriber</th>
-                <th className="px-3 py-2 font-semibold">Shared</th>
                 <th className="px-3 py-2"></th>
               </tr>
             </thead>
@@ -105,15 +144,6 @@ export function PrescriptionsTab({
                   </td>
                   <td className="px-3 py-2 text-muted-foreground">{rx.practitioner_name ?? "—"}</td>
                   <td className="px-3 py-2">
-                    {rx.share_token && !rx.share_revoked ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
-                        <Share2 className="h-3 w-3" /> Active link
-                      </span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
                     <div className="flex justify-end gap-1">
                       <Button
                         size="sm"
@@ -121,6 +151,15 @@ export function PrescriptionsTab({
                         onClick={() => navigate(`/patients/${patientId}/prescriptions/${rx.id}`)}
                       >
                         <Printer className="h-4 w-4" /> Print
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => duplicate(rx)}
+                        className="text-muted-foreground"
+                        title="Duplicate"
+                      >
+                        <Copy className="h-4 w-4" />
                       </Button>
                       <Button size="icon" variant="ghost" onClick={() => setEditing(rx)} title="Edit">
                         <FileText className="h-4 w-4" />
@@ -144,23 +183,28 @@ export function PrescriptionsTab({
       )}
 
       <PrescriptionDialog
-        open={creating || editing !== null}
+        open={creating || editing !== null || duplicating !== null}
         onOpenChange={(o) => {
           if (!o) {
             setCreating(false);
             setEditing(null);
+            setDuplicating(null);
           }
         }}
         patientId={patientId}
+        patientName={patientName}
         prescription={editing}
+        duplicateOf={duplicating}
         onSaved={() => {
           setCreating(false);
           setEditing(null);
+          setDuplicating(null);
           reload();
         }}
         onOpenPrint={(id) => {
           setCreating(false);
           setEditing(null);
+          setDuplicating(null);
           navigate(`/patients/${patientId}/prescriptions/${id}`);
         }}
       />
@@ -178,41 +222,77 @@ interface DraftItem {
 
 const EMPTY_ITEM: DraftItem = { drug_name: "", dosage: "", frequency: "", duration: "", instructions: "" };
 
-function PrescriptionDialog({
+/**
+ * The prescription editor dialog. Exported so the dashboard's consultation
+ * card can mount the same editor for issuing a prescription mid-visit.
+ */
+export function PrescriptionDialog({
   open,
   onOpenChange,
   patientId,
+  patientName,
   prescription,
+  duplicateOf,
   onSaved,
   onOpenPrint,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   patientId: number;
+  /** Display name for the preview sheet's patient block. */
+  patientName: string;
   prescription: Prescription | null;
+  /** Source prescription when duplicating — prefills everything but stays a new record. */
+  duplicateOf: Prescription | null;
   onSaved: () => void;
   onOpenPrint: (id: number) => void;
 }) {
   const app = useApp();
   const isEdit = prescription !== null;
   const [issuedDate, setIssuedDate] = useState("");
-  const [template, setTemplate] = useState<PrescriptionTemplate>("classic");
+  const [template, setTemplate] = useState<PrescriptionTemplate>("chamber");
+  const [largePrint, setLargePrint] = useState(false);
+  const [tooth, setTooth] = useState("");
+  const [planItemId, setPlanItemId] = useState<string>("none");
+  /** The patient's treatment-plan items, loaded once for the plan picker. */
+  const [planItems, setPlanItems] = useState<TreatmentPlanItem[]>([]);
   const [practitionerId, setPractitionerId] = useState<string>("none");
   const [diagnosis, setDiagnosis] = useState("");
   const [advice, setAdvice] = useState("");
   const [followUp, setFollowUp] = useState("");
   const [items, setItems] = useState<DraftItem[]>([{ ...EMPTY_ITEM }]);
   const [saving, setSaving] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+
+  // Load the plan items for the picker (only while the dialog is open).
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    api<{ items: TreatmentPlanItem[] }>("GET", `/api/patients/${patientId}/treatment-plan`)
+      .then((res) => {
+        if (!cancelled) setPlanItems(res.items);
+      })
+      .catch(() => {
+        /* picker just stays empty */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, patientId]);
 
   useEffect(() => {
     if (!open) return;
+    const source = prescription ?? duplicateOf;
     setIssuedDate(prescription?.issued_date ?? new Date().toISOString().slice(0, 10));
-    setTemplate(prescription?.template ?? "classic");
-    setPractitionerId(prescription?.practitioner_id ? String(prescription.practitioner_id) : "none");
-    setDiagnosis(prescription?.diagnosis ?? "");
-    setAdvice(prescription?.advice ?? "");
-    setFollowUp(prescription?.follow_up ?? "");
-    const existing = prescription?.items ?? [];
+    setTemplate(source?.template ?? "chamber");
+    setLargePrint(Boolean(source?.large_print));
+    setTooth(source?.tooth ?? "");
+    setPlanItemId(source?.plan_item_id ? String(source.plan_item_id) : "none");
+    setPractitionerId(source?.practitioner_id ? String(source.practitioner_id) : "none");
+    setDiagnosis(source?.diagnosis ?? "");
+    setAdvice(source?.advice ?? "");
+    setFollowUp(source?.follow_up ?? "");
+    const existing = source?.items ?? [];
     setItems(
       existing.length > 0
         ? existing.map((i: PrescriptionItem) => ({
@@ -224,18 +304,82 @@ function PrescriptionDialog({
           }))
         : [{ ...EMPTY_ITEM }],
     );
-  }, [open, prescription]);
+  }, [open, prescription, duplicateOf]);
 
   function setItem(index: number, patch: Partial<DraftItem>) {
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, ...patch } : it)));
+  }
+
+  /**
+   * Choosing a plan procedure autofills the tooth and, when the diagnosis is
+   * empty, suggests the procedure name — one pick instead of four typed fields.
+   * Editing fields afterwards is always allowed.
+   */
+  function pickPlanItem(value: string) {
+    setPlanItemId(value);
+    if (value === "none") return;
+    const item = planItems.find((p) => String(p.id) === value);
+    if (!item) return;
+    if (item.tooth) setTooth(item.tooth);
+    setDiagnosis((d) => d.trim() || item.treatment_name || d);
   }
 
   function addRow() {
     setItems((prev) => [...prev, { ...EMPTY_ITEM }]);
   }
 
+  /** Committing a preset fills dosage/frequency/duration/instructions for that row. */
+  function applyPreset(index: number, preset: DrugPreset) {
+    setItem(index, {
+      dosage: preset.dosage,
+      frequency: preset.frequency,
+      duration: preset.duration,
+      instructions: preset.instructions,
+    });
+  }
+
   function removeRow(index: number) {
     setItems((prev) => (prev.length === 1 ? [{ ...EMPTY_ITEM }] : prev.filter((_, i) => i !== index)));
+  }
+
+  /** The sheet as it would print right now, from the unsaved draft. */
+  function draftSheetData(): PrescriptionSheetData | null {
+    const valid = items.filter((i) => i.drug_name.trim());
+    if (valid.length === 0) {
+      app.setError("Add at least one medication to preview.");
+      return null;
+    }
+    const prescriber = app.practitioners.find((p) => String(p.id) === practitionerId);
+    return {
+      clinic_name: app.profile.clinic_name || null,
+      clinic_address: app.profile.clinic_address || null,
+      clinic_phone: app.profile.doctor_phone || null,
+      clinic_logo: app.profile.clinic_logo || null,
+      doctor_name: app.profile.doctor_name || "Doctor",
+      doctor_specialty: app.profile.doctor_specialty || null,
+      doctor_license: app.profile.doctor_license || null,
+      patient_name: patientName || "Patient",
+      practitioner_name: prescriber?.name ?? null,
+      issued_date: issuedDate,
+      template,
+      large_print: largePrint,
+      tooth: tooth.trim() || null,
+      plan_treatment_name: planItems.find((p) => String(p.id) === planItemId)?.treatment_name ?? null,
+      diagnosis: diagnosis.trim() || null,
+      advice: advice.trim() || null,
+      follow_up: followUp.trim() || null,
+      items: valid.map((i) => ({
+        drug_name: i.drug_name.trim(),
+        dosage: i.dosage.trim() || null,
+        frequency: i.frequency.trim() || null,
+        duration: i.duration.trim() || null,
+        instructions: i.instructions.trim() || null,
+      })),
+    };
+  }
+
+  function openPreview() {
+    if (draftSheetData()) setPreviewOpen(true);
   }
 
   async function save(e: React.FormEvent, thenPrint: boolean) {
@@ -252,6 +396,9 @@ function PrescriptionDialog({
         practitioner_id: practitionerId === "none" ? null : Number(practitionerId),
         issued_date: issuedDate || null,
         template,
+        large_print: largePrint,
+        tooth: tooth.trim() || null,
+        plan_item_id: planItemId === "none" ? null : Number(planItemId),
         diagnosis: diagnosis.trim() || null,
         advice: advice.trim() || null,
         follow_up: followUp.trim() || null,
@@ -263,9 +410,11 @@ function PrescriptionDialog({
           instructions: i.instructions.trim() || null,
         })),
       };
-      const res = isEdit
-        ? await api<{ prescription: Prescription }>("PUT", `/api/prescriptions/${prescription!.id}`, body)
-        : await api<{ prescription: Prescription }>("POST", "/api/prescriptions", body);
+      // Duplicate mode passes prescription=null, so this naturally creates a new record.
+      const res =
+        isEdit && !duplicateOf
+          ? await api<{ prescription: Prescription }>("PUT", `/api/prescriptions/${prescription!.id}`, body)
+          : await api<{ prescription: Prescription }>("POST", "/api/prescriptions", body);
       onSaved();
       if (thenPrint) onOpenPrint(res.prescription.id);
     } catch (err) {
@@ -280,6 +429,13 @@ function PrescriptionDialog({
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{isEdit ? "Edit prescription" : "New prescription"}</DialogTitle>
+          {duplicateOf !== null ? (
+            <DialogDescription>
+              Duplicating the prescription from{" "}
+              {duplicateOf.issued_date ? formatDate(duplicateOf.issued_date) : "an earlier visit"} — medications,
+              diagnosis and advice are copied; the issue date is today.
+            </DialogDescription>
+          ) : null}
         </DialogHeader>
         <form onSubmit={(e) => save(e, false)} className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-3">
@@ -309,13 +465,56 @@ function PrescriptionDialog({
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label className="text-xs">Diagnosis</Label>
-            <Input
-              value={diagnosis}
-              onChange={(e) => setDiagnosis(e.target.value)}
-              placeholder="e.g. Acute periapical abscess, tooth 36"
+          <label className="flex cursor-pointer items-center gap-2.5 rounded-md border bg-muted/30 px-3 py-2.5">
+            <input
+              type="checkbox"
+              checked={largePrint}
+              onChange={(e) => setLargePrint(e.target.checked)}
+              className="h-4 w-4 accent-primary"
             />
+            <span className="text-sm">
+              Large print
+              <span className="block text-xs text-muted-foreground">
+                Enlarged medication and advice text for visually impaired patients.
+              </span>
+            </span>
+          </label>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Linked procedure</Label>
+              <Select value={planItemId} onValueChange={pickPlanItem}>
+                <SelectTrigger>
+                  <SelectValue placeholder="None" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">— None —</SelectItem>
+                  {planItems.map((p) => (
+                    <SelectItem key={p.id} value={String(p.id)}>
+                      {p.treatment_name ?? "Treatment"}
+                      {p.tooth ? ` · tooth ${p.tooth}` : ""}
+                      {p.treatment_code ? ` (${p.treatment_code})` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Tooth</Label>
+              <Input
+                value={tooth}
+                onChange={(e) => setTooth(e.target.value)}
+                placeholder="e.g. 36"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Diagnosis</Label>
+              <Input
+                value={diagnosis}
+                onChange={(e) => setDiagnosis(e.target.value)}
+                placeholder="e.g. Acute periapical abscess, tooth 36"
+              />
+            </div>
           </div>
 
           {/* Medication rows */}
@@ -324,11 +523,11 @@ function PrescriptionDialog({
             <div className="space-y-2">
               {items.map((item, i) => (
                 <div key={i} className="grid gap-2 rounded-md border bg-muted/30 p-2 sm:grid-cols-[2fr_1fr_1fr_1fr_1.5fr_auto]">
-                  <Input
+                  <DrugAutocomplete
+                    inputId={`drug-${i}`}
                     value={item.drug_name}
-                    onChange={(e) => setItem(i, { drug_name: e.target.value })}
-                    placeholder="Drug (required)"
-                    className="h-9"
+                    onChange={(v) => setItem(i, { drug_name: v })}
+                    onPick={(preset) => applyPreset(i, preset)}
                     required
                   />
                   <Input value={item.dosage} onChange={(e) => setItem(i, { dosage: e.target.value })} placeholder="500 mg" className="h-9" />
@@ -365,6 +564,9 @@ function PrescriptionDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
               Cancel
             </Button>
+            <Button type="button" variant="outline" disabled={saving} onClick={openPreview}>
+              <Eye className="h-4 w-4" /> Preview
+            </Button>
             <Button type="submit" variant="secondary" disabled={saving}>
               {saving ? "Saving…" : "Save"}
             </Button>
@@ -373,6 +575,17 @@ function PrescriptionDialog({
             </Button>
           </DialogFooter>
         </form>
+
+        {previewOpen && draftSheetData() && (
+          <PrescriptionPreviewModal
+            open={previewOpen}
+            onOpenChange={setPreviewOpen}
+            data={draftSheetData()!}
+            title={`Preview — ${patientName || "Patient"}`}
+            onTemplateChange={setTemplate}
+            onLargePrintChange={setLargePrint}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );

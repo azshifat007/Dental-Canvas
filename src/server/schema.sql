@@ -257,7 +257,10 @@ CREATE TABLE IF NOT EXISTS prescriptions (
   patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
   practitioner_id INTEGER REFERENCES practitioners(id) ON DELETE SET NULL,
   issued_date TEXT NOT NULL DEFAULT (date('now')),
-  template TEXT NOT NULL DEFAULT 'classic', -- 'classic' | 'modern' | 'compact'
+  template TEXT NOT NULL DEFAULT 'chamber', -- see PrescriptionTemplate in src/client/types.ts
+  large_print INTEGER NOT NULL DEFAULT 0, -- 1 = enlarged type for visually impaired patients
+  tooth TEXT,                           -- tooth the prescription relates to, e.g. '14'
+  plan_item_id INTEGER REFERENCES treatment_plan_items(id) ON DELETE SET NULL, -- linked planned procedure
   diagnosis TEXT,
   advice TEXT,                          -- general instructions to the patient
   follow_up TEXT,                       -- e.g. 'Recheck in 2 weeks'

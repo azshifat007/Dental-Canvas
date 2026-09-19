@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ArrowLeftRight,
   Eye,
+  FilePlus2,
   MoreHorizontal,
   Plus,
   Trash2,
@@ -17,6 +18,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { PrescriptionDialog } from "@/components/prescriptions/prescriptions-tab";
 import type { Patient } from "@/types";
 
 // ── Dentist note type + add dialog (used by the notes panel) ───────
@@ -246,6 +248,8 @@ interface ConsultationData {
   last_checked: string | null;
   observation: string | null;
   prescription: string | null;
+  /** Date of the most recent issued prescription (yyyy-mm-dd), if any. */
+  last_prescribed: string | null;
   conditions: { condition: string; n: number }[];
 }
 
@@ -264,14 +268,18 @@ export function ConsultationPanel({ navigate }: { navigate: (to: string) => void
   const [patient, setPatient] = useState<Patient | null>(null);
   const [data, setData] = useState<ConsultationData | null>(null);
   const [loading, setLoading] = useState(true);
+  /** Whether the prescription editor is open for the selected patient. */
+  const [rxOpen, setRxOpen] = useState(false);
 
   const loadFor = useCallback(async (pid: number | null) => {
     setLoading(true);
     try {
       if (pid) {
-        const res = await api<{ consultation: ConsultationData }>("GET", `/api/dashboard/consultation?patient_id=${pid}`);
-        setPatient(res.consultation.patient as unknown as Patient);
-        setData(res.consultation);
+        // The endpoint returns the consultation object flat ({patient, ...}),
+        // matching tests/dashboard.test.ts.
+        const res = await api<ConsultationData>("GET", `/api/dashboard/consultation?patient_id=${pid}`);
+        setPatient(res.patient as unknown as Patient);
+        setData(res);
       } else {
         setPatient(null);
         setData(null);
@@ -326,7 +334,15 @@ export function ConsultationPanel({ navigate }: { navigate: (to: string) => void
       <div className="flex items-start justify-between gap-2">
         <h2 className="text-lg font-semibold tracking-tight">Consultation</h2>
         {patient && (
-          <DropdownMenu>
+          <div className="flex items-center gap-1.5">
+            <Button
+              size="sm"
+              className="h-8 rounded-lg bg-sky-600 text-white hover:bg-sky-700 dark:bg-sky-500 dark:text-sky-950 dark:hover:bg-sky-400"
+              onClick={() => setRxOpen(true)}
+            >
+              <FilePlus2 className="h-4 w-4" /> New Prescription
+            </Button>
+            <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full">
                 <MoreHorizontal className="h-4 w-4" />
@@ -341,6 +357,7 @@ export function ConsultationPanel({ navigate }: { navigate: (to: string) => void
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          </div>
         )}
       </div>
 
@@ -421,7 +438,37 @@ export function ConsultationPanel({ navigate }: { navigate: (to: string) => void
             <Row label="Prescription">
               {data.prescription ? data.prescription.split(",").join(", ") : "None recorded."}
             </Row>
+            <Row label="Last ℞">
+              {data.last_prescribed
+                ? new Date(`${data.last_prescribed}T00:00:00`).toLocaleDateString(undefined, {
+                    day: "numeric",
+                    month: "short",
+                    year: "numeric",
+                  })
+                : "—"}
+            </Row>
           </div>
+
+          {/* Issue a prescription without leaving the dashboard. Saving closes
+              the dialog and refreshes the card; Save & Print opens the print view. */}
+          {patient && (
+            <PrescriptionDialog
+              open={rxOpen}
+              onOpenChange={setRxOpen}
+              patientId={patient.id}
+              patientName={`${patient.first_name} ${patient.last_name}`}
+              prescription={null}
+              duplicateOf={null}
+              onSaved={() => {
+                setRxOpen(false);
+                void loadFor(patient.id);
+              }}
+              onOpenPrint={(id) => {
+                setRxOpen(false);
+                navigate(`/patients/${patient.id}/prescriptions/${id}`);
+              }}
+            />
+          )}
         </>
       )}
     </div>

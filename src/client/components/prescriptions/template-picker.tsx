@@ -14,13 +14,19 @@ const SAMPLE_DATA: PrescriptionSheetData = {
   clinic_name: "Bright Smile Dental",
   clinic_address: "123 Main St",
   clinic_phone: "+1 555 010 2030",
+  // Inline SVG logo so the WYSIWYG thumbnails show where the clinic logo lands.
+  clinic_logo:
+    "data:image/svg+xml;utf8," +
+    encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%230e7490"><path d="M12 2C8.5 2 7 4.5 7 8c0 2.2.4 3.4.4 5.2 0 1.9-.9 4.6-.9 6.3 0 1.4.8 2.5 2 2.5 1.6 0 2-2.3 2.6-4.6.3-1.2.5-1.9.9-1.9s.6.7.9 1.9c.6 2.3 1 4.6 2.6 4.6 1.2 0 2-1.1 2-2.5 0-1.7-.9-4.4-.9-6.3C16.6 11.4 17 10.2 17 8c0-3.5-1.5-6-5-6Z"/></svg>',
+    ),
   doctor_name: "Sarah",
   doctor_specialty: "Dentist",
   doctor_license: "DDS-102938",
   patient_name: "Jane Cooper",
   patient_age: "32 yrs",
   issued_date: new Date().toISOString().slice(0, 10),
-  template: "classic",
+  template: "chamber",
   diagnosis: "Periapical abscess, tooth 36",
   advice: "Warm salt-water rinses.",
   follow_up: "Recheck in 2 weeks",

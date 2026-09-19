@@ -4,12 +4,14 @@ import { useAppState } from "./hooks/use-app-state";
 import { useRouter } from "./hooks/use-router";
 import { AppContext } from "./context";
 import { Sidebar } from "./components/sidebar";
+import { MobileTopBar, BottomNav } from "./components/mobile-nav";
 import { ErrorBanner } from "./components/error-banner";
 import { useAutoBackup } from "./hooks/use-auto-backup";
 import { useTheme } from "./hooks/use-theme";
+import { useAccessibility } from "./hooks/use-accessibility";
+import { useBrandAccent } from "./hooks/use-brand-accent";
 import { SearchPalette, useGlobalSearchHotkey } from "./components/search/search-palette";
 import { PatientDialog } from "./components/patients/patient-dialog";
-import { PublicPrescriptionView } from "./components/prescriptions/public-prescription-view";
 import { PrescriptionPrintView } from "./components/prescriptions/prescription-print-view";
 import { InvoicePrintView } from "./components/patients/invoice-print-view";
 import { OPEN_REGISTER_PATIENT } from "./lib/quick-register";
@@ -33,6 +35,12 @@ export function App() {
 
   // Theme: follows the OS dark mode by default, with a manual override.
   useTheme();
+
+  // Accessibility prefs (high contrast, reduced motion) — same lifecycle.
+  useAccessibility();
+
+  // Clinic brand accent color (re-colors the primary teal).
+  useBrandAccent();
 
   // Deep-link support: pages can request the search palette via ?search=open.
   useEffect(() => {
@@ -72,22 +80,17 @@ export function App() {
   }, []);
   useEffect(() => { reportLocation(window.location.pathname + window.location.search); }, [path]);
 
-  // Public prescription share view renders bare — no sidebar, no shell — so
-  // the printed sheet looks right and patients see nothing else.
-  if (route.name === "public-prescription") {
-    return (
-      <AppContext.Provider value={state}>
-        <PublicPrescriptionView token={route.token} />
-        <ErrorBanner />
-      </AppContext.Provider>
-    );
-  }
+  // Full-screen paper routes (prescription/invoice print views) render without
+  // nav chrome, like a document viewer.
+  const isPrintRoute = route.name === "patient-prescription" || route.name === "patient-invoice";
 
   return (
     <AppContext.Provider value={state}>
-      <div className="flex h-screen min-h-0 overflow-hidden">
-        <Sidebar route={route} navigate={navigate} onOpenSearch={openSearch} />
-        <main className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex h-screen min-h-0 flex-col md:flex-row overflow-hidden">
+        {!isPrintRoute && <MobileTopBar onOpenSearch={openSearch} />}
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <Sidebar route={route} navigate={navigate} onOpenSearch={openSearch} />
+          <main className="flex flex-1 flex-col overflow-hidden">
           {state.loading ? (
             <div className="flex flex-1 items-center justify-center text-muted-foreground">
               Loading…
@@ -113,6 +116,8 @@ export function App() {
             </>
           )}
         </main>
+        </div>
+        {!isPrintRoute && <BottomNav route={route} navigate={navigate} />}
         <ErrorBanner />
       </div>
       <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} navigate={navigate} />

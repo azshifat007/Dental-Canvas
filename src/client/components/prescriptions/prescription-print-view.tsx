@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Copy, Check, Download, Link2, Link2Off, Printer } from "lucide-react";
+import { ALargeSmall, ArrowLeft, Download, Eye, Printer, Share2 } from "lucide-react";
 import { api } from "@/api";
 import { useApp } from "@/context";
 import type { Prescription, PrescriptionTemplate } from "@/types";
+import { cn } from "@/lib/utils";
 import { PrescriptionSheet, isPrescriptionTemplate } from "./prescription-sheet";
+import { PrescriptionPreviewModal } from "./prescription-preview-modal";
 import { TemplateDropdown } from "./template-picker";
+import { printSheetHtml, downloadSheetPdf, shareSheetPdf } from "@/lib/print";
+import { ageFromDob } from "@/lib/utils";
 
 /**
  * In-app prescription print/share view: shows the A4 sheet scaled to the
- * viewport, with a toolbar for printing, downloading, template switching and
- * share-link management. The public share page renders the same sheet bare.
+ * viewport, with a toolbar for printing, PDF download, template switching and
+ * PDF-file sharing (native share sheet where available).
  */
 
 const TEMPLATE_LABELS: Record<PrescriptionTemplate, string> = {
+  chamber: "Chamber",
   classic: "Classic",
   modern: "Modern",
   compact: "Compact",
@@ -32,6 +37,7 @@ export function PrescriptionPrintView({
   const app = useApp();
   const [rx, setRx] = useState<Prescription | null>(null);
   const [loading, setLoading] = useState(true);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const printHostRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -54,53 +60,27 @@ export function PrescriptionPrintView({
 
   const sheetData = rx ? buildSheetData(rx, app.profile) : null;
 
-  /** Print by cloning the sheet markup into a dedicated iframe. */
+  /** Print by cloning the sheet markup into a dedicated iframe (shared helper). */
   const printSheet = useCallback(() => {
-    const host = printHostRef.current;
-    if (!host) return;
-    const frame = document.createElement("iframe");
-    frame.style.position = "fixed";
-    frame.style.right = "0";
-    frame.style.bottom = "0";
-    frame.style.width = "0";
-    frame.style.height = "0";
-    frame.style.border = "0";
-    document.body.appendChild(frame);
-    const doc = frame.contentDocument;
-    if (!doc) return;
-    doc.open();
-    doc.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Prescription</title>
-      <style>
-        @page { size: A4; margin: 0; }
-        html, body { margin: 0; padding: 0; background: #ffffff; }
-        @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
-      </style></head><body>${host.innerHTML}</body></html>`);
-    doc.close();
-    const done = () => {
-      window.setTimeout(() => frame.remove(), 500);
-      frame.removeEventListener("load", done);
-    };
-    frame.addEventListener("load", () => {
-      frame.contentWindow?.focus();
-      frame.contentWindow?.print();
-      done();
-    });
-  }, []);
+    printSheetHtml(printHostRef.current, `Prescription ${rx?.id ?? ""}`);
+  }, [rx?.id]);
 
-  const downloadSheet = useCallback(() => {
-    const host = printHostRef.current;
-    if (!host || !rx) return;
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Prescription ${rx.id}</title>
-      <style>@page { size: A4; margin: 0; } html,body{margin:0;padding:0;background:#fff;}</style>
-      </head><body>${host.innerHTML}</body></html>`;
-    const blob = new Blob([html], { type: "text/html" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `prescription-${(rx.patient_last_name ?? "patient").toLowerCase().replace(/\s+/g, "-")}-${rx.issued_date}.html`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [rx]);
+  const [downloading, setDownloading] = useState(false);
+
+  const downloadSheet = useCallback(async () => {
+    if (!rx) return;
+    setDownloading(true);
+    try {
+      await downloadSheetPdf(
+        printHostRef.current,
+        `prescription-${(rx.patient_last_name ?? "patient").toLowerCase().replace(/\s+/g, "-")}-${rx.issued_date}.pdf`,
+      );
+    } catch (err) {
+      app.setError(`Could not generate the PDF: ${(err as Error).message}`);
+    } finally {
+      setDownloading(false);
+    }
+  }, [rx, app]);
 
   if (loading) {
     return <div className="flex flex-1 items-center justify-center text-muted-foreground">Loading…</div>;
@@ -132,6 +112,13 @@ export function PrescriptionPrintView({
           Prescription · {rx.patient_first_name} {rx.patient_last_name}
         </h1>
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setPreviewOpen(true)}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-background px-3 text-sm hover:bg-accent"
+            title="Full-size preview — exactly what prints"
+          >
+            <Eye className="h-4 w-4" /> Preview
+          </button>
           <TemplateDropdown
             value={rx.template}
             onChange={async (t) => {
@@ -143,9 +130,34 @@ export function PrescriptionPrintView({
               }
             }}
           />
-          <ShareButton rx={rx} onUpdated={setRx} />
-          <button onClick={downloadSheet} className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-background px-3 text-sm hover:bg-accent">
-            <Download className="h-4 w-4" /> Download
+          <button
+            onClick={async () => {
+              try {
+                const updated = await api<{ prescription: Prescription }>("PUT", `/api/prescriptions/${rx.id}`, {
+                  large_print: !rx.large_print,
+                });
+                setRx(updated.prescription);
+              } catch (err) {
+                app.setError((err as Error).message);
+              }
+            }}
+            aria-pressed={Boolean(rx.large_print)}
+            className={cn(
+              "inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm hover:bg-accent",
+              rx.large_print && "border-primary bg-primary/10 text-primary",
+            )}
+            title="Enlarged medication and advice text for visually impaired patients"
+          >
+            <ALargeSmall className="h-4 w-4" />
+            Large print
+          </button>
+          <SharePdfButton rx={rx} printHostRef={printHostRef} />
+          <button
+            onClick={downloadSheet}
+            disabled={downloading}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-background px-3 text-sm hover:bg-accent disabled:opacity-60"
+          >
+            <Download className="h-4 w-4" /> {downloading ? "Generating…" : "PDF"}
           </button>
           <button
             onClick={printSheet}
@@ -163,94 +175,104 @@ export function PrescriptionPrintView({
           </div>
         </div>
       </div>
+
+      {sheetData && (
+        <PrescriptionPreviewModal
+          open={previewOpen}
+          onOpenChange={setPreviewOpen}
+          data={sheetData}
+          title={`Prescription — ${sheetData.patient_name}`}
+          onTemplateChange={async (t) => {
+            // Persist template switches made inside the preview, same as the dropdown.
+            try {
+              const updated = await api<{ prescription: Prescription }>("PUT", `/api/prescriptions/${rx!.id}`, { template: t });
+              setRx(updated.prescription);
+            } catch (err) {
+              app.setError((err as Error).message);
+            }
+          }}
+          onLargePrintChange={async (on) => {
+            try {
+              const updated = await api<{ prescription: Prescription }>("PUT", `/api/prescriptions/${rx!.id}`, { large_print: on });
+              setRx(updated.prescription);
+            } catch (err) {
+              app.setError((err as Error).message);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
 
-/** Create / rotate / revoke + copy the public link. */
-function ShareButton({ rx, onUpdated }: { rx: Prescription; onUpdated: (rx: Prescription) => void }) {
+/**
+ * Share the prescription as a PDF *file* through the platform share sheet
+ * (WhatsApp/SMS/email attachments, save to Files, …); falls back to a plain
+ * download on browsers without Web Share file support.
+ */
+function SharePdfButton({
+  rx,
+  printHostRef,
+}: {
+  rx: Prescription;
+  printHostRef: React.RefObject<HTMLDivElement | null>;
+}) {
   const app = useApp();
-  const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<"shared" | "downloaded" | null>(null);
 
-  const shareUrl = rx.share_token && !rx.share_revoked ? `${window.location.origin}/p/${rx.share_token}` : null;
-
-  async function createOrRotate() {
+  async function share() {
     setBusy(true);
     try {
-      const res = await api<{ share_token: string }>("POST", `/api/prescriptions/${rx.id}/share`);
-      onUpdated({ ...rx, share_token: res.share_token, share_revoked: 0 });
-      await copyLink(`${window.location.origin}/p/${res.share_token}`);
+      const filename = `prescription-${(rx.patient_last_name ?? "patient").toLowerCase().replace(/\s+/g, "-")}-${rx.issued_date}.pdf`;
+      const result = await shareSheetPdf(printHostRef.current, filename, {
+        title: `Prescription — ${rx.patient_first_name ?? ""} ${rx.patient_last_name ?? ""}`.trim(),
+        text: `Prescription from ${rx.issued_date}`,
+      });
+      setDone(result);
+      setTimeout(() => setDone(null), 2500);
     } catch (err) {
-      app.setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function copyLink(url: string) {
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      /* clipboard unavailable — the link is still shown in the dialog below */
-    }
-  }
-
-  async function revoke() {
-    setBusy(true);
-    try {
-      await api("DELETE", `/api/prescriptions/${rx.id}/share`);
-      onUpdated({ ...rx, share_token: null, share_revoked: 0 });
-    } catch (err) {
-      app.setError((err as Error).message);
+      // A user-cancelled share sheet must not look like an error.
+      if ((err as Error)?.name !== "AbortError") {
+        app.setError(`Could not share the PDF: ${(err as Error).message}`);
+      }
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="flex items-center gap-1">
-      {shareUrl ? (
-        <>
-          <button
-            onClick={() => copyLink(shareUrl)}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-background px-3 text-sm hover:bg-accent"
-            title={shareUrl}
-          >
-            {copied ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
-            {copied ? "Copied" : "Copy link"}
-          </button>
-          <button
-            onClick={revoke}
-            disabled={busy}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-background px-2.5 text-sm text-destructive hover:bg-destructive/10"
-            title="Revoke the public link — anyone with it loses access immediately"
-          >
-            <Link2Off className="h-4 w-4" />
-          </button>
-        </>
-      ) : (
-        <button
-          onClick={createOrRotate}
-          disabled={busy}
-          className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-background px-3 text-sm hover:bg-accent"
-        >
-          <Link2 className="h-4 w-4" /> Share
-        </button>
-      )}
-    </div>
+    <button
+      onClick={share}
+      disabled={busy}
+      className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-background px-3 text-sm hover:bg-accent disabled:opacity-60"
+      title="Send the prescription as a PDF file — via WhatsApp, SMS, email or save to device"
+    >
+      <Share2 className="h-4 w-4" />
+      {busy ? "Preparing…" : done === "downloaded" ? "Saved" : done === "shared" ? "Shared" : "Share PDF"}
+    </button>
   );
 }
 
 /** Compose what the sheet needs from the prescription row + practice profile. */
-export function buildSheetData(rx: Prescription, profile: { doctor_name: string; doctor_specialty: string; doctor_license: string; clinic_name: string; clinic_address: string; doctor_phone: string }) {
+export function buildSheetData(
+  rx: Prescription,
+  profile: {
+    doctor_name: string;
+    doctor_specialty: string;
+    doctor_license: string;
+    clinic_name: string;
+    clinic_address: string;
+    doctor_phone: string;
+    clinic_logo?: string;
+  },
+) {
   const alerts = (rx.patient_medical_alerts ?? "").split(",").map((s) => s.trim()).filter(Boolean).join(", ");
   return {
     clinic_name: profile.clinic_name,
     clinic_address: profile.clinic_address,
     clinic_phone: profile.doctor_phone,
+    clinic_logo: profile.clinic_logo ?? null,
     doctor_name: profile.doctor_name || "Doctor",
     doctor_specialty: profile.doctor_specialty,
     doctor_license: profile.doctor_license,
@@ -259,7 +281,10 @@ export function buildSheetData(rx: Prescription, profile: { doctor_name: string;
     patient_medical_alerts: alerts || null,
     practitioner_name: rx.practitioner_name ?? null,
     issued_date: rx.issued_date,
-    template: isPrescriptionTemplate(rx.template) ? rx.template : "classic",
+    template: isPrescriptionTemplate(rx.template) ? rx.template : "chamber",
+    large_print: Boolean(rx.large_print),
+    tooth: rx.tooth,
+    plan_treatment_name: rx.plan_treatment_name ?? null,
     diagnosis: rx.diagnosis,
     advice: rx.advice,
     follow_up: rx.follow_up,
@@ -267,13 +292,4 @@ export function buildSheetData(rx: Prescription, profile: { doctor_name: string;
   };
 }
 
-function ageFromDob(dob: string | null): string | null {
-  if (!dob) return null;
-  const d = new Date(`${dob}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return null;
-  const now = new Date();
-  let age = now.getFullYear() - d.getFullYear();
-  const m = now.getMonth() - d.getMonth();
-  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age--;
-  return `${age} yrs`;
-}
+

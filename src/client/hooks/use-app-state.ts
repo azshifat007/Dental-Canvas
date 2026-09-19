@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import type {
   Appointment,
@@ -37,6 +37,8 @@ export interface ProfileSettings {
   doctor_phone: string;
   doctor_license: string;
   clinic_address: string;
+  /** Data URL of the clinic logo, printed on prescription/invoice letterheads. Empty = none. */
+  clinic_logo: string;
 }
 
 const DEFAULT_SETTINGS: PracticeSettings = {
@@ -53,6 +55,7 @@ export const DEFAULT_PROFILE: ProfileSettings = {
   doctor_phone: "",
   doctor_license: "",
   clinic_address: "",
+  clinic_logo: "",
 };
 
 const PROFILE_KEYS = Object.keys(DEFAULT_PROFILE) as (keyof ProfileSettings)[];
@@ -203,20 +206,35 @@ export function useAppState() {
     return res.patient;
   }, []);
 
-  return {
-    // data
-    operatories, practitioners, treatmentTypes, appointments,
-    waitingList, appointmentsToMake,
-    settings, profile, backupSchedule,
-    loading, error,
-    setError,
-    // refresh
-    refreshLookups, refreshDay, refreshSidePanels,
-    // mutations
-    createAppointment, updateAppointment, deleteAppointment,
-    searchPatients, createPatient,
-    updateSettings, updateProfile, updateBackupSchedule,
-  };
+  // Memoized so the context value keeps a stable identity between renders —
+  // consumers put `app` in effect deps, and a fresh literal every render made
+  // them refetch (and remount, resetting local UI state) on every tick.
+  return useMemo(
+    () => ({
+      // data
+      operatories, practitioners, treatmentTypes, appointments,
+      waitingList, appointmentsToMake,
+      settings, profile, backupSchedule,
+      loading, error,
+      setError,
+      // refresh
+      refreshLookups, refreshDay, refreshSidePanels,
+      // mutations
+      createAppointment, updateAppointment, deleteAppointment,
+      searchPatients, createPatient,
+      updateSettings, updateProfile, updateBackupSchedule,
+    }),
+    [
+      operatories, practitioners, treatmentTypes, appointments,
+      waitingList, appointmentsToMake,
+      settings, profile, backupSchedule,
+      loading, error,
+      refreshLookups, refreshDay, refreshSidePanels,
+      createAppointment, updateAppointment, deleteAppointment,
+      searchPatients, createPatient,
+      updateSettings, updateProfile, updateBackupSchedule,
+    ],
+  );
 }
 
 export type AppStateValue = ReturnType<typeof useAppState>;

@@ -124,7 +124,15 @@ export function InvoicePrintView({
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "3px double #0e7490", paddingBottom: "6mm" }}>
-                <div>
+                <div style={{ display: "flex", alignItems: "center", gap: "5mm" }}>
+                  {profile.clinic_logo ? (
+                    <img
+                      src={profile.clinic_logo}
+                      alt=""
+                      style={{ height: "12mm", maxWidth: "55mm", objectFit: "contain", display: "block" }}
+                    />
+                  ) : null}
+                  <div>
                   <div style={{ fontSize: "18pt", fontWeight: 700 }}>
                     {profile.doctor_name ? (profile.doctor_name.startsWith("Dr") ? profile.doctor_name : `Dr. ${profile.doctor_name}`) : "Dental Practice"}
                   </div>
@@ -133,6 +141,7 @@ export function InvoicePrintView({
                   </div>
                   <div style={{ fontSize: "8pt", color: "#64748b", whiteSpace: "pre-line" }}>
                     {[profile.clinic_name, profile.clinic_address, profile.doctor_phone].filter(Boolean).join("\n")}
+                  </div>
                   </div>
                 </div>
                 <div style={{ textAlign: "right" }}>

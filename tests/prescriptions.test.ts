@@ -65,7 +65,7 @@ describe("prescriptions CRUD", () => {
 
   it("accepts every supported template and rejects unknown ones", async () => {
     const pid = await seedPatient();
-    for (const template of ["classic", "modern", "compact", "elegant", "minimal", "bold", "watermark"]) {
+    for (const template of ["chamber", "classic", "modern", "compact", "elegant", "minimal", "bold", "watermark"]) {
       const { path, init } = jsonRequest("POST", "/api/prescriptions", rxBody(pid, { template }));
       const res = await app.request(path, init, { DB: ctx.db });
       expect(res.status, `template ${template} should be accepted`).toBe(201);
@@ -76,6 +76,113 @@ describe("prescriptions CRUD", () => {
     const bad = jsonRequest("POST", "/api/prescriptions", rxBody(pid, { template: "neon" }));
     const badRes = await app.request(bad.path, bad.init, { DB: ctx.db });
     expect(badRes.status).toBe(400);
+  });
+
+  it("stores and updates the large-print flag", async () => {
+    const pid = await seedPatient();
+
+    // Defaults to off.
+    const created = await app.request(
+      "/api/prescriptions",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rxBody(pid)) },
+      { DB: ctx.db },
+    );
+    const { prescription } = (await created.json()) as { prescription: { id: number; large_print: number } };
+    expect(prescription.large_print).toBe(0);
+
+    // Create with large print on.
+    const big = jsonRequest("POST", "/api/prescriptions", rxBody(pid, { large_print: true }));
+    const bigRes = await app.request(big.path, big.init, { DB: ctx.db });
+    expect(bigRes.status).toBe(201);
+    const { prescription: bigRx } = (await bigRes.json()) as { prescription: { large_print: number } };
+    expect(bigRx.large_print).toBe(1);
+
+    // Flip it off via PUT.
+    const upd = jsonRequest("PUT", `/api/prescriptions/${prescription.id}`, { large_print: true });
+    const updRes = await app.request(upd.path, upd.init, { DB: ctx.db });
+    expect(updRes.status).toBe(200);
+    const { prescription: flipped } = (await updRes.json()) as { prescription: { large_print: number } };
+    expect(flipped.large_print).toBe(1);
+
+    // And it appears in the patient list rows too.
+    const list = await app.request(`/api/patients/${pid}/prescriptions`, undefined, { DB: ctx.db });
+    const data = (await list.json()) as { prescriptions: { large_print: number }[] };
+    expect(data.prescriptions.some((p) => p.large_print === 1)).toBe(true);
+  });
+
+  it("links a tooth and a treatment-plan procedure and joins the name through", async () => {
+    const pid = await seedPatient();
+
+    // A plan item with a treatment type, so the join has something to resolve.
+    const types = await app.request("/api/treatment-types", undefined, { DB: ctx.db });
+    const { treatment_types: ttList } = (await types.json()) as { treatment_types: { id: number }[] };
+    const planRes = await app.request(
+      "/api/treatment-plan-items",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ patient_id: pid, treatment_type_id: ttList[0].id, tooth: "36", fee: 120 }),
+      },
+      { DB: ctx.db },
+    );
+    expect(planRes.status).toBe(201);
+    const { item: planItem } = (await planRes.json()) as { item: { id: number; treatment_name: string } };
+
+    const { path, init } = jsonRequest("POST", "/api/prescriptions", rxBody(pid, { tooth: "36", plan_item_id: planItem.id }));
+    const created = await app.request(path, init, { DB: ctx.db });
+    expect(created.status).toBe(201);
+    const { prescription } = (await created.json()) as {
+      prescription: { id: number; tooth: string | null; plan_item_id: number | null; plan_treatment_name: string | null };
+    };
+    expect(prescription.tooth).toBe("36");
+    expect(prescription.plan_item_id).toBe(planItem.id);
+    // The joined procedure name resolves through the plan item.
+    expect(prescription.plan_treatment_name).toBe(planItem.treatment_name);
+
+    // Detail GET carries the same joined data.
+    const detail = await app.request(`/api/prescriptions/${prescription.id}`, undefined, { DB: ctx.db });
+    const { prescription: full } = (await detail.json()) as { prescription: { plan_treatment_name: string | null } };
+    expect(full.plan_treatment_name).toBe(planItem.treatment_name);
+
+    // Tooth is editable independently of the plan link.
+    const upd = jsonRequest("PUT", `/api/prescriptions/${prescription.id}`, { tooth: "37" });
+    const updRes = await app.request(upd.path, upd.init, { DB: ctx.db });
+    expect(updRes.status).toBe(200);
+    const { prescription: moved } = (await updRes.json()) as { prescription: { tooth: string | null; plan_item_id: number | null } };
+    expect(moved.tooth).toBe("37");
+    expect(moved.plan_item_id).toBe(planItem.id);
+
+    // Deleting the plan item keeps the prescription (SET NULL) but drops the link.
+    const del = await app.request(`/api/treatment-plan-items/${planItem.id}`, { method: "DELETE" }, { DB: ctx.db });
+    expect(del.status).toBe(200);
+    const after = await app.request(`/api/prescriptions/${prescription.id}`, undefined, { DB: ctx.db });
+    const { prescription: orphaned } = (await after.json()) as {
+      prescription: { tooth: string | null; plan_item_id: number | null; plan_treatment_name: string | null };
+    };
+    expect(orphaned.tooth).toBe("37");
+    expect(orphaned.plan_item_id).toBeNull();
+    expect(orphaned.plan_treatment_name).toBeNull();
+  });
+
+  it("carries tooth and joined plan name on the detail payload", async () => {
+    const pid = await seedPatient();
+    const planRes = await app.request(
+      "/api/treatment-plan-items",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ patient_id: pid, tooth: "14", fee: 0 }),
+      },
+      { DB: ctx.db },
+    );
+    const { item: planItem } = (await planRes.json()) as { item: { id: number } };
+    const { path, init } = jsonRequest("POST", "/api/prescriptions", rxBody(pid, { tooth: "14", plan_item_id: planItem.id }));
+    await app.request(path, init, { DB: ctx.db });
+    const list = await app.request(`/api/patients/${pid}/prescriptions`, undefined, { DB: ctx.db });
+    const { prescriptions } = (await list.json()) as { prescriptions: { id: number; tooth: string | null; plan_treatment_name: string | null }[] };
+    expect(prescriptions[0].tooth).toBe("14");
+    // The plan item had no treatment type — name is null but tooth still flows.
+    expect(prescriptions[0].plan_treatment_name).toBeNull();
   });
 
   it("rejects a prescription with no medication rows", async () => {
@@ -137,51 +244,33 @@ describe("prescriptions CRUD", () => {
   });
 });
 
-describe("prescription sharing", () => {
-  it("serves a public view by token with letterhead, and nothing else", async () => {
-    const pid = await seedPatient();
-    const profile = await app.request(
+describe("prescription settings", () => {
+  it("rejects a clinic logo that is not an image data URL", async () => {
+    const res = await app.request(
       "/api/settings",
       {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ doctor_name: "Sarah", doctor_license: "DDS-102938", clinic_name: "Bright Smile" }),
+        body: JSON.stringify({ clinic_logo: "<script>alert(1)</script>" }),
       },
       { DB: ctx.db },
     );
-    expect(profile.status).toBe(200);
+    expect(res.status).toBe(400);
+    const { error } = (await res.json()) as { error: string };
+    expect(error).toMatch(/logo/i);
+  });
+});
 
-    const created = await app.request(
-      "/api/prescriptions",
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rxBody(pid)) },
-      { DB: ctx.db },
-    );
-    const { prescription } = (await created.json()) as { prescription: { id: number } };
-
-    const share = await app.request(`/api/prescriptions/${prescription.id}/share`, { method: "POST" }, { DB: ctx.db });
-    expect(share.status).toBe(200);
-    const { share_token } = (await share.json()) as { share_token: string };
-    expect(share_token).toMatch(/^[a-f0-9]{32}$/);
-
-    const pub = await app.request(`/api/public/prescriptions/${share_token}`, undefined, { DB: ctx.db });
-    expect(pub.status).toBe(200);
-    const data = (await pub.json()) as {
-      prescription: {
-        patient_first_name: string;
-        practice: { doctor_name: string; doctor_license: string };
-        items: unknown[];
-        patient_medical_alerts?: string;
-      };
-    };
-    expect(data.prescription.patient_first_name).toBe("Grace");
-    expect(data.prescription.practice.doctor_name).toBe("Sarah");
-    expect(data.prescription.practice.doctor_license).toBe("DDS-102938");
-    expect(data.prescription.items).toHaveLength(2);
-    // Public payload must not leak contact info or alerts beyond the sheet.
-    expect(data.prescription.patient_medical_alerts).toBeUndefined();
+describe("prescription share endpoints", () => {
+  // Sharing is now a PDF *file* through the platform share sheet (client-side),
+  // so the token-link system was removed: no public endpoint, no share routes,
+  // and the schema no longer needs token columns. These tests pin the removal.
+  it("public token endpoint is gone", async () => {
+    const res = await app.request(`/api/public/prescriptions/${"a".repeat(32)}`, undefined, { DB: ctx.db });
+    expect(res.status).toBe(404);
   });
 
-  it("revoking kills the public link", async () => {
+  it("share create/rotate routes are gone", async () => {
     const pid = await seedPatient();
     const created = await app.request(
       "/api/prescriptions",
@@ -189,19 +278,10 @@ describe("prescription sharing", () => {
       { DB: ctx.db },
     );
     const { prescription } = (await created.json()) as { prescription: { id: number } };
-    const { share_token } = (await (
-      await app.request(`/api/prescriptions/${prescription.id}/share`, { method: "POST" }, { DB: ctx.db })
-    ).json()) as { share_token: string };
-
-    const rev = await app.request(`/api/prescriptions/${prescription.id}/share`, { method: "DELETE" }, { DB: ctx.db });
-    expect(rev.status).toBe(200);
-    const pub = await app.request(`/api/public/prescriptions/${share_token}`, undefined, { DB: ctx.db });
-    expect(pub.status).toBe(404);
-  });
-
-  it("unknown tokens 404", async () => {
-    const res = await app.request(`/api/public/prescriptions/${"a".repeat(32)}`, undefined, { DB: ctx.db });
-    expect(res.status).toBe(404);
+    const post = await app.request(`/api/prescriptions/${prescription.id}/share`, { method: "POST" }, { DB: ctx.db });
+    expect(post.status).toBe(404);
+    const del = await app.request(`/api/prescriptions/${prescription.id}/share`, { method: "DELETE" }, { DB: ctx.db });
+    expect(del.status).toBe(404);
   });
 });
 

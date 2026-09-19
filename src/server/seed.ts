@@ -53,6 +53,9 @@ export const DEFAULT_PROFILE_SETTINGS: Record<string, string> = {
   doctor_phone: "",
   doctor_license: "",
   clinic_address: "",
+  // Clinic logo as a data URL (image/*;base64) — rendered on prescription
+  // and invoice letterheads. Kept small client-side; empty = no logo.
+  clinic_logo: "",
 };
 
 /**

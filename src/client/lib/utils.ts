@@ -62,3 +62,15 @@ export function minutesOfDay(iso: string): number {
   const d = new Date(iso);
   return d.getHours() * 60 + d.getMinutes();
 }
+
+/** Age in years from a 'YYYY-MM-DD' date of birth, e.g. "32 yrs". */
+export function ageFromDob(dob: string | null | undefined): string | null {
+  if (!dob) return null;
+  const d = new Date(`${dob}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age--;
+  return `${age} yrs`;
+}
