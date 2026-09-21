@@ -30,6 +30,7 @@ const SAMPLE_DATA: PrescriptionSheetData = {
   diagnosis: "Periapical abscess, tooth 36",
   advice: "Warm salt-water rinses.",
   follow_up: "Recheck in 2 weeks",
+  chamber_footer_instructions: "In case of bleeding or fever, call +1 555 010 2030",
   items: [
     { drug_name: "Amoxicillin", dosage: "500 mg", frequency: "3x daily", duration: "5 days", instructions: "after meals" },
     { drug_name: "Ibuprofen", dosage: "400 mg", frequency: "as needed", duration: "3 days", instructions: null },

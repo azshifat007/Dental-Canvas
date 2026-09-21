@@ -97,6 +97,8 @@ export async function createTestContext(): Promise<TestContext> {
         "invoice_payments",
         "prescription_items",
         "prescriptions",
+        "patient_images",
+        "patient_image_blobs",
         "invoice_items",
         "invoices",
         "treatment_plan_items",
@@ -108,6 +110,9 @@ export async function createTestContext(): Promise<TestContext> {
         "appointments_to_make",
         "dentist_notes",
         "backups",
+        "inventory_alerts",
+        "inventory_movements",
+        "inventory_items",
         "appointments",
         "patients",
         "treatment_types",
@@ -146,7 +151,7 @@ export async function freshApp() {
 
 /** JSON request helper against the app, typed like fetch init. */
 export function jsonRequest(
-  method: "GET" | "POST" | "PUT" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   path: string,
   body?: unknown,
 ): { method: string; path: string; init: RequestInit } {

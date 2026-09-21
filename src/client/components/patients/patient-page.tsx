@@ -14,6 +14,7 @@ import { ClinicalNotes } from "./clinical-notes";
 import { Billing } from "./billing";
 import { InsuranceTab } from "./insurance-tab";
 import { PrescriptionsTab } from "@/components/prescriptions/prescriptions-tab";
+import { ImagesGallery } from "./images-gallery";
 import { PatientDialog } from "./patient-dialog";
 
 interface Props {
@@ -141,6 +142,7 @@ export function PatientPage({ id, navigate }: Props) {
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="prescriptions">Prescriptions</TabsTrigger>
+            <TabsTrigger value="imaging">Imaging</TabsTrigger>
             <TabsTrigger value="insurance">Insurance</TabsTrigger>
             <TabsTrigger value="chart">Tooth Chart</TabsTrigger>
             <TabsTrigger value="plan">Treatment Plan</TabsTrigger>
@@ -152,6 +154,9 @@ export function PatientPage({ id, navigate }: Props) {
           </TabsContent>
           <TabsContent value="prescriptions" className="mt-4">
             <PrescriptionsTab patientId={patient.id} navigate={navigate} />
+          </TabsContent>
+          <TabsContent value="imaging" className="mt-4">
+            <ImagesGallery patientId={patient.id} />
           </TabsContent>
           <TabsContent value="insurance" className="mt-4">
             <InsuranceTab patientId={patient.id} />

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { PrescriptionSheet, PRESCRIPTION_TEMPLATES, type PrescriptionSheetData } from "./prescription-sheet";
 import type { PrescriptionTemplate } from "@/types";
 import { printSheetHtml } from "@/lib/print";
+import { useMaterializedImages } from "@/lib/images";
 import { cn } from "@/lib/utils";
 
 /**
@@ -33,6 +34,9 @@ export function PrescriptionPreviewModal({
 }) {
   const [template, setTemplate] = useState<PrescriptionTemplate>(data.template);
   const [largePrint, setLargePrint] = useState(Boolean(data.large_print));
+  // Attached X-rays are fetched into data URLs so browser print and PDF
+  // export see the bytes even though the URLs are cross-origin/presigned.
+  const materialized = useMaterializedImages(data.images ?? []);
   const [fit, setFit] = useState(0.75);
   const [zoom, setZoom] = useState<number | null>(null); // null = follow `fit`
   const [fullBleed, setFullBleed] = useState(false);
@@ -80,7 +84,12 @@ export function PrescriptionPreviewModal({
   }, [open, scrollerEl, measure]);
 
   const scale = zoom ?? fit;
-  const effectiveData: PrescriptionSheetData = { ...data, template, large_print: largePrint };
+  const effectiveData: PrescriptionSheetData = {
+    ...data,
+    template,
+    large_print: largePrint,
+    images: materialized.images ?? data.images,
+  };
   const current = PRESCRIPTION_TEMPLATES.find((t) => t.id === template);
 
   function pickTemplate(t: PrescriptionTemplate) {

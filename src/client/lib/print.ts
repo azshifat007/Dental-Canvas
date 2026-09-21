@@ -112,21 +112,25 @@ async function buildSheetPdfBlob(host: HTMLElement | null): Promise<Blob> {
   const { toCanvas } = await loadHtmlToImage();
   const fonts = await getFontEmbedCss();
   // pixelRatio ~2x of the mm-true CSS size ≈ 190 dpi on paper.
-  // Guard with a timeout: foreignObject image decoding can hang in some
-  // engines; a retry without embedded fonts beats a stuck button.
-  const canvas = await Promise.race([
-    toCanvas(sheet, {
-      pixelRatio: 2,
-      backgroundColor: "#ffffff",
-      fontEmbedCSS: fonts ?? undefined,
-      skipFonts: !fonts,
-    }),
+  // Guard EVERY rasterization attempt with a timeout: foreignObject image
+  // decoding can hang in some engines; a retry (without embedded fonts) or a
+  // clean error beats a stuck button.
+  function toCanvasGuarded(opts: Parameters<typeof toCanvas>[1]): Promise<HTMLCanvasElement> {
     // `never` (not `null`) so the race's success type stays HTMLCanvasElement.
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 30_000)),
-  ]).catch(async (err) => {
+    return Promise.race([
+      toCanvas(sheet, opts),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 30_000)),
+    ]);
+  }
+  const canvas = await toCanvasGuarded({
+    pixelRatio: 2,
+    backgroundColor: "#ffffff",
+    fontEmbedCSS: fonts ?? undefined,
+    skipFonts: !fonts,
+  }).catch(async (err) => {
     if (fonts) {
       // Retry once with system fonts rather than failing the share.
-      return toCanvas(sheet, { pixelRatio: 2, backgroundColor: "#ffffff", skipFonts: true });
+      return toCanvasGuarded({ pixelRatio: 2, backgroundColor: "#ffffff", skipFonts: true });
     }
     throw err;
   });
@@ -150,6 +154,18 @@ export async function downloadSheetPdf(host: HTMLElement | null, filename: strin
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+/** Generate the sheet PDF and return it as a base64 string (for API relay). */
+export async function sheetPdfBase64(host: HTMLElement | null): Promise<string> {
+  const blob = await buildSheetPdfBlob(host);
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < buf.length; i += CHUNK) {
+    binary += String.fromCharCode(...buf.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
 }
 
 /**

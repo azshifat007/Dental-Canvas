@@ -288,6 +288,124 @@ CREATE TABLE IF NOT EXISTS prescription_items (
 
 CREATE INDEX IF NOT EXISTS idx_rx_items_prescription ON prescription_items(prescription_id);
 
+-- The practice's editable medicine list (see the Lab page's Medicines tab).
+-- Seeded from the built-in dental presets on first run; the practice can add,
+-- edit and remove freely. Feeds the prescription editor's drug autocomplete.
+CREATE TABLE IF NOT EXISTS medicines (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  drug_group TEXT,
+  dosage TEXT,
+  frequency TEXT,
+  duration TEXT,
+  instructions TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_medicines_name ON medicines (name);
+
+-- ── Inventory (dental supplies & stock control) ─────────────────
+CREATE TABLE IF NOT EXISTS inventory_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,                   -- e.g. 'Filtek Z250 Composite (A2)'
+  category TEXT,                        -- e.g. 'Restorative', 'Sterilization', 'PPE'
+  sku TEXT,                             -- catalog / internal code
+  unit TEXT NOT NULL DEFAULT 'piece',   -- 'piece' | 'box' | 'pack' | 'cartridge' | 'ml' | 'pair' ...
+  current_stock INTEGER NOT NULL DEFAULT 0,
+  min_threshold INTEGER NOT NULL DEFAULT 0,   -- reorder point
+  reorder_quantity INTEGER,             -- suggested order amount when below threshold
+  supplier_name TEXT,
+  supplier_contact TEXT,                -- phone / email of the supplier
+  batch_number TEXT,
+  expiry_date TEXT,                     -- ISO date 'YYYY-MM-DD'
+  location TEXT,                        -- shelf / store room
+  unit_cost REAL NOT NULL DEFAULT 0,
+  notes TEXT,
+  active INTEGER NOT NULL DEFAULT 1,    -- soft delete: keeps the movement history
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_name ON inventory_items(name);
+CREATE INDEX IF NOT EXISTS idx_inventory_category ON inventory_items(category);
+CREATE INDEX IF NOT EXISTS idx_inventory_expiry ON inventory_items(expiry_date);
+
+-- Stock ledger. Every stock-in / stock-out / count-adjustment is a row here and
+-- `inventory_items.current_stock` is kept in sync by the API. `balance_after`
+-- snapshots the running count for audit history.
+CREATE TABLE IF NOT EXISTS inventory_movements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id INTEGER NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
+  type TEXT NOT NULL,                   -- 'in' | 'out' | 'adjust'
+  quantity INTEGER NOT NULL,            -- positive magnitude (type carries the sign)
+  balance_after INTEGER NOT NULL,
+  unit_cost REAL,                       -- cost captured at restock time
+  reference TEXT,                       -- e.g. 'PO-1042', patient name, '#12 invoice'
+  reason TEXT,
+  notes TEXT,
+  performed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_inv_mov_item ON inventory_movements(item_id, performed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_inv_mov_type ON inventory_movements(type);
+
+-- Alerts minted by the daily scan (POST /api/inventory/scan): low stock,
+-- out of stock, expiring or expired items. Open alerts drive the dashboard's
+-- inventory notification panel; resolved rows stay as history.
+CREATE TABLE IF NOT EXISTS inventory_alerts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id INTEGER NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,                   -- 'out_of_stock' | 'low_stock' | 'expiring' | 'expired'
+  severity TEXT NOT NULL,               -- 'critical' | 'warning' | 'info'
+  message TEXT NOT NULL,
+  resolved INTEGER NOT NULL DEFAULT 0,
+  resolved_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_inv_alerts_open ON inventory_alerts(item_id, resolved);
+
+-- ── Patient images & X-rays ────────────────────────────────────
+-- Metadata only — the binary lives in object storage (S3/R2), configured
+-- under Settings → Storage and reached through short-lived presigned URLs
+-- (HTTPS, AES-256 at rest). `file_key` is namespaced under the patient and
+-- unguessable; the row itself is soft-deleted so prescriptions keep rendering.
+CREATE TABLE IF NOT EXISTS patient_images (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  appointment_id INTEGER REFERENCES appointments(id) ON DELETE SET NULL,
+  file_key TEXT NOT NULL UNIQUE,         -- object key in the bucket, e.g. 'patients/7/2026/09/<uuid>.jpg'
+  file_name TEXT,                        -- original filename (kept for downloads)
+  mime_type TEXT NOT NULL,               -- 'image/jpeg' | 'image/png' | ... | 'application/dicom'
+  size_bytes INTEGER NOT NULL DEFAULT 0,
+  kind TEXT NOT NULL DEFAULT 'photo',    -- 'xray' | 'intraoral' | 'panoramic' | 'photo'
+  label TEXT,                            -- free-text caption
+  compare_group TEXT,                    -- shared key joining before/after pairs
+  uploaded_by INTEGER REFERENCES practitioners(id) ON DELETE SET NULL,
+  uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  deleted INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_img_patient ON patient_images(patient_id, deleted, uploaded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_img_appointment ON patient_images(appointment_id);
+CREATE INDEX IF NOT EXISTS idx_img_compare ON patient_images(patient_id, compare_group);
+
+-- Byte payloads for the built-in database storage provider ("db" — the default
+-- until a bucket is configured in Settings → Storage). Blobs are keyed by the
+-- same unguessable `file_key` used with a bucket, so switching to S3/R2 later
+-- leaves metadata untouched and only changes where the bytes live. Served back
+-- by GET /api/image-file; capped at DB_STORAGE_MAX_MB (5 MB) per image.
+-- No FK to patient_images: bytes land here first and metadata is registered
+-- afterwards, so the upload order must not depend on the metadata row existing.
+CREATE TABLE IF NOT EXISTS patient_image_blobs (
+  file_key TEXT PRIMARY KEY,
+  mime_type TEXT NOT NULL,
+  data BLOB NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- ── Full-text search (FTS5) ────────────────────────────────────
 -- One inverted index across every searchable entity. `title` and `body` are the
 -- searchable columns (snippet() reads column 4 = body); entity_type/entity_id/
@@ -480,6 +598,19 @@ END;
 CREATE TRIGGER IF NOT EXISTS search_treatment_types_au AFTER UPDATE ON treatment_types BEGIN
   DELETE FROM search_index WHERE entity_type = 'treatment_types' AND entity_id = OLD.id;
   INSERT INTO search_index (entity_type, entity_id, patient_id, title, body) VALUES ('treatment_types', NEW.id, NULL, NEW.code || ' ' || NEW.name, '');
+END;
+
+CREATE TRIGGER IF NOT EXISTS search_inventory_items_ai AFTER INSERT ON inventory_items BEGIN
+  INSERT INTO search_index (entity_type, entity_id, patient_id, title, body) VALUES ('inventory_items', NEW.id, NULL, NEW.name,
+    TRIM(COALESCE(NEW.category,'') || ' ' || COALESCE(NEW.sku,'') || ' ' || COALESCE(NEW.supplier_name,'') || ' ' || COALESCE(NEW.batch_number,'')));
+END;
+CREATE TRIGGER IF NOT EXISTS search_inventory_items_ad AFTER DELETE ON inventory_items BEGIN
+  DELETE FROM search_index WHERE entity_type = 'inventory_items' AND entity_id = OLD.id;
+END;
+CREATE TRIGGER IF NOT EXISTS search_inventory_items_au AFTER UPDATE ON inventory_items BEGIN
+  DELETE FROM search_index WHERE entity_type = 'inventory_items' AND entity_id = OLD.id;
+  INSERT INTO search_index (entity_type, entity_id, patient_id, title, body) VALUES ('inventory_items', NEW.id, NULL, NEW.name,
+    TRIM(COALESCE(NEW.category,'') || ' ' || COALESCE(NEW.sku,'') || ' ' || COALESCE(NEW.supplier_name,'') || ' ' || COALESCE(NEW.batch_number,'')));
 END;
 
 -- ── Seed data ──────────────────────────────────────────────────

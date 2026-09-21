@@ -3,6 +3,7 @@ import {
   Calendar,
   FileBarChart2,
   FlaskConical,
+  Pill,
   LayoutDashboard,
   Monitor,
   Moon,
@@ -12,6 +13,7 @@ import {
   Sun,
   UserPlus,
   Users,
+  Boxes,
   Ellipsis,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -47,6 +49,8 @@ const PRIMARY_ITEMS: NavItem[] = [
 ];
 
 const MORE_ITEMS: NavItem[] = [
+  { label: "Medicines", icon: Pill, path: "/medicines", match: (r) => r.name === "medicines" },
+  { label: "Inventory", icon: Boxes, path: "/inventory", match: (r) => r.name === "inventory" },
   { label: "Reports", icon: FileBarChart2, path: "/reports", match: (r) => r.name === "reports" },
   { label: "Settings", icon: Settings, path: "/settings", match: (r) => r.name === "settings" },
 ];

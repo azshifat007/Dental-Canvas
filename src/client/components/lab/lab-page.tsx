@@ -84,7 +84,7 @@ export function LabPage({ navigate }: { navigate: (to: string) => void }) {
     <div className="flex flex-1 flex-col overflow-hidden">
       <div className="flex flex-wrap items-center gap-3 border-b bg-card px-4 py-3">
         <h1 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
-          <FlaskConical className="h-5 w-5" /> Lab cases
+          <FlaskConical className="h-5 w-5" /> Lab
         </h1>
         <div className="ml-auto flex items-center gap-2">
           {overdueCount > 0 && (

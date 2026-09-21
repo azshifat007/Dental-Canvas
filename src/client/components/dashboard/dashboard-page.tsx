@@ -14,6 +14,7 @@ import { useApp } from "@/context";
 import { cn, toIsoDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { PatientListPanel, ConsultationPanel, DentistNotesPanel } from "./dashboard-panels";
+import { InventoryAlertsPanel } from "./inventory-alerts-panel";
 import { openQuickRegister } from "@/lib/quick-register";
 
 // ── Dashboard API types ────────────────────────────────────────────
@@ -128,6 +129,7 @@ export function DashboardPage({
         <div className="flex min-w-0 flex-col gap-4">
           <ScheduleCard navigate={navigate} />
           <UpcomingCard summary={summary} loading={loading} navigate={navigate} />
+          <InventoryAlertsPanel navigate={navigate} />
           <DentistNotesPanel />
         </div>
       </div>

@@ -1,14 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ALargeSmall, ArrowLeft, Download, Eye, Printer, Share2 } from "lucide-react";
+import { ALargeSmall, ArrowLeft, Download, Eye, Mail, MessageCircle, Printer, Share2 } from "lucide-react";
 import { api } from "@/api";
 import { useApp } from "@/context";
 import type { Prescription, PrescriptionTemplate } from "@/types";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { PrescriptionSheet, isPrescriptionTemplate } from "./prescription-sheet";
 import { PrescriptionPreviewModal } from "./prescription-preview-modal";
 import { TemplateDropdown } from "./template-picker";
-import { printSheetHtml, downloadSheetPdf, shareSheetPdf } from "@/lib/print";
+import { printSheetHtml, downloadSheetPdf, shareSheetPdf, sheetPdfBase64 } from "@/lib/print";
 import { ageFromDob } from "@/lib/utils";
+import { useMaterializedImages } from "@/lib/images";
 
 /**
  * In-app prescription print/share view: shows the A4 sheet scaled to the
@@ -59,6 +71,10 @@ export function PrescriptionPrintView({
   }, [prescriptionId]);
 
   const sheetData = rx ? buildSheetData(rx, app.profile) : null;
+  // X-ray thumbnails are fetched into data URLs so browser print and the PDF
+  // renderer see the bytes even though the URLs are cross-origin/presigned.
+  const materialized = useMaterializedImages(sheetData?.images ?? []);
+  const displayData = sheetData ? { ...sheetData, images: materialized.images } : null;
 
   /** Print by cloning the sheet markup into a dedicated iframe (shared helper). */
   const printSheet = useCallback(() => {
@@ -152,6 +168,8 @@ export function PrescriptionPrintView({
             Large print
           </button>
           <SharePdfButton rx={rx} printHostRef={printHostRef} />
+          <EmailPdfButton rx={rx} printHostRef={printHostRef} />
+          <WhatsAppButton rx={rx} printHostRef={printHostRef} />
           <button
             onClick={downloadSheet}
             disabled={downloading}
@@ -171,16 +189,16 @@ export function PrescriptionPrintView({
       <div className="flex-1 overflow-auto p-4 md:p-6">
         <div className="mx-auto w-fit origin-top shadow-xl print:hidden" style={{ transform: "scale(0.75)" }}>
           <div ref={printHostRef}>
-            <PrescriptionSheet data={sheetData} />
+            <PrescriptionSheet data={displayData!} />
           </div>
         </div>
       </div>
 
-      {sheetData && (
+      {displayData && (
         <PrescriptionPreviewModal
           open={previewOpen}
           onOpenChange={setPreviewOpen}
-          data={sheetData}
+          data={displayData}
           title={`Prescription — ${sheetData.patient_name}`}
           onTemplateChange={async (t) => {
             // Persist template switches made inside the preview, same as the dropdown.
@@ -254,6 +272,158 @@ function SharePdfButton({
   );
 }
 
+function pdfFilename(rx: Prescription): string {
+  return `prescription-${(rx.patient_last_name ?? "patient").toLowerCase().replace(/\s+/g, "-")}-${rx.issued_date}.pdf`;
+}
+
+/**
+ * Email the prescription PDF to the patient's record email. The PDF is
+ * generated in the browser and relayed through the server, which holds the
+ * email provider credentials (Settings → Email).
+ */
+function EmailPdfButton({
+  rx,
+  printHostRef,
+}: {
+  rx: Prescription;
+  printHostRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const app = useApp();
+  const [open, setOpen] = useState(false);
+  const [to, setTo] = useState(rx.patient_email ?? "");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+
+  // Only offer email when the patient record actually has an address.
+  if (!rx.patient_email) return null;
+
+  async function send() {
+    setBusy(true);
+    try {
+      const pdf_base64 = await sheetPdfBase64(printHostRef.current);
+      await api("POST", `/api/prescriptions/${rx.id}/email`, {
+        to: to.trim(),
+        pdf_base64,
+        filename: pdfFilename(rx),
+        message,
+      });
+      setSent(true);
+      setTimeout(() => {
+        setSent(false);
+        setOpen(false);
+        setMessage("");
+      }, 2000);
+    } catch (err) {
+      app.setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-background px-3 text-sm hover:bg-accent"
+        title={`Email the prescription PDF to ${rx.patient_email}`}
+      >
+        <Mail className="h-4 w-4" /> {sent ? "Sent ✓" : "Email"}
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Email prescription</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">To</Label>
+              <Input
+                type="email"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                placeholder="patient@email.com"
+              />
+              <p className="text-xs text-muted-foreground">From the patient's record — edit if needed.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Message (optional)</Label>
+              <Textarea
+                rows={3}
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="e.g. Take the antibiotics with food, and call us if the swelling worsens."
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              The PDF is generated exactly as it prints and attached to the email.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={send} disabled={busy || sent || !to.trim()}>
+              {busy ? "Sending…" : sent ? "Sent ✓" : "Send email"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+/**
+ * WhatsApp the prescription: opens the patient's WhatsApp chat (from their
+ * record phone) with a ready message, and saves the PDF so it can be
+ * attached straight from the WhatsApp attachment picker.
+ */
+function WhatsAppButton({
+  rx,
+  printHostRef,
+}: {
+  rx: Prescription;
+  printHostRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const app = useApp();
+  const [busy, setBusy] = useState(false);
+
+  // Only offer WhatsApp when the patient record has a phone number.
+  if (!rx.patient_phone) return null;
+
+  async function send() {
+    // Open the chat synchronously (still inside the click gesture) so popup
+    // blockers don't swallow it after the async PDF generation.
+    const digits = rx.patient_phone!.replace(/\D/g, "");
+    const firstName = (rx.patient_first_name ?? "").trim();
+    const practiceLabel = app.profile.clinic_name || app.profile.doctor_name || "the practice";
+    const text = encodeURIComponent(
+      `Hello ${firstName}, here is your prescription from ${practiceLabel} (${rx.issued_date}).`,
+    );
+    window.open(`https://wa.me/${digits}?text=${text}`, "_blank", "noopener");
+
+    setBusy(true);
+    try {
+      await downloadSheetPdf(printHostRef.current, pdfFilename(rx));
+    } catch (err) {
+      app.setError(`Could not generate the PDF: ${(err as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <button
+      onClick={send}
+      disabled={busy}
+      className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-background px-3 text-sm hover:bg-accent disabled:opacity-60"
+      title="Opens the patient's WhatsApp chat and saves the PDF, ready to attach"
+    >
+      <MessageCircle className="h-4 w-4" /> {busy ? "Preparing…" : "WhatsApp"}
+    </button>
+  );
+}
+
 /** Compose what the sheet needs from the prescription row + practice profile. */
 export function buildSheetData(
   rx: Prescription,
@@ -265,6 +435,7 @@ export function buildSheetData(
     clinic_address: string;
     doctor_phone: string;
     clinic_logo?: string;
+    chamber_footer_instructions?: string;
   },
 ) {
   const alerts = (rx.patient_medical_alerts ?? "").split(",").map((s) => s.trim()).filter(Boolean).join(", ");
@@ -273,6 +444,7 @@ export function buildSheetData(
     clinic_address: profile.clinic_address,
     clinic_phone: profile.doctor_phone,
     clinic_logo: profile.clinic_logo ?? null,
+    chamber_footer_instructions: profile.chamber_footer_instructions?.trim() || null,
     doctor_name: profile.doctor_name || "Doctor",
     doctor_specialty: profile.doctor_specialty,
     doctor_license: profile.doctor_license,
@@ -285,6 +457,7 @@ export function buildSheetData(
     large_print: Boolean(rx.large_print),
     tooth: rx.tooth,
     plan_treatment_name: rx.plan_treatment_name ?? null,
+    images: (rx.images ?? []).map((im) => ({ id: im.id, label: im.label, src: im.url ?? null })),
     diagnosis: rx.diagnosis,
     advice: rx.advice,
     follow_up: rx.follow_up,

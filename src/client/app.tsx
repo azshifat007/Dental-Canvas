@@ -7,6 +7,7 @@ import { Sidebar } from "./components/sidebar";
 import { MobileTopBar, BottomNav } from "./components/mobile-nav";
 import { ErrorBanner } from "./components/error-banner";
 import { useAutoBackup } from "./hooks/use-auto-backup";
+import { useDailyInventoryScan } from "./hooks/use-daily-inventory-scan";
 import { useTheme } from "./hooks/use-theme";
 import { useAccessibility } from "./hooks/use-accessibility";
 import { useBrandAccent } from "./hooks/use-brand-accent";
@@ -22,6 +23,8 @@ import { PatientsList } from "./components/patients/patients-list";
 import { PatientPage } from "./components/patients/patient-page";
 import { ReportsPage } from "./components/reports/reports-page";
 import { LabPage } from "./components/lab/lab-page";
+import { MedicinesPage } from "./components/medicines/medicines-page";
+import { InventoryPage } from "./components/inventory/inventory-page";
 import { SettingsPage } from "./components/settings/settings-page";
 
 export function App() {
@@ -32,6 +35,10 @@ export function App() {
 
   // Timer-based auto backup — runs app-wide while Dental Canvas is open.
   useAutoBackup(state.backupSchedule);
+
+  // Once-per-day stock scan — refreshes low-stock/expiry alerts and the
+  // dashboard notification panel (serverless: the timer lives in the browser).
+  useDailyInventoryScan();
 
   // Theme: follows the OS dark mode by default, with a manual override.
   useTheme();
@@ -109,6 +116,8 @@ export function App() {
               )}
               {route.name === "reports" && <ReportsPage />}
               {route.name === "lab" && <LabPage navigate={navigate} />}
+              {route.name === "medicines" && <MedicinesPage />}
+              {route.name === "inventory" && <InventoryPage />}
               {route.name === "settings" && <SettingsPage />}
               {route.name === "not-found" && (
                 <Placeholder title="Not found" message="That page doesn't exist." />

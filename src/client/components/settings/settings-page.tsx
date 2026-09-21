@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Plus, Trash2, Pencil, Check, X, Clock, UserRound, DatabaseBackup, Palette, Monitor, Sun, Moon, ImageUp } from "lucide-react";
+import { Plus, Trash2, Pencil, Check, X, Clock, UserRound, DatabaseBackup, Palette, Monitor, Sun, Moon, ImageUp, Mail } from "lucide-react";
 import { useApp } from "@/context";
 import { api } from "@/api";
 import { BackupTab } from "./backup-tab";
+import { StorageTab } from "./storage-tab";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
 import { useAccessibility, type A11yPreference } from "@/hooks/use-accessibility";
 import { useBrandAccent } from "@/hooks/use-brand-accent";
@@ -15,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import type { Operatory, Practitioner, PractitionerRole, TreatmentType } from "@/types";
 import { fileToLogoDataUrl } from "@/lib/logo";
 
@@ -36,6 +38,12 @@ export function SettingsPage() {
             <TabsTrigger value="practitioners">Practitioners</TabsTrigger>
             <TabsTrigger value="treatments">Treatment types</TabsTrigger>
             <TabsTrigger value="hours">Hours</TabsTrigger>
+            <TabsTrigger value="email" className="gap-1.5">
+              <Mail className="h-3.5 w-3.5" /> Email
+            </TabsTrigger>
+            <TabsTrigger value="storage" className="gap-1.5">
+              <ImageUp className="h-3.5 w-3.5" /> Storage
+            </TabsTrigger>
             <TabsTrigger value="backup" className="gap-1.5">
               <DatabaseBackup className="h-3.5 w-3.5" /> Backup
             </TabsTrigger>
@@ -59,6 +67,12 @@ export function SettingsPage() {
           </TabsContent>
           <TabsContent value="hours" className="mt-4">
             <HoursTab />
+          </TabsContent>
+          <TabsContent value="email" className="mt-4">
+            <EmailTab />
+          </TabsContent>
+          <TabsContent value="storage" className="mt-4">
+            <StorageTab />
           </TabsContent>
           <TabsContent value="backup" className="mt-4">
             <BackupTab />
@@ -99,6 +113,7 @@ function ProfileTab() {
         doctor_license: form.doctor_license.trim(),
         clinic_address: form.clinic_address.trim(),
         clinic_logo: form.clinic_logo,
+        chamber_footer_instructions: form.chamber_footer_instructions,
       });
       setSavedAt(Date.now());
     } catch (err) {
@@ -225,6 +240,18 @@ function ProfileTab() {
               value={form.clinic_address}
               onChange={(e) => setForm({ ...form, clinic_address: e.target.value })}
               placeholder="123 Main St, Springfield"
+            />
+          </FieldGroup>
+          <FieldGroup
+            label="Chamber footer instructions (prescriptions)"
+            hint="Fixed instructions printed at the foot of every Chamber prescription — e.g. emergency contact or after-care notes. One line each."
+            className="sm:col-span-2 lg:col-span-3"
+          >
+            <Textarea
+              rows={3}
+              value={form.chamber_footer_instructions}
+              onChange={(e) => setForm({ ...form, chamber_footer_instructions: e.target.value })}
+              placeholder={"e.g. In case of bleeding or fever, call +1 555 010 2030\nAvoid hot drinks for 2 hours after extraction"}
             />
           </FieldGroup>
           <div className="flex items-center gap-3">
@@ -930,13 +957,122 @@ function TreatmentTypesTab() {
   );
 }
 
+// ── Email (prescription delivery via Resend) ──────────────────────
+
+function EmailTab() {
+  const app = useApp();
+  const [apiKey, setApiKey] = useState("");
+  const [from, setFrom] = useState("");
+  const [hasKey, setHasKey] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await api<{ settings: Record<string, string> }>("GET", "/api/settings");
+        setFrom(data.settings.email_from ?? "");
+        setHasKey(Boolean((data.settings.email_api_key ?? "").trim()));
+      } catch (err) {
+        app.setError((err as Error).message);
+      } finally {
+        setLoaded(true);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const patch: Record<string, string> = { email_from: from.trim() };
+      // Only send the key when the user typed one — the server never returns
+      // it, so echoing back an empty value would silently clear it.
+      if (apiKey.trim()) patch.email_api_key = apiKey.trim();
+      await api("PUT", "/api/settings", patch);
+      setHasKey(Boolean(apiKey.trim()) || hasKey);
+      setApiKey("");
+      setSavedAt(Date.now());
+    } catch (err) {
+      app.setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Mail className="h-4 w-4" />
+          Prescription email delivery
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Lets the prescription print view email the PDF straight to a patient.
+          Uses the Resend email API — create a free API key at resend.com and
+          verify the sending address or domain there first.
+        </p>
+      </CardHeader>
+      <CardContent>
+        {loaded ? (
+          <form onSubmit={save} className="grid max-w-xl gap-3">
+            <FieldGroup
+              label="From address"
+              hint="The verified sender, e.g. “Dental Canvas <prescriptions@yourclinic.com>”."
+            >
+              <Input
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+                placeholder="Dental Canvas <prescriptions@yourclinic.com>"
+              />
+            </FieldGroup>
+            <FieldGroup
+              label={hasKey ? "API key — configured ✓ (enter a new key to replace)" : "Resend API key"}
+              hint="Stored server-side only; never sent to the browser again."
+            >
+              <Input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder={hasKey ? "•••••••• (configured)" : "re_…"}
+                autoComplete="off"
+              />
+            </FieldGroup>
+            <div className="flex items-center gap-3">
+              <Button type="submit" disabled={busy}>
+                {busy ? "Saving…" : "Save email settings"}
+              </Button>
+              {savedAt && <span className="text-xs text-emerald-700">Saved ✓</span>}
+            </div>
+          </form>
+        ) : (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Helpers ────────────────────────────────────────────────────────
 
-function FieldGroup({ label, children }: { label: string; children: React.ReactNode }) {
+function FieldGroup({
+  label,
+  hint,
+  className,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="space-y-1.5">
+    <div className={cn("space-y-1.5", className)}>
       <Label className="text-xs">{label}</Label>
       {children}
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </div>
   );
 }

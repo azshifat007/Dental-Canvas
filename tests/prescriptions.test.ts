@@ -259,6 +259,118 @@ describe("prescription settings", () => {
     const { error } = (await res.json()) as { error: string };
     expect(error).toMatch(/logo/i);
   });
+
+  it("persists Chamber footer instructions and returns them in settings", async () => {
+    const instructions = "In case of bleeding or fever, call +1 555 010 2030\nAvoid hot drinks for 2 hours";
+    const put = await app.request(
+      "/api/settings",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chamber_footer_instructions: instructions }),
+      },
+      { DB: ctx.db },
+    );
+    expect(put.status).toBe(200);
+    const putData = (await put.json()) as { settings: Record<string, string> };
+    expect(putData.settings.chamber_footer_instructions).toBe(instructions);
+
+    // Fresh app instance (like a redeploy) still serves the saved value.
+    const app2 = await freshApp();
+    await app2.request("/api/health", undefined, { DB: ctx.db });
+    const res = await app2.request("/api/settings", undefined, { DB: ctx.db });
+    const data = (await res.json()) as { settings: Record<string, string> };
+    expect(data.settings.chamber_footer_instructions).toBe(instructions);
+  });
+
+  it("defaults Chamber footer instructions to empty", async () => {
+    const res = await app.request("/api/settings", undefined, { DB: ctx.db });
+    const data = (await res.json()) as { settings: Record<string, string> };
+    expect(data.settings.chamber_footer_instructions).toBe("");
+  });
+
+  it("defaults email delivery settings to empty", async () => {
+    const res = await app.request("/api/settings", undefined, { DB: ctx.db });
+    const data = (await res.json()) as { settings: Record<string, string> };
+    expect(data.settings.email_api_key).toBe("");
+    expect(data.settings.email_from).toBe("");
+  });
+});
+
+describe("prescription email delivery", () => {
+  const validPdf = Buffer.from("%PDF-1.4 test").toString("base64");
+
+  async function createRx(patientOverrides: Record<string, unknown> = {}) {
+    const pid = await seedPatient(patientOverrides);
+    const created = await app.request(
+      "/api/prescriptions",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rxBody(pid)) },
+      { DB: ctx.db },
+    );
+    const { prescription } = (await created.json()) as { prescription: { id: number } };
+    return prescription.id;
+  }
+
+  async function configureEmail() {
+    const put = await app.request(
+      "/api/settings",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email_api_key: "re_test_key", email_from: "Dental Canvas <rx@clinic.test>" }),
+      },
+      { DB: ctx.db },
+    );
+    expect(put.status).toBe(200);
+  }
+
+  it("rejects when email is not configured", async () => {
+    const rxId = await createRx({ email: "grace@example.com" });
+    const res = await app.request(
+      `/api/prescriptions/${rxId}/email`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pdf_base64: validPdf }) },
+      { DB: ctx.db },
+    );
+    expect(res.status).toBe(400);
+    const { error } = (await res.json()) as { error: string };
+    expect(error).toMatch(/not configured/i);
+  });
+
+  it("rejects when the patient record has no email", async () => {
+    await configureEmail();
+    const rxId = await createRx({});
+    const res = await app.request(
+      `/api/prescriptions/${rxId}/email`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pdf_base64: validPdf }) },
+      { DB: ctx.db },
+    );
+    expect(res.status).toBe(400);
+    const { error } = (await res.json()) as { error: string };
+    expect(error).toMatch(/no email address/i);
+  });
+
+  it("rejects a body without a usable PDF", async () => {
+    await configureEmail();
+    const rxId = await createRx({ email: "grace@example.com" });
+    const res = await app.request(
+      `/api/prescriptions/${rxId}/email`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pdf_base64: "not base64!!" }) },
+      { DB: ctx.db },
+    );
+    expect(res.status).toBe(400);
+    const { error } = (await res.json()) as { error: string };
+    expect(error).toMatch(/pdf/i);
+  });
+
+  it("returns 404 for a missing prescription", async () => {
+    await configureEmail();
+    const res = await app.request(
+      "/api/prescriptions/999999/email",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pdf_base64: validPdf }) },
+      { DB: ctx.db },
+    );
+    expect(res.status).toBe(404);
+  });
 });
 
 describe("prescription share endpoints", () => {

@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Pill } from "lucide-react";
-import { searchDentalDrugs, type DrugPreset } from "@/lib/dental-drugs";
+import { searchDentalDrugs, type DrugGroup, type DrugPreset } from "@/lib/dental-drugs";
 import { Input } from "@/components/ui/input";
+import { useApp } from "@/context";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -19,11 +20,27 @@ interface Props {
  * duration, instructions); free-typed values are always allowed and win.
  */
 export function DrugAutocomplete({ value, onChange, onPick, inputId, required }: Props) {
+  const app = useApp();
   const [results, setResults] = useState<DrugPreset[]>([]);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const wrapRef = useRef<HTMLDivElement>(null);
   const listId = `${inputId ?? "drug"}-suggestions`;
+
+  // The practice's own medicine list (Lab → Medicines) leads the suggestions,
+  // ahead of the built-in dental presets.
+  const customPresets = useMemo<DrugPreset[]>(
+    () =>
+      app.medicines.map((m) => ({
+        name: m.name,
+        dosage: m.dosage ?? "",
+        frequency: m.frequency ?? "",
+        duration: m.duration ?? "",
+        instructions: m.instructions ?? "",
+        group: (m.drug_group as DrugGroup) || "Other",
+      })),
+    [app.medicines],
+  );
 
   // Re-run the search as the text changes.
   useEffect(() => {
@@ -33,11 +50,11 @@ export function DrugAutocomplete({ value, onChange, onPick, inputId, required }:
       setOpen(false);
       return;
     }
-    const hits = searchDentalDrugs(q, 6);
+    const hits = searchDentalDrugs(q, 6, customPresets);
     setResults(hits);
     setOpen(hits.length > 0);
     setActive(0);
-  }, [value]);
+  }, [value, customPresets]);
 
   // Close on outside click.
   useEffect(() => {

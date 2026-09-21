@@ -1,3 +1,41 @@
+// ── Patient images & X-rays ───────────────────────────────────────
+
+export type PatientImageKind = "xray" | "intraoral" | "panoramic" | "photo";
+
+/**
+ * A stored image/x-ray for a patient. `url` is either the stable public/CDN
+ * URL or a short-lived presigned URL returned when the image list is loaded —
+ * it expires after `storage_expiry_minutes`; reload the list to refresh.
+ * `file_key` only ever leaves the server as an opaque reference.
+ */
+export interface PatientImage {
+  id: number;
+  patient_id: number;
+  appointment_id: number | null;
+  file_key?: string;
+  file_name?: string | null;
+  mime_type?: string;
+  size_bytes?: number;
+  kind: PatientImageKind;
+  label?: string | null;
+  compare_group?: string | null;
+  uploaded_at: string;
+  url: string | null;
+}
+
+export interface StorageStatus {
+  provider: "none" | "db" | "s3" | "r2";
+  enabled: boolean;
+  endpoint: string;
+  region: string;
+  bucket: string;
+  public_base_url: string;
+  expiry_minutes: number;
+  max_file_mb: number;
+  access_key_id: string;
+  has_secret: boolean;
+}
+
 // ── Core entities ──────────────────────────────────────────────────
 
 export type PrescriptionTemplate =
@@ -34,6 +72,9 @@ export interface Prescription {
   plan_item_id: number | null;
   plan_treatment_name?: string | null;
   plan_treatment_code?: string | null;
+  /** patient_images rows attached to the printed sheet (stored as JSON ids). */
+  image_ids?: number[] | null;
+  images?: PatientImage[];
   diagnosis: string | null;
   advice: string | null;
   follow_up: string | null;
@@ -45,6 +86,20 @@ export interface Prescription {
   patient_last_name?: string | null;
   patient_date_of_birth?: string | null;
   patient_medical_alerts?: string | null;
+  patient_email?: string | null;
+  patient_phone?: string | null;
+}
+
+/** A medicine in the practice's editable formulary (Medicines). */
+export interface Medicine {
+  id: number;
+  name: string;
+  drug_group?: string | null;
+  dosage?: string | null;
+  frequency?: string | null;
+  duration?: string | null;
+  instructions?: string | null;
+  created_at?: string;
 }
 
 export interface Operatory {
@@ -316,7 +371,8 @@ export type SearchEntityType =
   | "tooth_conditions"
   | "operatories"
   | "practitioners"
-  | "treatment_types";
+  | "treatment_types"
+  | "inventory_items";
 
 /** One result from GET /api/search; [bracketed] terms are highlights. */
 export interface SearchHit {
@@ -347,4 +403,66 @@ export interface AppointmentToMake {
   date_of_birth?: string | null;
   treatment_name?: string | null;
   treatment_color?: string | null;
+}
+
+// ── Inventory ───────────────────────────────────────────────────
+
+export type InventoryAlertKind = "out_of_stock" | "low_stock" | "expiring" | "expired";
+export type InventoryAlertSeverity = "critical" | "warning" | "info";
+
+export interface InventoryItem {
+  id: number;
+  name: string;
+  category: string | null;
+  sku: string | null;
+  unit: string;
+  current_stock: number;
+  min_threshold: number;
+  reorder_quantity: number | null;
+  supplier_name: string | null;
+  supplier_contact: string | null;
+  batch_number: string | null;
+  expiry_date: string | null;
+  location: string | null;
+  unit_cost: number;
+  notes: string | null;
+  active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InventoryMovement {
+  id: number;
+  item_id: number;
+  type: "in" | "out" | "adjust";
+  quantity: number;
+  balance_after: number;
+  unit_cost: number | null;
+  reference: string | null;
+  reason: string | null;
+  notes: string | null;
+  performed_at: string;
+  created_at: string;
+}
+
+export interface InventoryAlert {
+  id: number;
+  item_id: number;
+  kind: InventoryAlertKind;
+  severity: InventoryAlertSeverity;
+  message: string;
+  resolved: number;
+  resolved_at: string | null;
+  created_at: string;
+  item_name?: string | null;
+}
+
+export interface InventoryScanResult {
+  scanned_at: string;
+  created: { item_id: number; kind: InventoryAlertKind; severity: InventoryAlertSeverity; message: string }[];
+  resolved: number;
+  open: number;
+  by_kind: Record<InventoryAlertKind, number>;
+  emailed: boolean;
+  email_recipient: string | null;
 }

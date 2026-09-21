@@ -6,6 +6,8 @@ import {
   Stethoscope,
   FileBarChart2,
   FlaskConical,
+  Pill,
+  Boxes,
   Search,
   LayoutDashboard,
   UserPlus,
@@ -34,6 +36,8 @@ const sections: { heading: string; items: NavItem[] }[] = [
       { label: "Agenda",     icon: Calendar,      path: "/agenda",   match: (r) => r.name === "agenda" },
       { label: "Patients",   icon: Users,         path: "/patients", match: (r) => r.name === "patients" || r.name === "patient" },
       { label: "Lab cases",  icon: FlaskConical,  path: "/lab",      match: (r) => r.name === "lab" },
+      { label: "Medicines",  icon: Pill,          path: "/medicines", match: (r) => r.name === "medicines" },
+      { label: "Inventory",  icon: Boxes,         path: "/inventory", match: (r) => r.name === "inventory" },
     ],
   },
   {
@@ -56,7 +60,7 @@ export function Sidebar({
 }) {
   const { pref: theme, cycleTheme } = useTheme();
   if (embedded) {
-    const icons: Record<string, string> = { "/dashboard": "layout-dashboard", "/agenda": "calendar-days", "/patients": "users", "/lab": "package", "/reports": "bar-chart-3", "/settings": "settings" };
+    const icons: Record<string, string> = { "/dashboard": "layout-dashboard", "/agenda": "calendar-days", "/patients": "users", "/lab": "package", "/medicines": "clipboard-list", "/inventory": "archive", "/reports": "bar-chart-3", "/settings": "settings" };
     const active = sections.flatMap(section => section.items).find(item => item.match?.(route))?.path;
     return <AppNav title="Dental Canvas" icon="calendar-days" active={active}
       groups={sections.map(section => ({ label: section.heading, items: section.items.filter(item => item.path && !item.disabled).map(item => ({

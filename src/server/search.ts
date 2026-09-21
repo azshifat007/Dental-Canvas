@@ -21,7 +21,8 @@ export type SearchEntityType =
   | "tooth_conditions"
   | "operatories"
   | "practitioners"
-  | "treatment_types";
+  | "treatment_types"
+  | "inventory_items";
 
 export interface SearchHit {
   entity_type: SearchEntityType;
@@ -84,6 +85,9 @@ const BACKFILL_SQLS: [SearchEntityType, string][] = [
   ["operatories", `SELECT id AS c0, NULL AS c1, name AS c2, '' AS c3 FROM operatories`],
   ["practitioners", `SELECT id AS c0, NULL AS c1, name AS c2, TRIM(COALESCE(email,'') || ' ' || COALESCE(phone,'')) AS c3 FROM practitioners`],
   ["treatment_types", `SELECT id AS c0, NULL AS c1, (code || ' ' || name) AS c2, '' AS c3 FROM treatment_types`],
+  ["inventory_items", `SELECT id AS c0, NULL AS c1, name AS c2,
+      TRIM(COALESCE(category,'') || ' ' || COALESCE(sku,'') || ' ' || COALESCE(supplier_name,'') || ' ' || COALESCE(batch_number,'')) AS c3
+     FROM inventory_items`],
 ];
 
 /** Clear one entity type's index rows and re-read them from the source table. */

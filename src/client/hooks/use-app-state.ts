@@ -3,6 +3,7 @@ import { api } from "../api";
 import type {
   Appointment,
   AppointmentToMake,
+  Medicine,
   NewAppointment,
   Operatory,
   Patient,
@@ -39,6 +40,8 @@ export interface ProfileSettings {
   clinic_address: string;
   /** Data URL of the clinic logo, printed on prescription/invoice letterheads. Empty = none. */
   clinic_logo: string;
+  /** Fixed practice instructions printed in the Chamber template's footer. Newline = new line on the sheet. Empty = none. */
+  chamber_footer_instructions: string;
 }
 
 const DEFAULT_SETTINGS: PracticeSettings = {
@@ -56,6 +59,7 @@ export const DEFAULT_PROFILE: ProfileSettings = {
   doctor_license: "",
   clinic_address: "",
   clinic_logo: "",
+  chamber_footer_instructions: "",
 };
 
 const PROFILE_KEYS = Object.keys(DEFAULT_PROFILE) as (keyof ProfileSettings)[];
@@ -93,6 +97,7 @@ export function useAppState() {
   const [operatories, setOperatories] = useState<Operatory[]>([]);
   const [practitioners, setPractitioners] = useState<Practitioner[]>([]);
   const [treatmentTypes, setTreatmentTypes] = useState<TreatmentType[]>([]);
+  const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [waitingList, setWaitingList] = useState<WaitingListEntry[]>([]);
   const [appointmentsToMake, setAppointmentsToMake] = useState<AppointmentToMake[]>([]);
@@ -106,18 +111,25 @@ export function useAppState() {
   const [error, setError] = useState<string | null>(null);
 
   const refreshLookups = useCallback(async () => {
-    const [ops, prs, tts, st] = await Promise.all([
+    const [ops, prs, tts, meds, st] = await Promise.all([
       api<{ operatories: Operatory[] }>("GET", "/api/operatories"),
       api<{ practitioners: Practitioner[] }>("GET", "/api/practitioners"),
       api<{ treatment_types: TreatmentType[] }>("GET", "/api/treatment-types"),
+      api<{ medicines: Medicine[] }>("GET", "/api/medicines").catch(() => ({ medicines: [] as Medicine[] })),
       api<{ settings: Record<string, string> }>("GET", "/api/settings").catch(() => ({ settings: {} as Record<string, string> })),
     ]);
     setOperatories(ops.operatories);
     setPractitioners(prs.practitioners);
     setTreatmentTypes(tts.treatment_types);
+    setMedicines(meds.medicines);
     setSettings(parseSettings(st.settings));
     setProfile(parseProfile(st.settings));
     setBackupSchedule(parseBackupSchedule(st.settings));
+  }, []);
+
+  const refreshMedicines = useCallback(async () => {
+    const data = await api<{ medicines: Medicine[] }>("GET", "/api/medicines");
+    setMedicines(data.medicines);
   }, []);
 
   const updateBackupSchedule = useCallback(async (patch: Partial<BackupSchedule>) => {
@@ -214,11 +226,13 @@ export function useAppState() {
       // data
       operatories, practitioners, treatmentTypes, appointments,
       waitingList, appointmentsToMake,
+      medicines,
+
       settings, profile, backupSchedule,
       loading, error,
       setError,
       // refresh
-      refreshLookups, refreshDay, refreshSidePanels,
+      refreshLookups, refreshDay, refreshSidePanels, refreshMedicines,
       // mutations
       createAppointment, updateAppointment, deleteAppointment,
       searchPatients, createPatient,
@@ -227,9 +241,10 @@ export function useAppState() {
     [
       operatories, practitioners, treatmentTypes, appointments,
       waitingList, appointmentsToMake,
+      medicines,
       settings, profile, backupSchedule,
       loading, error,
-      refreshLookups, refreshDay, refreshSidePanels,
+      refreshLookups, refreshDay, refreshSidePanels, refreshMedicines,
       createAppointment, updateAppointment, deleteAppointment,
       searchPatients, createPatient,
       updateSettings, updateProfile, updateBackupSchedule,

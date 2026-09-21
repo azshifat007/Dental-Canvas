@@ -4,6 +4,7 @@ import { api } from "@/api";
 import { useApp } from "@/context";
 import type {
   Patient,
+  PatientImage,
   Prescription,
   PrescriptionItem,
   PrescriptionTemplate,
@@ -263,6 +264,10 @@ export function PrescriptionDialog({
   const [items, setItems] = useState<DraftItem[]>([{ ...EMPTY_ITEM }]);
   const [saving, setSaving] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  // Images attachable to the sheet (X-ray/intraoral/panoramic on file) and the
+  // ids currently selected to print on it.
+  const [attachOptions, setAttachOptions] = useState<PatientImage[]>([]);
+  const [imageIds, setImageIds] = useState<number[]>([]);
 
   // Load the plan items for the picker (only while the dialog is open).
   useEffect(() => {
@@ -304,7 +309,51 @@ export function PrescriptionDialog({
           }))
         : [{ ...EMPTY_ITEM }],
     );
-  }, [open, prescription, duplicateOf]);
+    // Attached images. The list row only carries image_ids (as JSON text), so
+    // in edit mode fetch the full record for the renderable thumbnails.
+    if (prescription && !(source?.images?.length)) {
+      let cancelled = false;
+      api<{ prescription: Prescription }>("GET", `/api/prescriptions/${prescription.id}`)
+        .then((res) => {
+          if (cancelled) return;
+          setAttachOptions(res.prescription.images ?? []);
+          setImageIds(res.prescription.image_ids ?? []);
+        })
+        .catch((err) => app.setError((err as Error).message));
+      return () => {
+        cancelled = true;
+      };
+    }
+    setAttachOptions(source?.images ?? []);
+    setImageIds(source?.image_ids ?? []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, prescription, duplicateOf, patientId]);
+
+  /** Auto-fill tooth + X-ray from the record when creating a fresh prescription. */
+  useEffect(() => {
+    if (!open || prescription || duplicateOf) return;
+    let cancelled = false;
+    api<{ tooth: string | null; images: PatientImage[]; storage: { enabled: boolean } }>(
+      "GET",
+      `/api/patients/${patientId}/prescription-context`,
+    )
+      .then((ctx) => {
+        if (cancelled) return;
+        if (ctx.tooth) setTooth((t) => t || ctx.tooth!);
+        const opts = ctx.images ?? [];
+        setAttachOptions(opts);
+        // Auto-attach the most recent X-ray so the sheet reflects today's film.
+        const latest = opts.find((i) => i.url);
+        if (latest) setImageIds([latest.id]);
+      })
+      .catch(() => {
+        /* context is best-effort — the sheet works without it */
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, patientId, prescription, duplicateOf]);
 
   function setItem(index: number, patch: Partial<DraftItem>) {
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, ...patch } : it)));
@@ -355,6 +404,7 @@ export function PrescriptionDialog({
       clinic_address: app.profile.clinic_address || null,
       clinic_phone: app.profile.doctor_phone || null,
       clinic_logo: app.profile.clinic_logo || null,
+      chamber_footer_instructions: app.profile.chamber_footer_instructions?.trim() || null,
       doctor_name: app.profile.doctor_name || "Doctor",
       doctor_specialty: app.profile.doctor_specialty || null,
       doctor_license: app.profile.doctor_license || null,
@@ -365,6 +415,9 @@ export function PrescriptionDialog({
       large_print: largePrint,
       tooth: tooth.trim() || null,
       plan_treatment_name: planItems.find((p) => String(p.id) === planItemId)?.treatment_name ?? null,
+      images: attachOptions
+        .filter((o) => imageIds.includes(o.id))
+        .map((o) => ({ id: o.id, label: o.label, src: o.url })),
       diagnosis: diagnosis.trim() || null,
       advice: advice.trim() || null,
       follow_up: followUp.trim() || null,
@@ -402,6 +455,7 @@ export function PrescriptionDialog({
         diagnosis: diagnosis.trim() || null,
         advice: advice.trim() || null,
         follow_up: followUp.trim() || null,
+        image_ids: imageIds,
         items: valid.map((i) => ({
           drug_name: i.drug_name.trim(),
           dosage: i.dosage.trim() || null,
@@ -516,6 +570,48 @@ export function PrescriptionDialog({
               />
             </div>
           </div>
+
+          {/* Attach X-ray / intraoral images */}
+          {attachOptions.length > 0 && (
+            <div className="rounded-md border bg-muted/20 p-3">
+              <Label className="text-xs">
+                Attach images <span className="font-normal text-muted-foreground">— they print on the sheet</span>
+              </Label>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {attachOptions.map((img) => {
+                  const on = imageIds.includes(img.id);
+                  return (
+                    <button
+                      key={img.id}
+                      type="button"
+                      onClick={() => {
+                        setImageIds((prev) => (on ? prev.filter((i) => i !== img.id) : [...prev, img.id]));
+                      }}
+                      title={img.label || img.file_name || `Image #${img.id}`}
+                      className={
+                        on
+                          ? "relative overflow-hidden rounded-md border-2 border-primary"
+                          : "relative overflow-hidden rounded-md border-2 border-transparent opacity-60 hover:opacity-100"
+                      }
+                    >
+                      {img.url ? (
+                        <img src={img.url} alt={img.label || img.file_name || "X-ray"} className="h-16 w-20 object-cover" />
+                      ) : (
+                        <div className="flex h-16 w-20 items-center justify-center bg-muted text-[10px] text-muted-foreground">
+                          {img.kind === "xray" ? "X-ray" : img.kind}
+                        </div>
+                      )}
+                      {on && (
+                        <span className="absolute inset-0 flex items-center justify-center bg-primary/20 text-xs font-bold text-white">
+                          ✓
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Medication rows */}
           <div className="space-y-2">

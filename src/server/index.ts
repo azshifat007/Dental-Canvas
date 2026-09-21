@@ -4,14 +4,25 @@ import { createApp } from "@clawnify/app";
 import { query, get, run } from "./db";
 import {
   DEFAULT_BACKUP_SETTINGS,
+  DEFAULT_INVENTORY_SETTINGS,
   DEFAULT_PROFILE_SETTINGS,
   DEFAULT_SETTINGS,
+  DEFAULT_STORAGE_SETTINGS,
+  MEDICINES_PRESETS_VERSION,
   SEED_DENTIST_NOTES,
+  SEED_INVENTORY,
+  SEED_MEDICINES,
   SEED_OPERATORIES,
   SEED_PRACTITIONERS,
   SEED_TREATMENT_TYPES,
 } from "./seed";
 import { reindexSearchIndex, searchAll } from "./search";
+import {
+  getInventorySettings,
+  INVENTORY_CATEGORIES,
+  runInventoryScan,
+  type InventoryItemRow,
+} from "./inventory";
 import {
   createSnapshot,
   deleteSnapshot,
@@ -25,6 +36,19 @@ import {
   countRows,
   type BackupPayload,
 } from "./backup";
+import {
+  IMAGE_KINDS,
+  IMAGE_MIME_TYPES,
+  DB_STORAGE_MAX_MB,
+  isDbStorage,
+  isStorageConfigured,
+  newObjectKey,
+  presignUpload,
+  readStorageSettings,
+  storageStatus,
+  storageUrlForFile,
+  validateStorageInput,
+} from "./storage";
 
 type Env = { Bindings: { DB: D1Database } };
 
@@ -39,7 +63,7 @@ const app = createApp<Env>({
 // practice defaults and the sample rows are inserted here, on the first request
 // that reaches the app, instead of from the schema file.
 
-type SeedTable = "operatories" | "practitioners" | "treatment_types" | "dentist_notes";
+type SeedTable = "operatories" | "practitioners" | "treatment_types" | "dentist_notes" | "medicines" | "inventory_items";
 
 let seeded = false;
 let seeding: Promise<void> | null = null;
@@ -50,7 +74,13 @@ async function isEmpty(table: SeedTable): Promise<boolean> {
 }
 
 async function seedOnce(): Promise<void> {
-  for (const [key, value] of Object.entries({ ...DEFAULT_SETTINGS, ...DEFAULT_PROFILE_SETTINGS, ...DEFAULT_BACKUP_SETTINGS })) {
+  for (const [key, value] of Object.entries({
+    ...DEFAULT_SETTINGS,
+    ...DEFAULT_PROFILE_SETTINGS,
+    ...DEFAULT_BACKUP_SETTINGS,
+    ...DEFAULT_INVENTORY_SETTINGS,
+    ...DEFAULT_STORAGE_SETTINGS,
+  })) {
     await run("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", [key, value]);
   }
 
@@ -80,6 +110,50 @@ async function seedOnce(): Promise<void> {
   if (await isEmpty("dentist_notes")) {
     for (const n of SEED_DENTIST_NOTES) {
       await run("INSERT INTO dentist_notes (body) VALUES (?)", [n.body]);
+    }
+  }
+
+  if (await isEmpty("medicines")) {
+    for (const m of SEED_MEDICINES) {
+      await run(
+        "INSERT INTO medicines (name, drug_group, dosage, frequency, duration, instructions) VALUES (?, ?, ?, ?, ?, ?)",
+        [m.name, m.drug_group, m.dosage, m.frequency, m.duration, m.instructions],
+      );
+    }
+  } else {
+    // The built-in preset list gains entries over time. When it ships a new
+    // version, add just the missing names (INSERT OR IGNORE keyed on the name
+    // unique index) without touching the user's edits to existing medicines or
+    // undoing a medicine they deliberately deleted.
+    const cur = await get<{ value: string }>("SELECT value FROM settings WHERE key = 'medicines_presets_version'");
+    if ((cur?.value ?? "") !== MEDICINES_PRESETS_VERSION) {
+      for (const m of SEED_MEDICINES) {
+        await run(
+          "INSERT OR IGNORE INTO medicines (name, drug_group, dosage, frequency, duration, instructions) VALUES (?, ?, ?, ?, ?, ?)",
+          [m.name, m.drug_group, m.dosage, m.frequency, m.duration, m.instructions],
+        );
+      }
+      await run("INSERT OR REPLACE INTO settings (key, value) VALUES ('medicines_presets_version', ?)", [
+        MEDICINES_PRESETS_VERSION,
+      ]);
+    }
+  }
+
+  // Starter dental-supply stock. Expiry dates are rolled relative to the
+  // first-run date so the expiring/expired alerts surface right away.
+  if (await isEmpty("inventory_items")) {
+    for (const it of SEED_INVENTORY) {
+      await run(
+        `INSERT INTO inventory_items
+           (name, category, sku, unit, current_stock, min_threshold, reorder_quantity,
+            supplier_name, supplier_contact, batch_number, expiry_date, location, unit_cost, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE date('now', '+' || ? || ' days') END, ?, ?, ?)`,
+        [
+          it.name, it.category, it.sku, it.unit, it.current_stock, it.min_threshold, it.reorder_quantity,
+          it.supplier_name, it.supplier_contact, it.batch_number,
+          it.expiry_offset_days, it.expiry_offset_days, it.location, it.unit_cost, it.notes,
+        ],
+      );
     }
   }
 }
@@ -134,6 +208,95 @@ async function ensureColumnMigrations(): Promise<void> {
     if (dflt[0]?.dflt_value && !dflt[0].dflt_value.includes("chamber")) {
       await run("ALTER TABLE prescriptions ALTER COLUMN template SET DEFAULT 'chamber'");
     }
+    // Attached image ids (JSON array of patient_images rows) shown on the
+    // printed sheet, e.g. the x-ray images associated with this prescription.
+    if (!names.has("image_ids")) {
+      await run("ALTER TABLE prescriptions ADD COLUMN image_ids TEXT");
+    }
+    // Databases created before the image module existed need the table.
+    await run(`CREATE TABLE IF NOT EXISTS patient_images (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      appointment_id INTEGER REFERENCES appointments(id) ON DELETE SET NULL,
+      file_key TEXT NOT NULL UNIQUE,
+      file_name TEXT,
+      mime_type TEXT NOT NULL,
+      size_bytes INTEGER NOT NULL DEFAULT 0,
+      kind TEXT NOT NULL DEFAULT 'photo',
+      label TEXT,
+      compare_group TEXT,
+      uploaded_by INTEGER REFERENCES practitioners(id) ON DELETE SET NULL,
+      uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      deleted INTEGER NOT NULL DEFAULT 0
+    )`);
+    await run("CREATE INDEX IF NOT EXISTS idx_img_patient ON patient_images(patient_id, deleted, uploaded_at DESC)");
+    await run("CREATE INDEX IF NOT EXISTS idx_img_appointment ON patient_images(appointment_id)");
+    await run("CREATE INDEX IF NOT EXISTS idx_img_compare ON patient_images(patient_id, compare_group)");
+    // Byte payloads for the built-in DB storage tier (the default provider).
+    // No FK to patient_images — bytes are written before metadata is registered.
+    await run(`CREATE TABLE IF NOT EXISTS patient_image_blobs (
+      file_key TEXT PRIMARY KEY,
+      mime_type TEXT NOT NULL,
+      data BLOB NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    // Databases created before the medicine list existed need the table.
+    await run(`CREATE TABLE IF NOT EXISTS medicines (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      drug_group TEXT,
+      dosage TEXT,
+      frequency TEXT,
+      duration TEXT,
+      instructions TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    await run("CREATE UNIQUE INDEX IF NOT EXISTS idx_medicines_name ON medicines (name)");
+    // Databases created before the inventory module existed need the tables.
+    await run(`CREATE TABLE IF NOT EXISTS inventory_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      category TEXT,
+      sku TEXT,
+      unit TEXT NOT NULL DEFAULT 'piece',
+      current_stock INTEGER NOT NULL DEFAULT 0,
+      min_threshold INTEGER NOT NULL DEFAULT 0,
+      reorder_quantity INTEGER,
+      supplier_name TEXT,
+      supplier_contact TEXT,
+      batch_number TEXT,
+      expiry_date TEXT,
+      location TEXT,
+      unit_cost REAL NOT NULL DEFAULT 0,
+      notes TEXT,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    await run(`CREATE TABLE IF NOT EXISTS inventory_movements (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      item_id INTEGER NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
+      type TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      balance_after INTEGER NOT NULL,
+      unit_cost REAL,
+      reference TEXT,
+      reason TEXT,
+      notes TEXT,
+      performed_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    await run(`CREATE TABLE IF NOT EXISTS inventory_alerts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      item_id INTEGER NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      message TEXT NOT NULL,
+      resolved INTEGER NOT NULL DEFAULT 0,
+      resolved_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
   } catch {
     // Table missing (fresh DB pre-DDL) or PRAGMA unsupported — schema.sql will
     // create the table with the column when it runs.
@@ -168,6 +331,13 @@ const intParam = (raw: string | undefined): number | null => {
   const n = parseInt(raw, 10);
   return Number.isFinite(n) ? n : null;
 };
+
+/** 'YYYY-MM-DD' plus N days (used for the expiry alert window). */
+function datePlusDays(today: string, days: number): string {
+  const d = new Date(`${today}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
 
 async function parseJson<T>(c: Context, schema: z.ZodType<T>): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
   let body: unknown;
@@ -339,6 +509,62 @@ app.delete("/api/treatment-types/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+// ── Medicines (editable practice list → prescription autocomplete) ──
+
+const MedicineInput = z.object({
+  name: z.string().min(1),
+  drug_group: z.string().optional(),
+  dosage: z.string().optional(),
+  frequency: z.string().optional(),
+  duration: z.string().optional(),
+  instructions: z.string().optional(),
+});
+
+app.get("/api/medicines", async (c) => {
+  const rows = await query("SELECT * FROM medicines ORDER BY name COLLATE NOCASE");
+  return c.json({ medicines: rows });
+});
+
+app.post("/api/medicines", async (c) => {
+  const parsed = await parseJson(c, MedicineInput);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const { name, drug_group, dosage, frequency, duration, instructions } = parsed.data;
+  const existing = await get("SELECT id FROM medicines WHERE name = ? COLLATE NOCASE", [name.trim()]);
+  if (existing) return c.json({ error: `“${name.trim()}” is already in your medicine list.` }, 409);
+  const result = await run(
+    "INSERT INTO medicines (name, drug_group, dosage, frequency, duration, instructions) VALUES (?, ?, ?, ?, ?, ?)",
+    [name.trim(), drug_group?.trim() || null, dosage?.trim() || null, frequency?.trim() || null, duration?.trim() || null, instructions?.trim() || null],
+  );
+  const row = await get("SELECT * FROM medicines WHERE id = ?", [result.lastInsertRowid]);
+  return c.json({ medicine: row }, 201);
+});
+
+app.put("/api/medicines/:id", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const parsed = await parseJson(c, MedicineInput.partial());
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  for (const [k, v] of Object.entries(parsed.data)) {
+    if (v !== undefined) { sets.push(`${k} = ?`); params.push(typeof v === "string" && v.trim() === "" ? null : v); }
+  }
+  if (!sets.length) return c.json({ error: "No fields" }, 400);
+  params.push(id);
+  const r = await run(`UPDATE medicines SET ${sets.join(", ")} WHERE id = ?`, params);
+  if (!r.changes) return c.json({ error: "Not found" }, 404);
+  const row = await get("SELECT * FROM medicines WHERE id = ?", [id]);
+  return c.json({ medicine: row });
+});
+
+app.delete("/api/medicines/:id", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const r = await run("DELETE FROM medicines WHERE id = ?", [id]);
+  if (!r.changes) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true });
+});
+
 // ── Patients ───────────────────────────────────────────────────────
 
 const PatientInput = z.object({
@@ -455,6 +681,8 @@ const PrescriptionInput = z.object({
       }),
     )
     .min(1),
+  // patient_images rows to show on the printed sheet (x-rays etc).
+  image_ids: z.array(z.number().int()).max(12).optional(),
 });
 
 const PrescriptionUpdateInput = PrescriptionInput.partial().extend({
@@ -487,6 +715,7 @@ async function loadPrescription(id: number) {
     SELECT rx.*, pr.name as practitioner_name, pr.role as practitioner_role,
            p.first_name as patient_first_name, p.last_name as patient_last_name,
            p.date_of_birth as patient_date_of_birth, p.medical_alerts as patient_medical_alerts,
+           p.email as patient_email, p.phone as patient_phone,
            tt.name as plan_treatment_name, tt.code as plan_treatment_code
     FROM prescriptions rx
     LEFT JOIN practitioners pr ON pr.id = rx.practitioner_id
@@ -500,7 +729,9 @@ async function loadPrescription(id: number) {
     "SELECT * FROM prescription_items WHERE prescription_id = ? ORDER BY sort_order, id",
     [id],
   );
-  return { ...rx, items };
+  const imageIds = parseImageIds(rx.image_ids);
+  const images = imageIds.length ? await resolveImageRows(imageIds) : [];
+  return { ...rx, image_ids: imageIds.length ? imageIds : null, items, images };
 }
 
 app.get("/api/patients/:id/prescriptions", async (c) => {
@@ -518,7 +749,7 @@ app.get("/api/patients/:id/prescriptions", async (c) => {
      ORDER BY rx.issued_date DESC, rx.id DESC`,
     [id],
   );
-  return c.json({ prescriptions: rows });
+  return c.json({ prescriptions: rows.map((r) => ({ ...r, image_ids: parseImageIds(r.image_ids) })) });
 });
 
 app.get("/api/prescriptions/:id", async (c) => {
@@ -527,6 +758,95 @@ app.get("/api/prescriptions/:id", async (c) => {
   const rx = await loadPrescription(id);
   if (!rx) return c.json({ error: "Not found" }, 404);
   return c.json({ prescription: rx });
+});
+
+/** Strip HTML-sensitive characters from interpolated email text. */
+function escapeEmailHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch);
+}
+
+/**
+ * Email a prescription PDF to the patient. The PDF is rasterized in the
+ * browser (the sheet is client-side markup), posted here as base64, and
+ * relayed through the Resend API using the practice's configured key —
+ * the key never reaches the browser. Defaults to the patient record's
+ * email; the request may override the recipient.
+ */
+app.post("/api/prescriptions/:id/email", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  let body: Record<string, unknown>;
+  try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }
+
+  const rx = await loadPrescription(id);
+  if (!rx) return c.json({ error: "Not found" }, 404);
+  const row = rx as unknown as Record<string, unknown>;
+
+  const settingsRows = await query<{ key: string; value: string }>("SELECT key, value FROM settings").catch(() => []);
+  const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
+  const apiKey = (settings.email_api_key ?? "").trim();
+  const from = (settings.email_from ?? "").trim();
+  if (!apiKey || !from) {
+    return c.json({ error: "Email is not configured yet. Add a Resend API key and from address in Settings → Email." }, 400);
+  }
+
+  const to = typeof body.to === "string" && body.to.trim() ? body.to.trim() : typeof row.patient_email === "string" ? row.patient_email : "";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+    return c.json({ error: "This patient has no email address on file. Add one to the patient record first." }, 400);
+  }
+
+  const rawPdf = typeof body.pdf_base64 === "string" ? body.pdf_base64.trim() : "";
+  const base64 = rawPdf.includes(",") ? rawPdf.slice(rawPdf.indexOf(",") + 1) : rawPdf;
+  if (!base64 || !/^[A-Za-z0-9+/=\r\n]+$/.test(base64.slice(0, 512))) {
+    return c.json({ error: "A generated PDF is required to send." }, 400);
+  }
+  if (base64.length > 10 * 1024 * 1024) {
+    return c.json({ error: "The PDF is too large to email." }, 413);
+  }
+
+  const clinicName = (settings.clinic_name ?? "").trim();
+  const doctorName = (settings.doctor_name ?? "").trim();
+  const practiceLabel = clinicName || doctorName || "Dental Canvas";
+  const patientFirst = typeof row.patient_first_name === "string" ? row.patient_first_name.trim() : "";
+  const issuedDate = typeof row.issued_date === "string" ? row.issued_date : "";
+  const note = typeof body.message === "string" ? body.message.trim().slice(0, 2000) : "";
+
+  const subject = `Prescription from ${practiceLabel} — ${issuedDate}`;
+  const html = `
+    <div style="font-family:Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;color:#1f2937">
+      <h2 style="margin:0 0 4px;color:#166534">${escapeEmailHtml(practiceLabel)}</h2>
+      <p style="margin:0 0 16px;color:#6b7280;font-size:13px">Prescription dated ${escapeEmailHtml(issuedDate)}</p>
+      <p style="margin:0 0 8px">Hello ${escapeEmailHtml(patientFirst || "there")},</p>
+      ${note ? `<p style="margin:0 0 8px;white-space:pre-line">${escapeEmailHtml(note)}</p>` : ""}
+      <p style="margin:0 0 8px">Your prescription is attached as a PDF. Please follow the dosage and instructions it contains, and contact the practice with any questions.</p>
+      ${doctorName ? `<p style="margin:16px 0 0">— ${escapeEmailHtml(doctorName)}${clinicName ? `, ${escapeEmailHtml(clinicName)}` : ""}</p>` : ""}
+    </div>`;
+
+  let providerRes: Response;
+  try {
+    providerRes = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from,
+        to: [to],
+        subject,
+        html,
+        attachments: [{
+          filename: typeof body.filename === "string" && body.filename.trim() ? body.filename.trim() : "prescription.pdf",
+          content: base64,
+        }],
+      }),
+    });
+  } catch (err) {
+    return c.json({ error: `Could not reach the email provider: ${(err as Error).message}` }, 502);
+  }
+  if (!providerRes.ok) {
+    const detail = await providerRes.text().catch(() => "");
+    return c.json({ error: `The email provider rejected the message (${providerRes.status}). ${detail.slice(0, 300)}` }, 502);
+  }
+  const sent = (await providerRes.json().catch(() => ({}))) as { id?: string };
+  return c.json({ ok: true, provider_id: sent.id ?? null, to });
 });
 
 app.post("/api/prescriptions", async (c) => {
@@ -556,6 +876,7 @@ app.post("/api/prescriptions", async (c) => {
       [rxId, item.drug_name, item.dosage ?? null, item.frequency ?? null, item.duration ?? null, item.instructions ?? null, i],
     );
   }
+  await attachPrescriptionImages(rxId, d.patient_id, d.image_ids);
   const rx = await loadPrescription(rxId);
   return c.json({ prescription: rx }, 201);
 });
@@ -566,7 +887,7 @@ app.put("/api/prescriptions/:id", async (c) => {
   const parsed = await parseJson(c, PrescriptionUpdateInput);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   const d = parsed.data;
-  const existing = await get("SELECT id FROM prescriptions WHERE id = ?", [id]);
+  const existing = await get<{ id: number; patient_id: number }>("SELECT id, patient_id FROM prescriptions WHERE id = ?", [id]);
   if (!existing) return c.json({ error: "Not found" }, 404);
 
   const sets: string[] = [];
@@ -590,6 +911,9 @@ app.put("/api/prescriptions/:id", async (c) => {
         [id, item.drug_name, item.dosage ?? null, item.frequency ?? null, item.duration ?? null, item.instructions ?? null, i],
       );
     }
+  }
+  if (d.image_ids !== undefined) {
+    await attachPrescriptionImages(id, existing.patient_id, d.image_ids);
   }
   const rx = await loadPrescription(id);
   return c.json({ prescription: rx });
@@ -1870,13 +2194,27 @@ app.delete("/api/dentist-notes/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+/**
+ * Settings whose raw values must never reach the browser. The server reads the
+ * real values from the settings table directly; responses show a non-empty
+ * placeholder so UI code can still tell "configured ✓" from "empty".
+ */
+const SECRET_SETTINGS = new Set(["storage_secret_access_key", "email_api_key"]);
+
+function redactSettings(out: Record<string, string>): Record<string, string> {
+  for (const key of SECRET_SETTINGS) {
+    if (out[key]) out[key] = "••••••••";
+  }
+  return out;
+}
+
 app.get("/api/settings", async (c) => {
   const rows = await query<{ key: string; value: string }>(
     "SELECT key, value FROM settings",
   ).catch(() => []);
-  const out: Record<string, string> = { ...DEFAULT_SETTINGS, ...DEFAULT_PROFILE_SETTINGS, ...DEFAULT_BACKUP_SETTINGS };
+  const out: Record<string, string> = { ...DEFAULT_SETTINGS, ...DEFAULT_PROFILE_SETTINGS, ...DEFAULT_BACKUP_SETTINGS, ...DEFAULT_INVENTORY_SETTINGS, ...DEFAULT_STORAGE_SETTINGS };
   for (const r of rows) out[r.key] = r.value;
-  return c.json({ settings: out });
+  return c.json({ settings: redactSettings(out) });
 });
 
 app.put("/api/settings", async (c) => {
@@ -1898,9 +2236,673 @@ app.put("/api/settings", async (c) => {
     );
   }
   const rows = await query<{ key: string; value: string }>("SELECT key, value FROM settings");
-  const out: Record<string, string> = { ...DEFAULT_SETTINGS, ...DEFAULT_PROFILE_SETTINGS, ...DEFAULT_BACKUP_SETTINGS };
+  const out: Record<string, string> = { ...DEFAULT_SETTINGS, ...DEFAULT_PROFILE_SETTINGS, ...DEFAULT_BACKUP_SETTINGS, ...DEFAULT_INVENTORY_SETTINGS, ...DEFAULT_STORAGE_SETTINGS };
   for (const r of rows) out[r.key] = r.value;
-  return c.json({ settings: out });
+  return c.json({ settings: redactSettings(out) });
+});
+
+// ── Images & object storage (S3/R2, presigned URLs) ──────────────
+
+/** Parse the JSON image-id list stored on a prescription defensively. */
+function parseImageIds(raw: unknown): number[] {
+  if (typeof raw !== "string" || !raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? v.filter((n) => Number.isInteger(n)).map(Number) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Resolve image rows (with display URLs) from ids, newest first, ignoring deleted. */
+async function resolveImageRows(ids: number[]): Promise<Array<Record<string, unknown>>> {
+  if (!ids.length) return [];
+  const rows = await query(
+    `SELECT id, patient_id, appointment_id, file_key, file_name, mime_type, size_bytes,
+            kind, label, compare_group, uploaded_at
+     FROM patient_images
+     WHERE id IN (${ids.map(() => "?").join(",")}) AND deleted = 0
+     ORDER BY uploaded_at DESC, id DESC`,
+    ids,
+  ).catch(() => [] as Array<Record<string, unknown>>);
+  const byId = new Map(rows.map((r) => [Number(r.id), r]));
+  const attachedIds = ids.filter((id) => byId.has(id));
+  // Keep the order the doctor chose.
+  const out: Array<Record<string, unknown>> = [];
+  for (const id of attachedIds) {
+    const r = byId.get(id)!;
+    out.push({ ...r, url: await storageUrlForFile(String(r.file_key)) });
+  }
+  return out;
+}
+
+/** Store (or clear) the images attached to a prescription. Only images that
+ *  belong to the same patient are accepted — never attach another patient's
+ *  PHI to a sheet. */
+async function attachPrescriptionImages(rxId: number, patientId: number, imageIds: number[] | undefined): Promise<void> {
+  if (imageIds === undefined) return;
+  let ids: number[] = [...new Set(imageIds)];
+  if (ids.length) {
+    const rows = await query<{ id: number }>(
+      `SELECT id FROM patient_images
+       WHERE id IN (${ids.map(() => "?").join(",")}) AND patient_id = ? AND deleted = 0`,
+      [...ids, patientId],
+    ).catch(() => [] as { id: number }[]);
+    const valid = new Set(rows.map((r) => r.id));
+    ids = ids.filter((i) => valid.has(i));
+  }
+  await run("UPDATE prescriptions SET image_ids = ? WHERE id = ?", [ids.length ? JSON.stringify(ids) : null, rxId]);
+}
+
+/** The patient is required for every image route — records are scoped to them. */
+async function requirePatient(c: Context, id: number): Promise<boolean> {
+  if (!id) return false;
+  const p = await get("SELECT id FROM patients WHERE id = ?", [id]);
+  return Boolean(p);
+}
+
+const ImageUploadRequest = z.object({
+  files: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(255),
+        type: z.string().max(128),
+        size: z.number().int().min(0),
+      }),
+    )
+    .min(1)
+    .max(24),
+});
+
+const ImageFinalizeInput = z.object({
+  files: z
+    .array(
+      z.object({
+        key: z.string().min(1).max(512),
+        file_name: z.string().max(255).optional().nullable(),
+        mime_type: z.string().min(1).max(128),
+        size_bytes: z.number().int().min(0),
+        kind: z.enum(IMAGE_KINDS).default("photo"),
+        label: z.string().max(200).optional().nullable(),
+        appointment_id: z.number().int().nullable().optional(),
+        compare_group: z.string().max(64).nullable().optional(),
+      }),
+    )
+    .min(1)
+    .max(24),
+});
+
+const ImagePatchInput = z.object({
+  kind: z.enum(IMAGE_KINDS).optional(),
+  label: z.string().max(200).nullable().optional(),
+  appointment_id: z.number().int().nullable().optional(),
+  compare_group: z.string().max(64).nullable().optional(),
+});
+
+/** Issue short-lived presigned PUT URLs the browser uploads straight into. */
+app.post("/api/patients/:id/images/uploads", async (c) => {
+  const pid = intParam(c.req.param("id"));
+  if (!(await requirePatient(c, pid ?? 0)) || !pid) return c.json({ error: "Patient not found" }, 404);
+  const parsed = await parseJson(c, ImageUploadRequest);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+
+  const settings = await readStorageSettings();
+  if (!isStorageConfigured(settings)) {
+    return c.json(
+      { error: "Image storage is turned off. Enable the built-in database storage or configure a bucket in Settings → Storage." },
+      400,
+    );
+  }
+  const dbMode = isDbStorage(settings);
+  const maxBytes = (dbMode ? DB_STORAGE_MAX_MB : settings.maxFileMb) * 1024 * 1024;
+  for (const f of parsed.data.files) {
+    if (!IMAGE_MIME_TYPES.has(f.type) && !f.type.startsWith("image/")) {
+      return c.json({ error: `"${f.name}": unsupported file type "${f.type}". Use an image file or DICOM.` }, 400);
+    }
+    if (f.size > maxBytes) {
+      const limit = dbMode ? DB_STORAGE_MAX_MB : settings.maxFileMb;
+      return c.json(
+        { error: `"${f.name}" is ${(f.size / 1024 / 1024).toFixed(1)} MB — the limit is ${limit} MB${dbMode ? " for built-in database storage (configure a bucket for bigger files)" : ""}.` },
+        413,
+      );
+    }
+  }
+
+  const uploads: Array<{ key: string; upload_url: string; headers: Record<string, string>; expires_at: string }> = [];
+  for (const f of parsed.data.files) {
+    const key = newObjectKey(pid, f.name);
+    const signed = await presignUpload(key);
+    if (!signed) return c.json({ error: "Storage is not configured." }, 400);
+    uploads.push({
+      key,
+      upload_url: signed.url,
+      headers: signed.headers,
+      expires_at: new Date(Date.now() + settings.expiryMinutes * 60_000).toISOString(),
+    });
+  }
+  return c.json({ uploads });
+});
+
+/**
+ * Built-in DB storage tier. The browser uploads the raw bytes here; the key is
+ * the unguessable object key the uploads route issued (scoped to one patient).
+ */
+app.put("/api/image-file", async (c) => {
+  const key = c.req.query("key") ?? "";
+  if (!key || !key.startsWith("patients/")) return c.json({ error: "Invalid file key." }, 400);
+  // The upload URL is only issued by /uploads when provider == "db", but let a
+  // leftover db-mode upload target stay usable after a bucket is configured.
+  const settings = await readStorageSettings();
+  if (!isDbStorage(settings)) return c.json({ error: "DB storage is not the active provider." }, 405);
+
+  const body = await c.req.arrayBuffer().catch(() => null);
+  const bytes = body ? new Uint8Array(body) : null;
+  if (!bytes || bytes.byteLength === 0) return c.json({ error: "Empty body." }, 400);
+  const maxBytes = DB_STORAGE_MAX_MB * 1024 * 1024;
+  if (bytes.byteLength > maxBytes) {
+    return c.json(
+      { error: `File is ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MB — the limit for database storage is ${DB_STORAGE_MAX_MB} MB.` },
+      413,
+    );
+  }
+  const mime = (c.req.header("content-type") ?? "application/octet-stream").split(";")[0].trim();
+  await run(
+    `INSERT INTO patient_image_blobs (file_key, mime_type, data) VALUES (?, ?, ?)
+     ON CONFLICT(file_key) DO UPDATE SET mime_type = excluded.mime_type, data = excluded.data, created_at = datetime('now')`,
+    [key, mime, bytes],
+  );
+  return c.json({ ok: true }, 201);
+});
+
+/** Serve a blob stored in the database (same origin — safe for print/Pdf). */
+app.get("/api/image-file", async (c) => {
+  const key = c.req.query("key") ?? "";
+  const row = await get<{ mime_type: string; data: ArrayBuffer }>(
+    "SELECT mime_type, data FROM patient_image_blobs WHERE file_key = ?",
+    [key],
+  );
+  if (!row) return c.json({ error: "Not found" }, 404);
+  return new Response(row.data as BodyInit, {
+    headers: {
+      "Content-Type": row.mime_type,
+      "Cache-Control": "private, max-age=3600",
+    },
+  });
+});
+
+/** Register the metadata for files the browser just uploaded. */
+app.post("/api/patients/:id/images", async (c) => {
+  const pid = intParam(c.req.param("id"));
+  if (!(await requirePatient(c, pid ?? 0)) || !pid) return c.json({ error: "Patient not found" }, 404);
+  const parsed = await parseJson(c, ImageFinalizeInput);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+
+  const created: Array<Record<string, unknown>> = [];
+  for (const f of parsed.data.files) {
+    if (!f.key.startsWith(`patients/${pid}/`)) {
+      return c.json({ error: "Refusing a file key that isn't scoped to this patient." }, 400);
+    }
+    if (!IMAGE_MIME_TYPES.has(f.mime_type) && !f.mime_type.startsWith("image/")) {
+      return c.json({ error: `Unsupported file type "${f.mime_type}".` }, 400);
+    }
+    const r = await run(
+      `INSERT INTO patient_images
+         (patient_id, appointment_id, file_key, file_name, mime_type, size_bytes, kind, label, compare_group, uploaded_by, uploaded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, datetime('now'))`,
+      [
+        pid,
+        f.appointment_id ?? null,
+        f.key,
+        f.file_name ?? null,
+        f.mime_type,
+        f.size_bytes,
+        f.kind,
+        f.label ?? null,
+        f.compare_group ?? null,
+      ],
+    );
+    const row = await get(
+      `SELECT id, patient_id, appointment_id, file_key, file_name, mime_type, size_bytes,
+              kind, label, compare_group, uploaded_at
+       FROM patient_images WHERE id = ?`,
+      [Number(r.lastInsertRowid)],
+    );
+    if (row) created.push({ ...row, url: await storageUrlForFile(String(row.file_key)) });
+  }
+  return c.json({ images: created }, 201);
+});
+
+app.get("/api/patients/:id/images", async (c) => {
+  const pid = intParam(c.req.param("id"));
+  if (!(await requirePatient(c, pid ?? 0)) || !pid) return c.json({ error: "Patient not found" }, 404);
+  const kind = c.req.query("kind");
+  const params: unknown[] = [pid];
+  let kindClause = "";
+  if (kind && IMAGE_KINDS.includes(kind as never)) {
+    kindClause = "AND kind = ?";
+    params.push(kind);
+  }
+  const rows = await query(
+    `SELECT id, patient_id, appointment_id, file_key, file_name, mime_type, size_bytes,
+            kind, label, compare_group, uploaded_at
+     FROM patient_images
+     WHERE patient_id = ? AND deleted = 0 ${kindClause}
+     ORDER BY uploaded_at DESC, id DESC`,
+    params,
+  ).catch(() => [] as Array<Record<string, unknown>>);
+  const settings = await readStorageSettings();
+  const images = [];
+  for (const r of rows) {
+    images.push({ ...r, url: await storageUrlForFile(String(r.file_key)) });
+  }
+  return c.json({
+    images,
+    storage: {
+      enabled: isStorageConfigured(settings),
+      provider: settings.provider,
+      max_file_mb: isDbStorage(settings) ? DB_STORAGE_MAX_MB : settings.maxFileMb,
+    },
+  });
+});
+
+app.patch("/api/images/:id", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const parsed = await parseJson(c, ImagePatchInput);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const d = parsed.data;
+  const existing = await get("SELECT id FROM patient_images WHERE id = ? AND deleted = 0", [id]);
+  if (!existing) return c.json({ error: "Not found" }, 404);
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  for (const key of ["kind", "label", "appointment_id", "compare_group"] as const) {
+    if (d[key] !== undefined) {
+      sets.push(`${key} = ?`);
+      params.push(d[key] ?? null);
+    }
+  }
+  if (sets.length) {
+    params.push(id);
+    await run(`UPDATE patient_images SET ${sets.join(", ")} WHERE id = ?`, params);
+  }
+  const row = await get(
+    `SELECT id, patient_id, appointment_id, file_key, file_name, mime_type, size_bytes,
+            kind, label, compare_group, uploaded_at
+     FROM patient_images WHERE id = ?`,
+    [id],
+  );
+  if (!row) return c.json({ error: "Not found" }, 404);
+  return c.json({ image: { ...row, url: await storageUrlForFile(String(row.file_key)) } });
+});
+
+/** Soft-delete: keeps the row (and anything referencing it) intact for audit. */
+app.delete("/api/images/:id", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const r = await run("UPDATE patient_images SET deleted = 1 WHERE id = ? AND deleted = 0", [id]);
+  if (!r.changes) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true });
+});
+
+/**
+ * Auto-fill context for the prescription form: the tooth the patient is being
+ * treated on right now (latest open plan item) and their recent X-ray images,
+ * so the doctor can attach them without digging through the gallery.
+ */
+app.get("/api/patients/:id/prescription-context", async (c) => {
+  const pid = intParam(c.req.param("id"));
+  if (!(await requirePatient(c, pid ?? 0)) || !pid) return c.json({ error: "Patient not found" }, 404);
+
+  const planned = await get<{ tooth: string }>(
+    `SELECT tooth FROM treatment_plan_items
+     WHERE patient_id = ? AND tooth IS NOT NULL AND tooth != '' AND status IN ('planned', 'accepted')
+     ORDER BY id DESC LIMIT 1`,
+    [pid],
+  );
+  const anyTooth = planned ?? (await get<{ tooth: string }>(
+    `SELECT tooth FROM treatment_plan_items
+     WHERE patient_id = ? AND tooth IS NOT NULL AND tooth != ''
+     ORDER BY id DESC LIMIT 1`,
+    [pid],
+  ));
+
+  const settings = await readStorageSettings();
+  const rows = await query(
+    `SELECT id, patient_id, appointment_id, file_key, file_name, mime_type, size_bytes,
+            kind, label, compare_group, uploaded_at
+     FROM patient_images
+     WHERE patient_id = ? AND deleted = 0 AND kind != 'photo'
+     ORDER BY uploaded_at DESC, id DESC LIMIT 8`,
+    [pid],
+  ).catch(() => [] as Array<Record<string, unknown>>);
+  const images = [];
+  for (const r of rows) {
+    images.push({ ...r, url: await storageUrlForFile(String(r.file_key)) });
+  }
+  return c.json({ tooth: anyTooth?.tooth ?? null, images, storage: { enabled: isStorageConfigured(settings) } });
+});
+
+// ── Storage configuration (Settings → Storage) ────────────────────
+
+app.get("/api/storage/config", async (c) => c.json(await storageStatus()));
+
+const StorageInput = z.object({
+  provider: z.enum(["none", "db", "s3", "r2"]),
+  endpoint: z.string().max(512).optional(),
+  region: z.string().max(64).optional(),
+  bucket: z.string().max(255).optional(),
+  access_key_id: z.string().max(255).optional(),
+  // Empty / the masked placeholder = keep the stored secret.
+  secret_access_key: z.string().max(512).optional(),
+  keep_secret: z.boolean().optional(),
+  public_base_url: z.string().max(512).optional().nullable(),
+  expiry_minutes: z.number().int().min(1).max(60).optional(),
+  max_file_mb: z.number().int().min(1).max(200).optional(),
+});
+
+app.put("/api/storage/config", async (c) => {
+  const parsed = await parseJson(c, StorageInput);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const d = parsed.data;
+  const err = validateStorageInput({ ...d, keep_secret: d.keep_secret });
+  if (err) return c.json({ error: err }, 400);
+
+  const entries: Array<[string, string | null]> = [
+    ["storage_provider", d.provider],
+    ["storage_endpoint", d.endpoint ?? ""],
+    ["storage_region", d.region ?? ""],
+    ["storage_bucket", d.bucket ?? ""],
+    ["storage_access_key_id", d.access_key_id ?? ""],
+    ["storage_public_base_url", d.public_base_url ?? ""],
+  ];
+  if (d.expiry_minutes !== undefined) entries.push(["storage_expiry_minutes", String(d.expiry_minutes)]);
+  if (d.max_file_mb !== undefined) entries.push(["storage_max_file_mb", String(d.max_file_mb)]);
+
+  const secret = (d.secret_access_key ?? "").trim();
+  if (secret && secret !== "••••••••") entries.push(["storage_secret_access_key", secret]);
+  else if (d.provider === "none") entries.push(["storage_secret_access_key", ""]);
+
+  for (const [key, value] of entries) {
+    await run(
+      `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+      [key, value ?? ""],
+    );
+  }
+  return c.json(await storageStatus());
+});
+
+// ── Inventory (stock control & supplier tracking) ────────────────
+
+const InventoryItemInput = z.object({
+  name: z.string().min(1),
+  category: z.string().optional().nullable(),
+  sku: z.string().optional().nullable(),
+  unit: z.string().optional(),
+  current_stock: z.number().int().min(0).optional(),
+  min_threshold: z.number().int().min(0).optional(),
+  reorder_quantity: z.number().int().min(1).optional().nullable(),
+  supplier_name: z.string().optional().nullable(),
+  supplier_contact: z.string().optional().nullable(),
+  batch_number: z.string().optional().nullable(),
+  expiry_date: z.string().optional().nullable(),
+  location: z.string().optional().nullable(),
+  unit_cost: z.number().min(0).optional(),
+  notes: z.string().optional().nullable(),
+});
+
+// Fall back to [] when the inventory tables don't exist yet (pre-migration
+// dev DB), the same way the insurance/lab routes do.
+const safeQueryItems = <T,>(sql: string, params: unknown[] = []): Promise<T[]> =>
+  query<T>(sql, params).catch(() => [] as T[]);
+
+app.get("/api/inventory", async (c) => {
+  const q = c.req.query("q")?.trim().toLowerCase();
+  const status = c.req.query("status");
+  const category = c.req.query("category");
+  // TODO could be a query param later; every item with an expiry_date is checked.
+  let where = "active = 1";
+  const params: unknown[] = [];
+  if (q) {
+    // Filter the already-meterialized rows in JS — FTS handles the "did you
+    // mean" global search already. A LIKE on a few hundred rows is fine.
+    where += " AND (name LIKE ? OR sku LIKE ? OR supplier_name LIKE ? OR batch_number LIKE ? OR category LIKE ?)";
+    const like = `%${q}%`;
+    params.push(like, like, like, like, like);
+  }
+  if (category) { where += " AND COALESCE(category,'') = ?"; params.push(category); }
+  let rows = await safeQueryItems<InventoryItemRow>(
+    `SELECT * FROM inventory_items WHERE ${where} ORDER BY name COLLATE NOCASE`,
+    params,
+  );
+  // status filter in JS: today's date for the expiry window is fetched with the items.
+  if (status) {
+    const today = new Date().toISOString().slice(0, 10);
+    const { expiryDays } = await getInventorySettings();
+    const cutoff = datePlusDays(today, expiryDays);
+    rows = rows.filter((it) => {
+      if (status === "out_of_stock") return it.current_stock === 0;
+      if (status === "low_stock") return it.current_stock > 0 && it.current_stock <= it.min_threshold;
+      if (status === "expiring") return it.expiry_date != null && it.expiry_date > today && it.expiry_date <= cutoff;
+      if (status === "expired") return it.expiry_date != null && it.expiry_date <= today;
+      return true;
+    });
+  }
+  return c.json({ items: rows, categories: INVENTORY_CATEGORIES });
+});
+
+// Registered before the /inventory/:id routes so the static segment wins.
+app.get("/api/inventory/settings", async (c) => {
+  const { expiryDays, alertEmail } = await getInventorySettings();
+  return c.json({ settings: { inventory_expiry_alert_days: String(expiryDays), inventory_alert_email: alertEmail } });
+});
+
+app.put("/api/inventory/settings", async (c) => {
+  const parsed = await parseJson(
+    c,
+    z.object({
+      inventory_expiry_alert_days: z.number().int().min(0).max(3650).optional(),
+      inventory_alert_email: z.string().email().optional().or(z.literal("")),
+    }),
+  );
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const updates: [string, string][] = [];
+  if (parsed.data.inventory_expiry_alert_days !== undefined) updates.push(["inventory_expiry_alert_days", String(parsed.data.inventory_expiry_alert_days)]);
+  if (parsed.data.inventory_alert_email !== undefined) updates.push(["inventory_alert_email", parsed.data.inventory_alert_email.trim()]);
+  for (const [key, value] of updates) {
+    await run(
+      "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      [key, value],
+    );
+  }
+  const { expiryDays, alertEmail } = await getInventorySettings();
+  return c.json({ settings: { inventory_expiry_alert_days: String(expiryDays), inventory_alert_email: alertEmail } });
+});
+
+app.post("/api/inventory", async (c) => {
+  const parsed = await parseJson(c, InventoryItemInput);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const d = parsed.data;
+  const result = await run(
+    `INSERT INTO inventory_items
+       (name, category, sku, unit, current_stock, min_threshold, reorder_quantity,
+        supplier_name, supplier_contact, batch_number, expiry_date, location, unit_cost, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      d.name.trim(), d.category?.trim() || null, d.sku?.trim() || null, d.unit ?? "piece",
+      d.current_stock ?? 0, d.min_threshold ?? 0, d.reorder_quantity ?? null,
+      d.supplier_name?.trim() || null, d.supplier_contact?.trim() || null, d.batch_number?.trim() || null,
+      d.expiry_date || null, d.location?.trim() || null, d.unit_cost ?? 0, d.notes?.trim() || null,
+    ],
+  );
+  const item = await get(
+    "SELECT * FROM inventory_items WHERE id = ?", [result.lastInsertRowid],
+  );
+  return c.json({ item }, 201);
+});
+
+app.put("/api/inventory/:id", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const parsed = await parseJson(c, InventoryItemInput.partial());
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  for (const [k, v] of Object.entries(parsed.data)) {
+    if (v === undefined) continue;
+    // Blank strings are cleared to NULL for the free-text fields.
+    const normalized = ["category", "sku", "supplier_name", "supplier_contact", "batch_number", "expiry_date", "location", "notes", "unit"]
+      .includes(k) && typeof v === "string" && v.trim() === "" ? null : v;
+    sets.push(`${k} = ?`);
+    params.push(normalized);
+  }
+  sets.push("updated_at = datetime('now')");
+  if (!sets.length) return c.json({ error: "No fields" }, 400);
+  params.push(id);
+  const r = await run(`UPDATE inventory_items SET ${sets.join(", ")} WHERE id = ?`, params);
+  if (!r.changes) return c.json({ error: "Not found" }, 404);
+  const item = await get("SELECT * FROM inventory_items WHERE id = ?", [id]);
+  return c.json({ item });
+});
+
+app.delete("/api/inventory/:id", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const r = await run("UPDATE inventory_items SET active = 0, updated_at = datetime('now') WHERE id = ?", [id]);
+  if (!r.changes) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true });
+});
+
+/** Reports a stock movement and keeps `current_stock` in sync. */
+async function applyMovement(
+  id: number,
+  type: "in" | "out" | "adjust",
+  quantity: number,
+  balanceAfter: number,
+  opts: Record<string, unknown>,
+): Promise<boolean> {
+  const r = await run(
+    `INSERT INTO inventory_movements (item_id, type, quantity, balance_after, unit_cost, reference, reason, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, type, quantity, balanceAfter, opts.unit_cost ?? null, opts.reference ?? null, opts.reason ?? null, opts.notes ?? null],
+  );
+  if (!r.changes) return false;
+  await run("UPDATE inventory_items SET current_stock = ?, updated_at = datetime('now') WHERE id = ?", [balanceAfter, id]);
+  return true;
+}
+
+const StockInInput = z.object({
+  quantity: z.number().int().positive(),
+  unit_cost: z.number().min(0).optional().nullable(),
+  reference: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+});
+
+const StockOutInput = z.object({
+  quantity: z.number().int().positive(),
+  reason: z.string().optional().nullable(),
+  reference: z.string().optional().nullable(),
+  allow_negative: z.boolean().optional(),
+  notes: z.string().optional().nullable(),
+});
+
+const AdjustInput = z.object({
+  new_stock: z.number().int().min(0),
+  reason: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+});
+
+app.post("/api/inventory/:id/stock-in", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const parsed = await parseJson(c, StockInInput);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const item = await get<InventoryItemRow>("SELECT * FROM inventory_items WHERE id = ? AND active = 1", [id]);
+  if (!item) return c.json({ error: "Item not found" }, 404);
+  const qty = parsed.data.quantity;
+  const balance = (item.current_stock ?? 0) + qty;
+  // Restock also refreshes the unit cost used for valuation.
+  if (parsed.data.unit_cost != null) {
+    await run("UPDATE inventory_items SET unit_cost = ?, updated_at = datetime('now') WHERE id = ?", [parsed.data.unit_cost, id]);
+  }
+  await applyMovement(id, "in", qty, balance, parsed.data);
+  const updated = await get("SELECT * FROM inventory_items WHERE id = ?", [id]);
+  return c.json({ item: updated, movement: { item_id: id, type: "in", quantity: qty, balance_after: balance } }, 201);
+});
+
+app.post("/api/inventory/:id/stock-out", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const parsed = await parseJson(c, StockOutInput);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const item = await get<InventoryItemRow>("SELECT * FROM inventory_items WHERE id = ? AND active = 1", [id]);
+  if (!item) return c.json({ error: "Item not found" }, 404);
+  const qty = parsed.data.quantity;
+  const balance = (item.current_stock ?? 0) - qty;
+  if (balance < 0 && !parsed.data.allow_negative) {
+    return c.json({ error: `Only ${item.current_stock} ${item.unit} in stock — can't issue ${qty}. Enable “allow negative” to oversell.` }, 400);
+  }
+  await applyMovement(id, "out", qty, balance, parsed.data);
+  const updated = await get("SELECT * FROM inventory_items WHERE id = ?", [id]);
+  return c.json({ item: updated, movement: { item_id: id, type: "out", quantity: qty, balance_after: balance } }, 201);
+});
+
+app.post("/api/inventory/:id/adjust", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const parsed = await parseJson(c, AdjustInput);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const item = await get<InventoryItemRow>("SELECT * FROM inventory_items WHERE id = ? AND active = 1", [id]);
+  if (!item) return c.json({ error: "Item not found" }, 404);
+  const delta = parsed.data.new_stock - (item.current_stock ?? 0);
+  await applyMovement(id, "adjust", Math.abs(delta), parsed.data.new_stock, parsed.data);
+  const updated = await get("SELECT * FROM inventory_items WHERE id = ?", [id]);
+  return c.json({ item: updated }, 201);
+});
+
+app.get("/api/inventory/:id/movements", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const rows = await safeQueryItems<Record<string, unknown>>(
+    "SELECT * FROM inventory_movements WHERE item_id = ? ORDER BY performed_at DESC, id DESC LIMIT 200",
+    [id],
+  );
+  return c.json({ movements: rows });
+});
+
+// Open alerts (resolved = 0) joined with item names; lives before the :id rule
+// is irrelevant — nested path, static segment wins.
+app.get("/api/inventory/alerts", async (c) => {
+  const rows = await safeQueryItems<Record<string, unknown>>(
+    `SELECT a.*, i.name as item_name
+     FROM inventory_alerts a LEFT JOIN inventory_items i ON i.id = a.item_id
+     WHERE a.resolved = 0
+     ORDER BY CASE a.severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, a.id DESC`,
+  );
+  return c.json({ alerts: rows });
+});
+
+app.post("/api/inventory/alerts/:id/resolve", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const r = await run(
+    "UPDATE inventory_alerts SET resolved = 1, resolved_at = datetime('now') WHERE id = ? AND resolved = 0",
+    [id],
+  );
+  if (!r.changes) return c.json({ error: "Not found" }, 404);
+  const row = await get(
+    `SELECT a.*, i.name as item_name FROM inventory_alerts a LEFT JOIN inventory_items i ON i.id = a.item_id WHERE a.id = ?`,
+    [id],
+  );
+  return c.json({ alert: row });
+});
+
+// The daily scan: rebuild the open-alert set from the current stock/expiry
+// state. Client-orchestrated (see use-daily-inventory-scan), but also callable
+// from a cron trigger later or the "Scan now" button.
+app.post("/api/inventory/scan", async (c) => {
+  const result = await runInventoryScan();
+  return c.json(result, 200);
 });
 
 // ── Search ────────────────────────────────────────────────────────

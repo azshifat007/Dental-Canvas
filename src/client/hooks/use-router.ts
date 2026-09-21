@@ -9,6 +9,8 @@ export type Route =
   | { name: "patient-invoice"; id: number; invoiceId: number }
   | { name: "reports" }
   | { name: "lab" }
+  | { name: "medicines" }
+  | { name: "inventory" }
   | { name: "settings" }
   | { name: "not-found" };
 
@@ -24,6 +26,8 @@ function parse(path: string): Route {
   if (inv) return { name: "patient-invoice", id: parseInt(inv[1], 10), invoiceId: parseInt(inv[2], 10) };
   if (path === "/reports") return { name: "reports" };
   if (path === "/lab") return { name: "lab" };
+  if (path === "/medicines") return { name: "medicines" };
+  if (path === "/inventory") return { name: "inventory" };
   if (path === "/settings") return { name: "settings" };
   return { name: "not-found" };
 }

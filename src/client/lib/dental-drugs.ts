@@ -100,6 +100,51 @@ export const DENTAL_DRUGS: DrugPreset[] = [
     instructions: "with food",
     group: "Antibiotic",
   },
+  {
+    name: "Tinidazole",
+    dosage: "500 mg",
+    frequency: "2x daily",
+    duration: "3 days",
+    instructions: "with food; avoid alcohol completely",
+    group: "Antibiotic",
+    aliases: ["tinigyl", "flagyl alternative", "anaerobic"],
+  },
+  {
+    name: "Ciprofloxacin",
+    dosage: "500 mg",
+    frequency: "2x daily",
+    duration: "5 days",
+    instructions: "with plenty of water; avoid dairy within 2 hours of a dose",
+    group: "Antibiotic",
+    aliases: ["ciprocin", "ciprobay", "quinolone"],
+  },
+  {
+    name: "Cefixime",
+    dosage: "200 mg",
+    frequency: "2x daily",
+    duration: "5 days",
+    instructions: "with or without food",
+    group: "Antibiotic",
+    aliases: ["cexime", "cefix", "3rd gen cephalosporin"],
+  },
+  {
+    name: "Cephalexin",
+    dosage: "500 mg",
+    frequency: "4x daily",
+    duration: "5 days",
+    instructions: "with or without food; complete the full course",
+    group: "Antibiotic",
+    aliases: ["keflex", "seporin", "cephalosporin"],
+  },
+  {
+    name: "Doxycycline",
+    dosage: "100 mg",
+    frequency: "once daily",
+    duration: "10 days",
+    instructions: "with a full glass of water; stay upright for 30 minutes after",
+    group: "Antibiotic",
+    aliases: ["doxcin", "terramycin", "vibramycin", "tetracycline"],
+  },
 
   // ── Analgesics ─────────────────────────────────────────────────────
   {
@@ -155,6 +200,42 @@ export const DENTAL_DRUGS: DrugPreset[] = [
     group: "Analgesic",
     aliases: ["codeine"],
   },
+  {
+    name: "Ketorolac",
+    dosage: "10 mg",
+    frequency: "every 6 hours",
+    duration: "2 days",
+    instructions: "shortest possible course; take with food; max 5 days total",
+    group: "Analgesic",
+    aliases: ["ketolac", "torolac", "acular"],
+  },
+  {
+    name: "Mefenamic acid",
+    dosage: "250 mg",
+    frequency: "3x daily",
+    duration: "3 days",
+    instructions: "take with food; best for dental pain",
+    group: "Analgesic",
+    aliases: ["ponstan", "ponstel", "mefamic"],
+  },
+  {
+    name: "Nimesulide",
+    dosage: "100 mg",
+    frequency: "2x daily",
+    duration: "3 days",
+    instructions: "after meals; shortest course possible",
+    group: "Analgesic",
+    aliases: ["nimek", "nimacid", "nimsulide"],
+  },
+  {
+    name: "Piroxicam",
+    dosage: "20 mg",
+    frequency: "once daily",
+    duration: "3 days",
+    instructions: "with food at the same time each day",
+    group: "Analgesic",
+    aliases: ["feldene", "piroxy"],
+  },
 
   // ── Antifungals ────────────────────────────────────────────────────
   {
@@ -183,6 +264,15 @@ export const DENTAL_DRUGS: DrugPreset[] = [
     instructions: "with or without food",
     group: "Antifungal",
     aliases: ["diflucan"],
+  },
+  {
+    name: "Clotrimazole mouth paint",
+    dosage: "1 mL",
+    frequency: "2x daily",
+    duration: "7 days",
+    instructions: "apply to affected areas with a cotton swab; avoid food for 20 minutes",
+    group: "Antifungal",
+    aliases: ["canesten", "topiclof", "mouth paint", "oral thrush"],
   },
 
   // ── Antivirals ─────────────────────────────────────────────────────
@@ -224,6 +314,15 @@ export const DENTAL_DRUGS: DrugPreset[] = [
     group: "Antiseptic rinse",
     aliases: ["saline", "salt water"],
   },
+  {
+    name: "Povidone-iodine gargle",
+    dosage: "15 mL",
+    frequency: "3x daily",
+    duration: "5 days",
+    instructions: "gargle for 20 seconds and spit out; do not swallow; avoid in pregnancy/thyroid disease",
+    group: "Antiseptic rinse",
+    aliases: ["betadine", "povidone", "gargle"],
+  },
 
   // ── Other ──────────────────────────────────────────────────────────
   {
@@ -244,6 +343,33 @@ export const DENTAL_DRUGS: DrugPreset[] = [
     group: "Other",
     aliases: ["periostat"],
   },
+  {
+    name: "Lignocaine viscous 2%",
+    dosage: "10 mL",
+    frequency: "as needed",
+    duration: "5 days",
+    instructions: "swish and spit when pain limits eating; do not swallow — risk of local anaesthesia of the throat",
+    group: "Other",
+    aliases: ["lidocaine", "xylocaine", "viscous gel", "topical"],
+  },
+  {
+    name: "Triamcinolone orabase",
+    dosage: "pea-sized amount",
+    frequency: "2x daily",
+    duration: "1 week",
+    instructions: "apply a thin layer to the ulcer after meals and at bedtime; do not rub in",
+    group: "Other",
+    aliases: ["kenalog", "triamcinolone paste", "aphthous ulcer", "ulcer"],
+  },
+  {
+    name: "Dexamethasone",
+    dosage: "0.5 mg",
+    frequency: "3x daily",
+    duration: "3 days",
+    instructions: "with food in the morning; do not stop suddenly",
+    group: "Other",
+    aliases: ["dexason", "steroid", "corticosteroid"],
+  },
 ];
 
 const GROUP_ORDER: DrugGroup[] = [
@@ -255,12 +381,20 @@ const GROUP_ORDER: DrugGroup[] = [
   "Other",
 ];
 
-/** Case-insensitive match on name + aliases, used by the autocomplete. */
-export function searchDentalDrugs(query: string, limit = 6): DrugPreset[] {
+/**
+ * Case-insensitive match on name + aliases, used by the autocomplete.
+ * `extraPresets` (the practice's editable medicine list) are searched first
+ * and win over the built-in library when names collide.
+ */
+export function searchDentalDrugs(query: string, limit = 6, extraPresets: DrugPreset[] = []): DrugPreset[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];
   const scored: { preset: DrugPreset; score: number; index: number }[] = [];
-  for (const preset of DENTAL_DRUGS) {
+  const seen = new Set<string>();
+  for (const preset of [...extraPresets, ...DENTAL_DRUGS]) {
+    const key = preset.name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
     const name = preset.name.toLowerCase();
     let score: number | null = null;
     if (name.startsWith(q)) score = 0;

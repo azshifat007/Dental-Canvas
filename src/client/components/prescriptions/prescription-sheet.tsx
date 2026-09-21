@@ -32,8 +32,12 @@ export interface PrescriptionSheetData {
   large_print?: boolean;
   /** Tooth the prescription relates to, rendered beside the linked procedure. */
   tooth?: string | null;
+  /** Fixed practice instructions printed in the Chamber footer (from Settings). */
+  chamber_footer_instructions?: string | null;
   /** Name of the linked treatment-plan procedure, if any. */
   plan_treatment_name?: string | null;
+  /** Attached X-ray / intraoral images — rendered as a thumbnail strip. */
+  images?: { id: number; label?: string | null; src: string | null }[];
   diagnosis?: string | null;
   advice?: string | null;
   follow_up?: string | null;
@@ -329,6 +333,14 @@ function ChamberSheet({ data }: { data: PrescriptionSheetData }) {
   const GREEN = "#166534";
   const GREEN_DARK = "#14532d";
 
+  // Bengali labels, matching the printed chamber pad. Bangla needs its own
+  // font stack — falls back through the commonly installed Noto/system Bangla
+  // fonts before generic sans-serif.
+  const BN_FONT = "'Noto Sans Bengali', 'Hind Siliguri', 'SolaimanLipi', 'Kalpurush', 'Vrinda', system-ui, sans-serif";
+  const bnName: React.CSSProperties = { fontFamily: BN_FONT, fontSize: "9.5pt", fontWeight: 700, color: GREEN_DARK };
+  const bnDetail: React.CSSProperties = { fontFamily: BN_FONT, fontSize: "8pt", color: "#3f5147", lineHeight: 1.4 };
+  const bnSub: React.CSSProperties = { fontFamily: BN_FONT, fontSize: "8pt", fontWeight: 400, color: "#64748b" };
+
   const sideLabel: React.CSSProperties = {
     fontSize: "10.5pt",
     fontWeight: 600,
@@ -341,7 +353,6 @@ function ChamberSheet({ data }: { data: PrescriptionSheetData }) {
     whiteSpace: "pre-line",
     lineHeight: 1.45,
   };
-  const headLabel: React.CSSProperties = { fontSize: "7.5pt", color: GREEN, fontWeight: 600 };
   const headValue: React.CSSProperties = { fontSize: "9pt", color: "#1f2937" };
 
   return (
@@ -359,18 +370,14 @@ function ChamberSheet({ data }: { data: PrescriptionSheetData }) {
           alignItems: "center",
         }}
       >
-        {/* Left: chamber / address block */}
+        {/* Left: Bengali dentist block — the printed pad's Bangla side,
+            mirroring the English block on the right. */}
         <div style={{ display: "flex", flexDirection: "column", gap: "1.2mm" }}>
-          <div style={{ ...headLabel, fontSize: "8pt" }}>Chamber</div>
-          {contactParts.length > 0 ? (
-            contactParts.map((part, i) => (
-              <div key={i} style={{ fontSize: "8pt", color: "#3f5147", whiteSpace: "pre-line", lineHeight: 1.35 }}>
-                {part}
-              </div>
-            ))
-          ) : (
-            <div style={{ fontSize: "8pt", color: "#8aa394" }}>—</div>
-          )}
+          <div style={bnName}>ডেন্টিস্ট : {doctorLabel}</div>
+          {data.doctor_specialty && <div style={bnDetail}>{data.doctor_specialty}</div>}
+          {data.doctor_license && <div style={bnDetail}>লাইসেন্স : {data.doctor_license}</div>}
+          {data.clinic_phone && <div style={bnDetail}>মোবাইল : {data.clinic_phone}</div>}
+          {data.clinic_address && <div style={bnDetail}>চেম্বার : {data.clinic_address}</div>}
         </div>
 
         {/* Center: logo + clinic name */}
@@ -439,29 +446,44 @@ function ChamberSheet({ data }: { data: PrescriptionSheetData }) {
           }}
         >
           <div>
-            <div style={sideLabel}>C/C :</div>
+            <div style={sideLabel}>C/C : <span style={bnSub}>রোগের বর্ণনা</span></div>
             {data.diagnosis && <div style={sideValue}>{data.diagnosis}</div>}
           </div>
           <div>
-            <div style={sideLabel}>O/E :</div>
+            <div style={sideLabel}>O/E : <span style={bnSub}>পরীক্ষায় প্রাপ্ত</span></div>
             {data.tooth && <div style={sideValue}>Tooth {data.tooth}</div>}
             {data.practitioner_name && data.practitioner_name !== data.doctor_name && (
               <div style={{ ...sideValue, color: "#6b7280" }}>Seen by {data.practitioner_name}</div>
             )}
           </div>
           <div>
-            <div style={sideLabel}>H/O:</div>
+            <div style={sideLabel}>H/O: <span style={bnSub}>রোগের ইতিহাস</span></div>
             {data.patient_medical_alerts && <div style={sideValue}>{data.patient_medical_alerts}</div>}
           </div>
           <div>
-            <div style={sideLabel}>Treatment Plan</div>
+            <div style={sideLabel}>Treatment Plan <span style={bnSub}>চিকিৎসা পরিকল্পনা</span></div>
             {data.plan_treatment_name && <div style={sideValue}>{data.plan_treatment_name}</div>}
           </div>
           <div>
-            <div style={sideLabel}>X-ray</div>
-            <svg width="58" height="58" viewBox="0 0 58 58" aria-hidden style={{ marginTop: "1mm" }}>
-              <path d="M29 6v46M6 29h46" stroke="#4a7fa5" strokeWidth="1.2" fill="none" />
-            </svg>
+            <div style={sideLabel}>X-ray <span style={bnSub}>এক্স-রে</span></div>
+            {data.images && data.images.some((i) => i.src) ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: "2mm" }}>
+                {data.images
+                  .filter((i) => i.src)
+                  .map((i) => (
+                    <img
+                      key={i.id}
+                      src={i.src!}
+                      alt={i.label || "X-ray"}
+                      style={{ width: "100%", border: "1px solid #9db7c9", borderRadius: "1mm", background: "#ffffff" }}
+                    />
+                  ))}
+              </div>
+            ) : (
+              <svg width="58" height="58" viewBox="0 0 58 58" aria-hidden style={{ marginTop: "1mm" }}>
+                <path d="M29 6v46M6 29h46" stroke="#4a7fa5" strokeWidth="1.2" fill="none" />
+              </svg>
+            )}
           </div>
         </div>
 
@@ -558,6 +580,20 @@ function ChamberSheet({ data }: { data: PrescriptionSheetData }) {
         <div>
           {title}
           {contactParts.length > 0 ? ` — ${contactParts.join(" · ")}` : ""}
+          {data.chamber_footer_instructions && (
+            <div
+              style={{
+                marginTop: "1.5mm",
+                paddingTop: "1.5mm",
+                borderTop: "1px solid rgba(22, 101, 52, 0.25)",
+                whiteSpace: "pre-line",
+                fontSize: "7pt",
+                color: "#3f5147",
+              }}
+            >
+              {data.chamber_footer_instructions}
+            </div>
+          )}
         </div>
         <div style={{ textAlign: "right", fontWeight: 600 }}>
           {doctorLabel}
@@ -727,6 +763,32 @@ export function PrescriptionSheet({ data }: { data: PrescriptionSheetData }) {
             {data.plan_treatment_name && (
               <span style={{ color: t.mutedText }}>For: {data.plan_treatment_name}</span>
             )}
+          </div>
+        )}
+
+        {data.images && data.images.some((i) => i.src) && (
+          <div style={{ display: "flex", alignItems: "center", gap: `${3 * L}mm`, marginBottom: `${4 * L}mm`, flexWrap: "wrap" }}>
+            <span style={{ color: t.mutedText, fontSize: `${8 * L}pt`, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginRight: "2mm" }}>
+              X-ray
+            </span>
+            {data.images
+              .filter((i) => i.src)
+              .map((i) => (
+                <img
+                  key={i.id}
+                  src={i.src!}
+                  alt={i.label || "X-ray"}
+                  title={i.label || "X-ray"}
+                  style={{
+                    height: `${20 * L}mm`,
+                    objectFit: "contain",
+                    border: "1px solid #cbd5e1",
+                    borderRadius: "1mm",
+                    background: "#ffffff",
+                    marginRight: `${2 * L}mm`,
+                  }}
+                />
+              ))}
           </div>
         )}
 
