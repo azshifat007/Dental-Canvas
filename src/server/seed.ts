@@ -62,11 +62,23 @@ export const DEFAULT_PROFILE_SETTINGS: Record<string, string> = {
   // (e.g. emergency contact, "report fever after extraction"). Newline =
   // new line on the sheet; empty = footer shows only the contact row.
   chamber_footer_instructions: "",
+  // Google review link included in post-visit review-request messages.
+  google_review_url: "",
   // Prescription email delivery (via the Resend HTTP API). Both empty =
   // emailing disabled; the print view's Email button explains the setup.
   email_api_key: "",
   email_from: "",
+  // Invoice look & feel (Settings → Billing): sheet style, hex accent color,
+  // terms line under the totals and the closing footer note.
+  invoice_style: "classic",
+  invoice_accent: "#0e7490",
+  invoice_payment_terms: "",
+  invoice_footer_note: "",
+  invoice_show_payments: "1",
 };
+
+/** Valid invoice style ids — mirrors INVOICE_STYLES on the client. */
+export const INVOICE_STYLE_IDS = ["classic", "modern", "compact", "elegant"] as const;
 
 /**
  * Auto-backup schedule defaults. `auto_backup_interval_minutes = 0` means the

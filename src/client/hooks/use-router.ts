@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 export type Route =
   | { name: "dashboard" }
   | { name: "agenda" }
+  | { name: "kiosk" }
   | { name: "patients" }
   | { name: "patient"; id: number }
   | { name: "patient-prescription"; id: number; prescriptionId: number }
@@ -11,12 +12,16 @@ export type Route =
   | { name: "lab" }
   | { name: "medicines" }
   | { name: "inventory" }
+  | { name: "finance-billing" }
+  | { name: "finance-revenue" }
+  | { name: "finance-appointments" }
   | { name: "settings" }
   | { name: "not-found" };
 
 function parse(path: string): Route {
   if (path === "/" || path === "/dashboard") return { name: "dashboard" };
   if (path === "/agenda") return { name: "agenda" };
+  if (path === "/kiosk") return { name: "kiosk" };
   if (path === "/patients") return { name: "patients" };
   const m = path.match(/^\/patients\/(\d+)$/);
   if (m) return { name: "patient", id: parseInt(m[1], 10) };
@@ -25,6 +30,9 @@ function parse(path: string): Route {
   const inv = path.match(/^\/patients\/(\d+)\/invoices\/(\d+)$/);
   if (inv) return { name: "patient-invoice", id: parseInt(inv[1], 10), invoiceId: parseInt(inv[2], 10) };
   if (path === "/reports") return { name: "reports" };
+  if (path === "/finance/billing-record") return { name: "finance-billing" };
+  if (path === "/finance/revenue-breakdown") return { name: "finance-revenue" };
+  if (path === "/finance/appointment-overview") return { name: "finance-appointments" };
   if (path === "/lab") return { name: "lab" };
   if (path === "/medicines") return { name: "medicines" };
   if (path === "/inventory") return { name: "inventory" };

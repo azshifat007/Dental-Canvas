@@ -64,7 +64,7 @@ export function InventoryAlertsPanel({ navigate }: { navigate: (to: string) => v
   const critical = alerts.filter((a) => a.severity === "critical").length;
 
   return (
-    <div className="rounded-2xl border bg-card p-5 shadow-sm">
+    <div className="card-lift animate-rise rounded-2xl border bg-card p-5 shadow-sm">
       <div className="flex items-center justify-between">
         <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
           <AlertTriangle className={cn("h-4 w-4", alerts.length > 0 ? "text-amber-500" : "text-muted-foreground")} />

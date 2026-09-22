@@ -13,6 +13,8 @@ import { TreatmentPlan } from "./treatment-plan";
 import { ClinicalNotes } from "./clinical-notes";
 import { Billing } from "./billing";
 import { InsuranceTab } from "./insurance-tab";
+import { MembershipTab } from "./membership-tab";
+import { ConsentsTab } from "./consents-tab";
 import { PrescriptionsTab } from "@/components/prescriptions/prescriptions-tab";
 import { ImagesGallery } from "./images-gallery";
 import { PatientDialog } from "./patient-dialog";
@@ -144,6 +146,8 @@ export function PatientPage({ id, navigate }: Props) {
             <TabsTrigger value="prescriptions">Prescriptions</TabsTrigger>
             <TabsTrigger value="imaging">Imaging</TabsTrigger>
             <TabsTrigger value="insurance">Insurance</TabsTrigger>
+            <TabsTrigger value="membership">Membership</TabsTrigger>
+            <TabsTrigger value="consents">Consents</TabsTrigger>
             <TabsTrigger value="chart">Tooth Chart</TabsTrigger>
             <TabsTrigger value="plan">Treatment Plan</TabsTrigger>
             <TabsTrigger value="notes">Clinical Notes</TabsTrigger>
@@ -160,6 +164,12 @@ export function PatientPage({ id, navigate }: Props) {
           </TabsContent>
           <TabsContent value="insurance" className="mt-4">
             <InsuranceTab patientId={patient.id} />
+          </TabsContent>
+          <TabsContent value="membership" className="mt-4">
+            <MembershipTab patientId={patient.id} />
+          </TabsContent>
+          <TabsContent value="consents" className="mt-4">
+            <ConsentsTab patientId={patient.id} />
           </TabsContent>
           <TabsContent value="chart" className="mt-4">
             <ToothChart patientId={patient.id} />

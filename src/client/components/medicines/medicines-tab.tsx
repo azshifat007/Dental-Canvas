@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Pencil, Plus, Pill, Search, Trash2 } from "lucide-react";
 import { api } from "@/api";
 import { useApp } from "@/context";
+import { toast } from "@/components/ui/toast";
 import type { Medicine } from "@/types";
 import type { DrugGroup } from "@/lib/dental-drugs";
 import { Button } from "@/components/ui/button";
@@ -89,12 +90,15 @@ export function MedicinesTab() {
       };
       if (editingId) {
         await api("PUT", `/api/medicines/${editingId}`, body);
+        toast.success(`${body.name} updated`);
       } else {
         await api("POST", "/api/medicines", body);
+        toast.success(`${body.name} added to your medicine list`);
       }
       await app.refreshMedicines();
       setDialogOpen(false);
     } catch (err) {
+      toast.error((err as Error).message);
       app.setError((err as Error).message);
     } finally {
       setBusy(false);
@@ -106,7 +110,9 @@ export function MedicinesTab() {
     try {
       await api("DELETE", `/api/medicines/${m.id}`);
       await app.refreshMedicines();
+      toast.success(`${m.name} removed`);
     } catch (err) {
+      toast.error((err as Error).message);
       app.setError((err as Error).message);
     }
   }

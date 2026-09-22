@@ -66,10 +66,12 @@ CREATE TABLE IF NOT EXISTS appointments (
   treatment_type_id INTEGER REFERENCES treatment_types(id) ON DELETE SET NULL,
   start_time TEXT NOT NULL,             -- ISO datetime 'YYYY-MM-DDTHH:MM:SS'
   end_time TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'scheduled', -- 'scheduled' | 'arrived' | 'in_chair' | 'completed' | 'no_show' | 'cancelled'
+  status TEXT NOT NULL DEFAULT 'scheduled', -- 'scheduled' | 'confirmed' | 'arrived' | 'in_chair' | 'completed' | 'no_show' | 'cancelled'
   kind TEXT NOT NULL DEFAULT 'patient',     -- 'patient' | 'break' | 'lunch' | 'block'
   title TEXT,                           -- override title (used for break/lunch/block)
   notes TEXT,
+  review_requested_at TEXT,             -- set when a Google review was requested after this visit
+  checked_in_at TEXT,                   -- when the patient physically arrived (kiosk/front-desk check-in)
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -158,6 +160,19 @@ CREATE TABLE IF NOT EXISTS invoice_payments (
 
 CREATE INDEX IF NOT EXISTS idx_invoice_payments_invoice ON invoice_payments(invoice_id);
 
+-- ── Payment plans (installments for one invoice) ───────────────
+CREATE TABLE IF NOT EXISTS invoice_payment_plans (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+  installment_count INTEGER NOT NULL,
+  interval TEXT NOT NULL DEFAULT 'monthly', -- 'weekly' | 'monthly'
+  start_date TEXT NOT NULL,
+  installment_amount REAL NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  payment_plan_reminded_at TEXT,        -- when the front desk last sent an installment reminder
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- ── Waiting list ────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS waiting_list (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -168,6 +183,58 @@ CREATE TABLE IF NOT EXISTS waiting_list (
   notes TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ── In-house membership plans (plan catalog) ───────────────────
+CREATE TABLE IF NOT EXISTS membership_plans (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  monthly_fee REAL NOT NULL DEFAULT 0,
+  annual_fee REAL,
+  discount_percent REAL NOT NULL DEFAULT 0,
+  benefits TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ── Patient memberships (a patient enrolled in a plan) ─────────
+CREATE TABLE IF NOT EXISTS patient_memberships (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  plan_id INTEGER NOT NULL REFERENCES membership_plans(id) ON DELETE CASCADE,
+  start_date TEXT NOT NULL,
+  end_date TEXT,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'cancelled', 'expired')),
+  last_billed_at TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_patient_membership ON patient_memberships(patient_id, status);
+CREATE INDEX IF NOT EXISTS idx_membership_plan ON patient_memberships(plan_id);
+
+-- ── Digital consent forms (reusable templates) ─────────────────
+CREATE TABLE IF NOT EXISTS consent_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  requires_guardian INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ── Captured consent signatures (canvas data-URL) ──────────────
+CREATE TABLE IF NOT EXISTS consent_signatures (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  template_id INTEGER NOT NULL REFERENCES consent_templates(id) ON DELETE CASCADE,
+  patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  appointment_id INTEGER REFERENCES appointments(id) ON DELETE SET NULL,
+  signer_name TEXT NOT NULL,
+  signer_role TEXT NOT NULL DEFAULT 'patient',
+  signature_data TEXT NOT NULL,
+  signed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_consent_patient ON consent_signatures(patient_id, signed_at DESC);
 
 -- ── Insurance plans ────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS insurance_plans (
@@ -224,7 +291,16 @@ CREATE TABLE IF NOT EXISTS appointments_to_make (
   source TEXT NOT NULL DEFAULT 'reception', -- 'reception' | 'patient' | 'system'
   notes TEXT,
   status TEXT NOT NULL DEFAULT 'open',  -- 'open' | 'scheduled' | 'cancelled'
+  confirmed_at TEXT,                    -- set when the patient confirmed this recall
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ── Hygiene recall configuration (per patient, Dentrix-style) ──
+CREATE TABLE IF NOT EXISTS patient_recall_config (
+  patient_id INTEGER PRIMARY KEY REFERENCES patients(id) ON DELETE CASCADE,
+  recall_type_id INTEGER REFERENCES treatment_types(id) ON DELETE SET NULL,
+  interval_months INTEGER NOT NULL DEFAULT 6,
+  last_completed TEXT                   -- ISO date of the last completed recall visit
 );
 
 -- ── Dentist notes (dashboard sticky notes) ─────────────────────

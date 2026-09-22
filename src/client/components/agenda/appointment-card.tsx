@@ -46,6 +46,13 @@ export function AppointmentCard({ appointment, onClick, topPx, heightPx }: Props
   const isCompact = heightPx < 56;
   const isVeryCompact = heightPx < 36;
 
+  // Wait time: minutes since the patient checked in until they're in the
+  // chair (or still waiting right now). Shown as a live badge.
+  const waitMinutes =
+    appointment.checked_in_at && appointment.status === "arrived"
+      ? Math.max(0, Math.round((Date.now() - new Date(appointment.checked_in_at).getTime()) / 60000))
+      : null;
+
   return (
     <button
       type="button"
@@ -56,14 +63,30 @@ export function AppointmentCard({ appointment, onClick, topPx, heightPx }: Props
         palette.bg,
         palette.text,
         palette.ring,
+        appointment.status === "confirmed" && "border-teal-400 dark:border-teal-700",
         appointment.status === "completed" && "opacity-70",
         appointment.status === "cancelled" && "opacity-50 line-through",
       )}
       title={`${patientName} · ${appointment.treatment_name ?? ""}`}
     >
       {!isVeryCompact && (
-        <span className={cn("text-[11px] font-medium tabular-nums opacity-80")}>
-          {timeLabel(appointment.start_time)}
+        <span className={cn("flex w-full items-center justify-between text-[11px] font-medium tabular-nums opacity-80")}>
+          <span>{timeLabel(appointment.start_time)}</span>
+          {waitMinutes != null && (
+            <span
+              className={cn(
+                "rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
+                waitMinutes > 15
+                  ? "bg-rose-600/90 text-white"
+                  : waitMinutes > 5
+                    ? "bg-amber-500/90 text-white"
+                    : "bg-emerald-600/90 text-white",
+              )}
+              title="Minutes waiting since check-in"
+            >
+              ⏱ {waitMinutes}m
+            </span>
+          )}
         </span>
       )}
       <span className={cn("truncate font-semibold leading-tight", isCompact ? "text-xs" : "text-sm")}>

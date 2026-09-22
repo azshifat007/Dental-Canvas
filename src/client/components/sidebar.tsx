@@ -14,6 +14,9 @@ import {
   Monitor,
   Moon,
   Sun,
+  Receipt,
+  TrendingUp,
+  CalendarClock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { openQuickRegister } from "@/lib/quick-register";
@@ -41,6 +44,14 @@ const sections: { heading: string; items: NavItem[] }[] = [
     ],
   },
   {
+    heading: "Finance",
+    items: [
+      { label: "Billing Record",         icon: Receipt,      path: "/finance/billing-record",        match: (r) => r.name === "finance-billing" },
+      { label: "Revenue Breakdown",      icon: TrendingUp,   path: "/finance/revenue-breakdown",     match: (r) => r.name === "finance-revenue" },
+      { label: "Appointment Overview",  icon: CalendarClock, path: "/finance/appointment-overview",  match: (r) => r.name === "finance-appointments" },
+    ],
+  },
+  {
     heading: "Admin",
     items: [
       { label: "Reports",  icon: FileBarChart2, path: "/reports",  match: (r) => r.name === "reports" },
@@ -60,7 +71,7 @@ export function Sidebar({
 }) {
   const { pref: theme, cycleTheme } = useTheme();
   if (embedded) {
-    const icons: Record<string, string> = { "/dashboard": "layout-dashboard", "/agenda": "calendar-days", "/patients": "users", "/lab": "package", "/medicines": "clipboard-list", "/inventory": "archive", "/reports": "bar-chart-3", "/settings": "settings" };
+    const icons: Record<string, string> = { "/dashboard": "layout-dashboard", "/agenda": "calendar-days", "/patients": "users", "/lab": "package", "/medicines": "clipboard-list", "/inventory": "archive", "/finance/billing-record": "receipt", "/finance/revenue-breakdown": "trending-up", "/finance/appointment-overview": "calendar-clock", "/reports": "bar-chart-3", "/settings": "settings" };
     const active = sections.flatMap(section => section.items).find(item => item.match?.(route))?.path;
     return <AppNav title="Dental Canvas" icon="calendar-days" active={active}
       groups={sections.map(section => ({ label: section.heading, items: section.items.filter(item => item.path && !item.disabled).map(item => ({

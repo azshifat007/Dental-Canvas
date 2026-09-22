@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Bell,
   Calendar as CalendarIcon,
+  Cake,
   ChevronLeft,
   ChevronRight,
   Search,
@@ -40,6 +41,16 @@ export interface DashboardSummary {
   returning_patients: number;
   returning_patients_delta_pct: number | null;
   upcoming: UpcomingEvent[];
+}
+
+export interface Birthday {
+  id: number;
+  name: string;
+  date_of_birth: string | null;
+  phone: string | null;
+  turning: number;
+  days_away: number;
+  is_today: boolean;
 }
 
 const WEEKDAY_LABELS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"] as const;
@@ -116,19 +127,20 @@ export function DashboardPage({
         </h1>
       </div>
 
-      {/* Main grid */}
+      {/* Main grid — cards rise in with a stagger (pure CSS, reduced-motion aware). */}
       <div className="grid gap-4 px-4 pb-6 md:px-6 xl:grid-cols-[1fr_360px]">
-        <div className="flex min-w-0 flex-col gap-4">
+        <div className="stagger flex min-w-0 flex-col gap-4">
           <VisitsCard summary={summary} loading={loading} />
-          <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(280px,380px)_1fr]">
+          <div className="stagger grid min-w-0 gap-4 lg:grid-cols-[minmax(280px,380px)_1fr]">
             <PatientListPanel navigate={navigate} />
             <ConsultationPanel navigate={navigate} />
           </div>
         </div>
 
-        <div className="flex min-w-0 flex-col gap-4">
+        <div className="stagger flex min-w-0 flex-col gap-4">
           <ScheduleCard navigate={navigate} />
           <UpcomingCard summary={summary} loading={loading} navigate={navigate} />
+          <BirthdaysCard navigate={navigate} />
           <InventoryAlertsPanel navigate={navigate} />
           <DentistNotesPanel />
         </div>
@@ -187,41 +199,59 @@ function DeltaBadge({ pct }: { pct: number | null }) {
 
 function VisitsCard({ summary, loading }: { summary: DashboardSummary | null; loading: boolean }) {
   return (
-    <div className="relative overflow-hidden rounded-2xl border bg-card p-5 shadow-sm">
+    <div className="card-lift animate-rise relative overflow-hidden rounded-2xl border bg-card p-5 shadow-sm">
       <div className="pointer-events-none absolute -right-10 -top-10 h-64 w-64 rounded-full bg-sky-100/70 blur-2xl dark:bg-sky-500/10" />
       <div className="pointer-events-none absolute -bottom-16 right-24 hidden h-44 w-44 rounded-full bg-teal-100/60 blur-2xl md:block dark:bg-teal-500/10" />
       <div className="relative flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
         <div className="min-w-0">
           <h2 className="text-lg font-semibold tracking-tight">Today's Patient Visits</h2>
           <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-5xl font-bold tabular-nums tracking-tight">
+            <span
+              key={summary?.total_visits ?? "x"}
+              className="animate-count text-5xl font-bold tabular-nums tracking-tight"
+            >
               {loading ? "…" : summary?.total_visits ?? 0}
             </span>
             <span className="text-sm text-muted-foreground">/person</span>
           </div>
 
-          <div className="mt-5 flex flex-wrap gap-3">
-            <div className="min-w-[150px] flex-1 rounded-xl bg-sky-500 p-4 text-white shadow-sm">
+          <div className="stagger mt-5 flex flex-wrap gap-3">
+            <div className="card-lift min-w-[150px] flex-1 rounded-xl bg-sky-500 p-4 text-white shadow-sm">
               <div className="text-sm font-medium opacity-90">New Patients.</div>
               <div className="mt-2 flex items-center justify-between gap-2">
-                <span className="text-3xl font-bold tabular-nums">{loading ? "…" : summary?.new_patients ?? 0}</span>
+                <span
+                  key={summary?.new_patients ?? "x"}
+                  className="animate-count text-3xl font-bold tabular-nums"
+                >
+                  {loading ? <span className="dc-shimmer rounded">…</span> : summary?.new_patients ?? 0}
+                </span>
                 <DeltaBadge pct={summary?.new_patients_delta_pct ?? null} />
               </div>
             </div>
-            <div className="min-w-[150px] flex-1 rounded-xl bg-rose-400 p-4 text-white shadow-sm">
+            <div className="card-lift min-w-[150px] flex-1 rounded-xl bg-rose-400 p-4 text-white shadow-sm">
               <div className="text-sm font-medium opacity-90">Returning Patients</div>
               <div className="mt-2 flex items-center justify-between gap-2">
-                <span className="text-3xl font-bold tabular-nums">{loading ? "…" : summary?.returning_patients ?? 0}</span>
+                <span
+                  key={summary?.returning_patients ?? "x"}
+                  className="animate-count text-3xl font-bold tabular-nums"
+                >
+                  {loading ? <span className="dc-shimmer rounded">…</span> : summary?.returning_patients ?? 0}
+                </span>
                 <DeltaBadge pct={summary?.returning_patients_delta_pct ?? null} />
               </div>
             </div>
           </div>
         </div>
 
-        {/* Decorative tooth emblem */}
-        <div className="relative mx-auto hidden h-44 w-44 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-100 to-teal-50 shadow-inner md:flex dark:from-sky-950/60 dark:to-teal-950/40">
-          <div className="flex h-28 w-28 items-center justify-center rounded-full bg-white shadow-md dark:bg-card">
-            <svg viewBox="0 0 24 24" className="h-14 w-14 text-sky-300" fill="currentColor" aria-hidden>
+        {/* Decorative tooth emblem — gently floats, pulses when there are visits today. */}
+        <div
+          className={cn(
+            "relative mx-auto hidden h-44 w-44 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-100 to-teal-50 shadow-inner md:flex dark:from-sky-950/60 dark:to-teal-950/40",
+            !loading && (summary?.total_visits ?? 0) > 0 && "animate-pulse-ring",
+          )}
+        >
+          <div className="animate-float flex h-28 w-28 items-center justify-center rounded-full bg-white shadow-md dark:bg-card">
+            <svg viewBox="0 0 24 24" className="animate-pop h-14 w-14 text-sky-300" fill="currentColor" aria-hidden>
               <path d="M12 2C8.5 2 7 4.5 7 8c0 2.2.4 3.4.4 5.2 0 1.9-.9 4.6-.9 6.3 0 1.4.8 2.5 2 2.5 1.6 0 2-2.3 2.6-4.6.3-1.2.5-1.9.9-1.9s.6.7.9 1.9c.6 2.3 1 4.6 2.6 4.6 1.2 0 2-1.1 2-2.5 0-1.7-.9-4.4-.9-6.3C16.6 11.4 17 10.2 17 8c0-3.5-1.5-6-5-6Z" />
             </svg>
           </div>
@@ -289,7 +319,7 @@ function ScheduleCard({ navigate }: { navigate: (to: string) => void }) {
   }
 
   return (
-    <div className="rounded-2xl border bg-card p-5 shadow-sm">
+    <div className="card-lift animate-rise rounded-2xl border bg-card p-5 shadow-sm">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold tracking-tight">Your Schedule</h2>
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate("/agenda")} title="Open agenda">
@@ -325,8 +355,9 @@ function ScheduleCard({ navigate }: { navigate: (to: string) => void }) {
               key={iso}
               type="button"
               onClick={() => navigate(`/agenda?date=${iso}`)}
+              style={{ "--stagger-i": Math.min(i, 30) } as React.CSSProperties}
               className={cn(
-                "mx-auto flex h-8 w-8 items-center justify-center rounded-lg text-sm transition-colors",
+                "animate-day mx-auto flex h-8 w-8 items-center justify-center rounded-lg text-sm transition-colors",
                 isToday
                   ? "bg-sky-500 font-semibold text-white"
                   : hasVisits
@@ -338,6 +369,84 @@ function ScheduleCard({ navigate }: { navigate: (to: string) => void }) {
             </button>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// ── Birthdays ──────────────────────────────────────────────────────
+
+function BirthdaysCard({ navigate }: { navigate: (to: string) => void }) {
+  const [birthdays, setBirthdays] = useState<Birthday[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api<{ birthdays: Birthday[] }>("GET", "/api/dashboard/birthdays?days=30");
+        if (!cancelled) setBirthdays(res.birthdays);
+      } catch {
+        if (!cancelled) setBirthdays([]); // non-critical panel — fail quiet
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const today = birthdays?.filter((b) => b.is_today) ?? [];
+  const upcoming = birthdays?.filter((b) => !b.is_today) ?? [];
+
+  return (
+    <div className="card-lift animate-rise rounded-2xl border bg-card p-5 shadow-sm">
+      <div className="flex items-center gap-2">
+        <Cake className="h-5 w-5 animate-pop text-pink-500" />
+        <h2 className="text-lg font-semibold tracking-tight">Birthdays</h2>
+        <span className="ml-auto text-xs text-muted-foreground">next 30 days</span>
+      </div>
+      <div className="stagger mt-3 space-y-2">
+        {birthdays === null ? (
+          <p className="py-2 text-sm text-muted-foreground">Loading…</p>
+        ) : birthdays.length === 0 ? (
+          <p className="py-2 text-sm text-muted-foreground">No patient birthdays this month.</p>
+        ) : (
+          <>
+            {today.map((b) => (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => navigate(`/patients/${b.id}`)}
+                className="flex w-full items-center gap-3 rounded-xl border border-pink-200 bg-pink-50 px-3 py-2.5 text-left transition-colors hover:bg-pink-100 dark:border-pink-900 dark:bg-pink-950/40 dark:hover:bg-pink-950/70"
+              >
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-pink-500 text-white">
+                  <Cake className="h-4 w-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold">{b.name}</span>
+                  <span className="block text-xs text-pink-700 dark:text-pink-300">🎂 Turns {b.turning} today!</span>
+                </span>
+              </button>
+            ))}
+            {upcoming.map((b) => (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => navigate(`/patients/${b.id}`)}
+                className="flex w-full items-center gap-3 rounded-xl border bg-sky-50/60 px-3 py-2.5 text-left transition-colors hover:bg-sky-100/60"
+              >
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky-500 text-white">
+                  <Cake className="h-4 w-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold">{b.name}</span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    Turns {b.turning} · {b.days_away === 1 ? "tomorrow" : `in ${b.days_away} days`}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </>
+        )}
       </div>
     </div>
   );
@@ -356,7 +465,7 @@ function UpcomingCard({
 }) {
   const events = summary?.upcoming ?? [];
   return (
-    <div className="rounded-2xl border bg-card p-5 shadow-sm">
+    <div className="card-lift animate-rise rounded-2xl border bg-card p-5 shadow-sm">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold tracking-tight">Upcoming</h2>
         <button
@@ -367,7 +476,7 @@ function UpcomingCard({
           View All
         </button>
       </div>
-      <div className="mt-3 space-y-2">
+      <div className="stagger mt-3 space-y-2">
         {loading ? (
           <p className="py-2 text-sm text-muted-foreground">Loading…</p>
         ) : events.length === 0 ? (

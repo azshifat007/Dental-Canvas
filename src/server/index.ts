@@ -15,8 +15,19 @@ import {
   SEED_OPERATORIES,
   SEED_PRACTITIONERS,
   SEED_TREATMENT_TYPES,
+  INVOICE_STYLE_IDS,
 } from "./seed";
 import { reindexSearchIndex, searchAll } from "./search";
+import {
+  authUrl as driveAuthUrl,
+  exchangeCodeForTokens,
+  getDriveSettings,
+  hasCredentials,
+  isDriveConfigured,
+  recordUploadResult,
+  testDriveConnection,
+  uploadJsonToDrive,
+} from "./gdrive";
 import {
   getInventorySettings,
   INVENTORY_CATEGORIES,
@@ -185,6 +196,11 @@ async function ensureSeeded(): Promise<void> {
 async function ensureColumnMigrations(): Promise<void> {
   try {
     const cols = await query<{ name: string }>("PRAGMA table_info(prescriptions)");
+    // Review-request tracking on appointments (databases predating F3).
+    const apptCols = await query<{ name: string }>("PRAGMA table_info(appointments)");
+    if (!apptCols.some((c) => c.name === "review_requested_at")) {
+      await run("ALTER TABLE appointments ADD COLUMN review_requested_at TEXT");
+    }
     const names = new Set(cols.map((c) => c.name));
     if (!names.has("large_print")) {
       await run("ALTER TABLE prescriptions ADD COLUMN large_print INTEGER NOT NULL DEFAULT 0");
@@ -297,6 +313,83 @@ async function ensureColumnMigrations(): Promise<void> {
       resolved_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`);
+    // Databases created before the recall / confirmation features existed.
+    const recallCols = await query<{ name: string }>("PRAGMA table_info(appointments_to_make)");
+    if (!recallCols.some((c) => c.name === "confirmed_at")) {
+      await run("ALTER TABLE appointments_to_make ADD COLUMN confirmed_at TEXT");
+    }
+    await run(`CREATE TABLE IF NOT EXISTS patient_recall_config (
+      patient_id INTEGER PRIMARY KEY REFERENCES patients(id) ON DELETE CASCADE,
+      recall_type_id INTEGER REFERENCES treatment_types(id) ON DELETE SET NULL,
+      interval_months INTEGER NOT NULL DEFAULT 6,
+      last_completed TEXT
+    )`);
+    // Databases created before the check-in kiosk existed: when the patient
+    // physically arrived (kiosk check-in), for wait-time tracking.
+    const apptCols2 = await query<{ name: string }>("PRAGMA table_info(appointments)");
+    if (!apptCols2.some((c) => c.name === "checked_in_at")) {
+      await run("ALTER TABLE appointments ADD COLUMN checked_in_at TEXT");
+    }
+    // Databases created before payment plans existed.
+    await run(`CREATE TABLE IF NOT EXISTS invoice_payment_plans (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+      installment_count INTEGER NOT NULL,
+      interval TEXT NOT NULL DEFAULT 'monthly',
+      start_date TEXT NOT NULL,
+      installment_amount REAL NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    // When the front desk last sent an installment reminder for this plan.
+    const planCols = await query<{ name: string }>("PRAGMA table_info(invoice_payment_plans)");
+    if (!planCols.some((c) => c.name === "payment_plan_reminded_at")) {
+      await run("ALTER TABLE invoice_payment_plans ADD COLUMN payment_plan_reminded_at TEXT");
+    }
+    // Databases created before membership plans existed need the tables.
+    await run(`CREATE TABLE IF NOT EXISTS membership_plans (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      monthly_fee REAL NOT NULL DEFAULT 0,
+      annual_fee REAL,
+      discount_percent REAL NOT NULL DEFAULT 0,
+      benefits TEXT,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    await run(`CREATE TABLE IF NOT EXISTS patient_memberships (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      plan_id INTEGER NOT NULL REFERENCES membership_plans(id) ON DELETE CASCADE,
+      start_date TEXT NOT NULL,
+      end_date TEXT,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'cancelled', 'expired')),
+      last_billed_at TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    await run("CREATE INDEX IF NOT EXISTS idx_patient_membership ON patient_memberships(patient_id, status)");
+    await run("CREATE INDEX IF NOT EXISTS idx_membership_plan ON patient_memberships(plan_id)");
+    // Databases created before digital consent forms existed need the tables.
+    await run(`CREATE TABLE IF NOT EXISTS consent_templates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      requires_guardian INTEGER NOT NULL DEFAULT 0,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    await run(`CREATE TABLE IF NOT EXISTS consent_signatures (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      template_id INTEGER NOT NULL REFERENCES consent_templates(id) ON DELETE CASCADE,
+      patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      appointment_id INTEGER REFERENCES appointments(id) ON DELETE SET NULL,
+      signer_name TEXT NOT NULL,
+      signer_role TEXT NOT NULL DEFAULT 'patient',
+      signature_data TEXT NOT NULL,
+      signed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    await run("CREATE INDEX IF NOT EXISTS idx_consent_patient ON consent_signatures(patient_id, signed_at DESC)");
   } catch {
     // Table missing (fresh DB pre-DDL) or PRAGMA unsupported — schema.sql will
     // create the table with the column when it runs.
@@ -936,10 +1029,86 @@ const AppointmentInput = z.object({
   treatment_type_id: z.number().int().nullable().optional(),
   start_time: z.string(),
   end_time: z.string(),
-  status: z.enum(["scheduled", "arrived", "in_chair", "completed", "no_show", "cancelled"]).optional(),
+  status: z.enum(["scheduled", "confirmed", "arrived", "in_chair", "completed", "no_show", "cancelled"]).optional(),
   kind: z.enum(["patient", "break", "lunch", "block"]).optional(),
   title: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
+});
+
+interface ApptConflictRow {
+  id: number;
+  kind: string;
+  start_time: string;
+  end_time: string;
+  title: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  practitioner_name: string | null;
+}
+
+/**
+ * Double-booking check: overlap in the SAME operatory, or the SAME
+ * practitioner (a doctor can't be in two chairs at once). Cancelled
+ * appointments and no-shows never conflict. Returns a short human-readable
+ * description of the first conflict, or null when the slot is free.
+ */
+async function findAppointmentConflict(
+  operatoryId: number,
+  startTime: string,
+  endTime: string,
+  opts: { practitionerId?: number | null; excludeId?: number; patientKind?: boolean } = {},
+): Promise<string | null> {
+  if (!opts.patientKind) return null; // blocks/lunch/breaks don't need the check
+  const clauses: string[] = [
+    "a.start_time < ?",
+    "a.end_time > ?",
+    "a.status NOT IN ('cancelled', 'no_show')",
+    "a.kind = 'patient'",
+    "(a.operatory_id = ? OR (a.practitioner_id IS NOT NULL AND ? IS NOT NULL AND a.practitioner_id = ?))",
+  ];
+  const params: unknown[] = [endTime, startTime, operatoryId, opts.practitionerId ?? null, opts.practitionerId ?? null];
+  if (opts.excludeId) {
+    clauses.push("a.id != ?");
+    params.push(opts.excludeId);
+  }
+  const rows = await query<ApptConflictRow>(
+    `SELECT a.id, a.kind, a.start_time, a.end_time, a.title,
+            p.first_name, p.last_name, pr.name as practitioner_name
+     FROM appointments a
+     LEFT JOIN patients p ON p.id = a.patient_id
+     LEFT JOIN practitioners pr ON pr.id = a.practitioner_id
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY a.start_time LIMIT 1`,
+    params,
+  ).catch(() => []);
+  const hit = rows[0];
+  if (!hit) return null;
+  const who = hit.first_name || hit.last_name ? `${hit.first_name ?? ""} ${hit.last_name ?? ""}`.trim() : hit.title || "another appointment";
+  const at = hit.start_time.slice(11, 16);
+  const roomOrDoctor = hit.practitioner_name ? `Dr. ${hit.practitioner_name}` : "that operatory";
+  return `${who} is already booked at ${at} with ${roomOrDoctor}. Overlapping appointments in the same chair or with the same practitioner are not allowed.`;
+}
+
+/** Conflict probe endpoint — the agenda calls it while editing, before save. */
+app.post("/api/appointments/check-conflict", async (c) => {
+  const parsed = await parseJson(
+    c,
+    z.object({
+      operatory_id: z.number().int(),
+      start_time: z.string(),
+      end_time: z.string(),
+      practitioner_id: z.number().int().nullable().optional(),
+      exclude_id: z.number().int().optional(),
+    }),
+  );
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const d = parsed.data;
+  const conflict = await findAppointmentConflict(d.operatory_id, d.start_time, d.end_time, {
+    practitionerId: d.practitioner_id,
+    excludeId: d.exclude_id,
+    patientKind: true,
+  });
+  return c.json({ conflict });
 });
 
 const APPT_SELECT = `
@@ -996,6 +1165,11 @@ app.post("/api/appointments", async (c) => {
   const parsed = await parseJson(c, AppointmentInput);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   const d = parsed.data;
+  const conflict = await findAppointmentConflict(d.operatory_id, d.start_time, d.end_time, {
+    practitionerId: d.practitioner_id,
+    patientKind: (d.kind ?? "patient") === "patient",
+  });
+  if (conflict) return c.json({ error: conflict }, 409);
   const result = await run(
     `INSERT INTO appointments
        (patient_id, practitioner_id, operatory_id, treatment_type_id, start_time, end_time, status, kind, title, notes)
@@ -1022,6 +1196,25 @@ app.put("/api/appointments/:id", async (c) => {
   if (!id) return c.json({ error: "Invalid ID" }, 400);
   const parsed = await parseJson(c, AppointmentInput.partial());
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  // Conflict check needs the merged (existing + new) time slot.
+  const existing = await get<{ operatory_id: number; start_time: string; end_time: string; practitioner_id: number | null; kind: string; patient_id: number | null }>(
+    "SELECT operatory_id, start_time, end_time, practitioner_id, kind, patient_id FROM appointments WHERE id = ?",
+    [id],
+  );
+  if (!existing) return c.json({ error: "Not found" }, 404);
+  const merged = {
+    operatory_id: parsed.data.operatory_id ?? existing.operatory_id,
+    start_time: parsed.data.start_time ?? existing.start_time,
+    end_time: parsed.data.end_time ?? existing.end_time,
+    practitioner_id: parsed.data.practitioner_id !== undefined ? parsed.data.practitioner_id : existing.practitioner_id,
+    kind: parsed.data.kind ?? existing.kind,
+  };
+  const conflict = await findAppointmentConflict(merged.operatory_id, merged.start_time, merged.end_time, {
+    practitionerId: merged.practitioner_id,
+    excludeId: id,
+    patientKind: merged.kind === "patient",
+  });
+  if (conflict) return c.json({ error: conflict }, 409);
   const sets: string[] = [];
   const params: unknown[] = [];
   for (const [k, v] of Object.entries(parsed.data)) {
@@ -1031,6 +1224,10 @@ app.put("/api/appointments/:id", async (c) => {
   params.push(id);
   const r = await run(`UPDATE appointments SET ${sets.join(", ")} WHERE id = ?`, params);
   if (!r.changes) return c.json({ error: "Not found" }, 404);
+  // Auto-recall: a completed patient visit advances the recall cycle.
+  if (parsed.data.status === "completed" && existing.kind === "patient" && existing.patient_id) {
+    await processRecallOnCompletion(existing.patient_id, existing.end_time.slice(0, 10));
+  }
   const row = await get(`${APPT_SELECT} WHERE a.id = ?`, [id]);
   return c.json({ appointment: row });
 });
@@ -1368,6 +1565,58 @@ app.get("/api/export/patients.csv", async (c) => {
   ]);
 });
 
+app.get("/api/export/appointments.csv", async (c) => {
+  const rows = await query<Record<string, unknown>>(
+    `SELECT a.id, a.start_time, a.end_time, a.status,
+            p.first_name, p.last_name, tt.name AS treatment, pr.name AS practitioner, o.name AS operatory
+     FROM appointments a
+     LEFT JOIN patients p ON p.id = a.patient_id
+     LEFT JOIN treatment_types tt ON tt.id = a.treatment_type_id
+     LEFT JOIN practitioners pr ON pr.id = a.practitioner_id
+     LEFT JOIN operatories o ON o.id = a.operatory_id
+     WHERE a.kind = 'patient'
+     ORDER BY a.start_time DESC`,
+  );
+  return csvResponse("appointments.csv", [
+    ["id", "date", "start_time", "end_time", "status", "patient", "treatment", "practitioner", "operatory"],
+    ...rows.map((r) => [
+      r.id,
+      String(r.start_time ?? "").slice(0, 10),
+      String(r.start_time ?? "").slice(11, 16),
+      String(r.end_time ?? "").slice(11, 16),
+      r.status,
+      [r.first_name, r.last_name].filter(Boolean).join(" "),
+      r.treatment,
+      r.practitioner,
+      r.operatory,
+    ]),
+  ]);
+});
+
+app.get("/api/export/treatments.csv", async (c) => {
+  const rows = await query<Record<string, unknown>>(
+    `SELECT tpi.id, tpi.tooth, tpi.surface, tpi.fee, tpi.status, tpi.notes,
+            tt.name AS treatment, p.first_name, p.last_name
+     FROM treatment_plan_items tpi
+     LEFT JOIN treatment_types tt ON tt.id = tpi.treatment_type_id
+     LEFT JOIN patients p ON p.id = tpi.patient_id
+     ORDER BY tpi.patient_id, tpi.sort_order, tpi.id`,
+  );
+  return csvResponse("treatments.csv", [
+    ["id", "patient", "treatment", "tooth", "surface", "fee", "status", "notes"],
+    ...rows.map((r) => [
+      r.id,
+      [r.first_name, r.last_name].filter(Boolean).join(" "),
+      r.treatment,
+      r.tooth,
+      r.surface,
+      r.fee,
+      r.status,
+      r.notes,
+    ]),
+  ]);
+});
+
 app.get("/api/export/invoices.csv", async (c) => {
   const rows = await query<Record<string, unknown>>(
     `SELECT i.id, i.issued_at, i.status, i.total, i.amount_paid, i.total - i.amount_paid AS balance,
@@ -1416,6 +1665,84 @@ app.delete("/api/invoices/:id", async (c) => {
   const r = await run("DELETE FROM invoices WHERE id = ?", [id]);
   if (!r.changes) return c.json({ error: "Not found" }, 404);
   return c.json({ ok: true });
+});
+
+// ── Finance overview (FINANCE section of the sidebar) ─────────────
+// One endpoint powering all three finance pages: the metric cards, and the
+// per-invoice revenue table. 'Clinic name' on a row is the practice profile's
+// clinic_name setting; 'Dr. name' the practitioner attached to the linked
+// appointment, falling back to the profile doctor.
+
+app.get("/api/finance/overview", async (c) => {
+  const from = c.req.query("from"); // 'YYYY-MM-DD' inclusive
+  const to = c.req.query("to"); // 'YYYY-MM-DD' inclusive
+
+  // Date filter applies to invoices by issue date and to appointments by
+  // their start date. Empty bounds = unbounded.
+  const invFrom = from ? `${from}T00:00:00` : null;
+  const invTo = to ? `${to}T23:59:59` : null;
+
+  const invWhere: string[] = ["i.status != 'void'"];
+  const invParams: unknown[] = [];
+  if (invFrom) { invWhere.push("i.issued_at >= ?"); invParams.push(invFrom); }
+  if (invTo) { invWhere.push("i.issued_at <= ?"); invParams.push(invTo); }
+
+  const apptWhere: string[] = ["a.kind = 'patient'"];
+  const apptParams: unknown[] = [];
+  if (from) { apptWhere.push("substr(a.start_time, 1, 10) >= ?"); apptParams.push(from); }
+  if (to) { apptWhere.push("substr(a.start_time, 1, 10) <= ?"); apptParams.push(to); }
+
+  const settingsRows = await query<{ key: string; value: string }>("SELECT key, value FROM settings").catch(() => []);
+  const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
+  const clinicName = (settings.clinic_name ?? "").trim();
+  const doctorName = (settings.doctor_name ?? "").trim();
+
+  const stats = await get<{ appts: number; billed: number; paid: number }>(
+    `SELECT
+       (SELECT COUNT(*) FROM appointments a WHERE ${apptWhere.join(" AND ")}) AS appts,
+       (SELECT COALESCE(SUM(i.total), 0) FROM invoices i WHERE ${invWhere.join(" AND ")}) AS billed,
+       (SELECT COALESCE(SUM(i.amount_paid), 0) FROM invoices i WHERE ${invWhere.join(" AND ")}) AS paid`,
+    [...apptParams, ...invParams, ...invParams],
+  );
+
+  const rows = await query<Record<string, unknown>>(
+    `SELECT i.id,
+            i.patient_id,
+            i.issued_at,
+            i.total,
+            i.amount_paid,
+            i.total - i.amount_paid AS balance,
+            i.status,
+            p.first_name || ' ' || p.last_name AS patient_name,
+            COALESCE(tt.name, ii.description) AS service,
+            pr.name AS doctor_name,
+            i.appointment_id
+     FROM invoices i
+     LEFT JOIN patients p ON p.id = i.patient_id
+     LEFT JOIN appointments a ON a.id = i.appointment_id
+     LEFT JOIN practitioners pr ON pr.id = a.practitioner_id
+     LEFT JOIN treatment_types tt ON tt.id = a.treatment_type_id
+     LEFT JOIN (SELECT invoice_id, MIN(id) AS first_item_id FROM invoice_items GROUP BY invoice_id) ii2 ON ii2.invoice_id = i.id
+     LEFT JOIN invoice_items ii ON ii.id = ii2.first_item_id
+     WHERE ${invWhere.join(" AND ")}
+     ORDER BY i.issued_at DESC, i.id DESC
+     LIMIT 500`,
+    invParams,
+  );
+
+  return c.json({
+    stats: {
+      total_appointments: stats?.appts ?? 0,
+      total_revenue: Math.round((stats?.billed ?? 0) * 100) / 100,
+      remaining_balance: Math.round(((stats?.billed ?? 0) - (stats?.paid ?? 0)) * 100) / 100,
+    },
+    clinic_name: clinicName,
+    profile_doctor: doctorName,
+    rows: rows.map((r) => ({
+      ...r,
+      doctor_name: (r.doctor_name as string) || doctorName || null,
+    })),
+  });
 });
 
 // ── Waiting list ───────────────────────────────────────────────────
@@ -1606,6 +1933,225 @@ app.delete("/api/insurance-plans/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+// ── In-house membership plans ───────────────────────────────────
+// A clinic-owned discount plan (BoomCloud/Pearly model): the patient pays a
+// recurring fee and gets a standing percent off every invoice.
+
+const MembershipPlanInput = z.object({
+  name: z.string().min(1),
+  monthly_fee: z.number().min(0),
+  annual_fee: z.number().min(0).nullable().optional(),
+  discount_percent: z.number().min(0).max(100),
+  benefits: z.string().nullable().optional(),
+  active: z.boolean().optional(),
+});
+
+app.get("/api/membership-plans", async (c) => {
+  const plans = await query(
+    `SELECT mp.*, COUNT(pm.id) AS member_count
+     FROM membership_plans mp
+     LEFT JOIN patient_memberships pm ON pm.plan_id = mp.id AND pm.status = 'active'
+     GROUP BY mp.id ORDER BY mp.name`,
+  );
+  return c.json({ plans });
+});
+
+app.post("/api/membership-plans", async (c) => {
+  const parsed = await parseJson(c, MembershipPlanInput);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const { name, monthly_fee, annual_fee, discount_percent, benefits, active } = parsed.data;
+  const result = await run(
+    "INSERT INTO membership_plans (name, monthly_fee, annual_fee, discount_percent, benefits, active) VALUES (?, ?, ?, ?, ?, ?)",
+    [name, monthly_fee, annual_fee ?? null, discount_percent, benefits ?? null, active === false ? 0 : 1],
+  );
+  const row = await get("SELECT * FROM membership_plans WHERE id = ?", [result.lastInsertRowid]);
+  return c.json({ plan: row }, 201);
+});
+
+app.put("/api/membership-plans/:id", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const parsed = await parseJson(c, MembershipPlanInput.partial());
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  for (const [k, v] of Object.entries(parsed.data)) {
+    if (v !== undefined) {
+      sets.push(`${k} = ?`);
+      params.push(typeof v === "boolean" ? (v ? 1 : 0) : v);
+    }
+  }
+  if (!sets.length) return c.json({ error: "No fields to update" }, 400);
+  const r = await run(`UPDATE membership_plans SET ${sets.join(", ")} WHERE id = ?`, [...params, id]);
+  if (!r.changes) return c.json({ error: "Not found" }, 404);
+  const row = await get("SELECT * FROM membership_plans WHERE id = ?", [id]);
+  return c.json({ plan: row });
+});
+
+app.delete("/api/membership-plans/:id", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const r = await run("DELETE FROM membership_plans WHERE id = ?", [id]);
+  if (!r.changes) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true });
+});
+
+const MembershipEnrollmentInput = z.object({
+  patient_id: z.number().int(),
+  plan_id: z.number().int(),
+  start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  notes: z.string().nullable().optional(),
+});
+
+// Memberships for one patient (joined with the plan for display).
+app.get("/api/patients/:id/membership", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const memberships = await query(
+    `SELECT pm.*, mp.name AS plan_name, mp.monthly_fee, mp.annual_fee, mp.discount_percent, mp.benefits
+     FROM patient_memberships pm JOIN membership_plans mp ON mp.id = pm.plan_id
+     WHERE pm.patient_id = ? ORDER BY pm.status = 'active' DESC, pm.start_date DESC`,
+    [id],
+  );
+  return c.json({ memberships });
+});
+
+app.post("/api/patient-memberships", async (c) => {
+  const parsed = await parseJson(c, MembershipEnrollmentInput);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const { patient_id, plan_id, start_date, notes } = parsed.data;
+  const plan = await get("SELECT id FROM membership_plans WHERE id = ?", [plan_id]);
+  if (!plan) return c.json({ error: "Plan not found" }, 404);
+  // One active membership per patient: a new enrollment expires the old one.
+  await run(
+    "UPDATE patient_memberships SET status = 'expired', end_date = ? WHERE patient_id = ? AND status = 'active'",
+    [start_date, patient_id],
+  );
+  const result = await run(
+    "INSERT INTO patient_memberships (patient_id, plan_id, start_date, notes) VALUES (?, ?, ?, ?)",
+    [patient_id, plan_id, start_date, notes ?? null],
+  );
+  const row = await get(
+    `SELECT pm.*, mp.name AS plan_name, mp.discount_percent FROM patient_memberships pm
+     JOIN membership_plans mp ON mp.id = pm.plan_id WHERE pm.id = ?`,
+    [result.lastInsertRowid],
+  );
+  return c.json({ membership: row }, 201);
+});
+
+app.delete("/api/patient-memberships/:id", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const r = await run("DELETE FROM patient_memberships WHERE id = ?", [id]);
+  if (!r.changes) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true });
+});
+
+// ── Digital consent forms ───────────────────────────────────────
+
+const ConsentTemplateInput = z.object({
+  title: z.string().min(1),
+  body: z.string().min(1),
+  requires_guardian: z.boolean().optional(),
+  active: z.boolean().optional(),
+});
+
+app.get("/api/consent-templates", async (c) => {
+  const rows = await query("SELECT * FROM consent_templates ORDER BY active DESC, title");
+  return c.json({ templates: rows });
+});
+
+app.post("/api/consent-templates", async (c) => {
+  const parsed = await parseJson(c, ConsentTemplateInput);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const { title, body, requires_guardian, active } = parsed.data;
+  const result = await run(
+    "INSERT INTO consent_templates (title, body, requires_guardian, active) VALUES (?, ?, ?, ?)",
+    [title, body, requires_guardian === true ? 1 : 0, active === false ? 0 : 1],
+  );
+  const row = await get("SELECT * FROM consent_templates WHERE id = ?", [result.lastInsertRowid]);
+  return c.json({ template: row }, 201);
+});
+
+app.put("/api/consent-templates/:id", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const parsed = await parseJson(c, ConsentTemplateInput.partial());
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  for (const [k, v] of Object.entries(parsed.data)) {
+    if (v !== undefined) {
+      sets.push(`${k} = ?`);
+      params.push(typeof v === "boolean" ? (v ? 1 : 0) : v);
+    }
+  }
+  if (!sets.length) return c.json({ error: "No fields to update" }, 400);
+  const r = await run(`UPDATE consent_templates SET ${sets.join(", ")} WHERE id = ?`, [...params, id]);
+  if (!r.changes) return c.json({ error: "Not found" }, 404);
+  const row = await get("SELECT * FROM consent_templates WHERE id = ?", [id]);
+  return c.json({ template: row });
+});
+
+app.delete("/api/consent-templates/:id", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const r = await run("DELETE FROM consent_templates WHERE id = ?", [id]);
+  if (!r.changes) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true });
+});
+
+const ConsentSignatureInput = z.object({
+  template_id: z.number().int(),
+  patient_id: z.number().int(),
+  appointment_id: z.number().int().nullable().optional(),
+  signer_name: z.string().min(1),
+  signer_role: z.enum(["patient", "guardian"]).optional(),
+  signature_data: z.string().min(1),
+});
+
+app.get("/api/patients/:id/consents", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const rows = await query(
+    `SELECT cs.*, ct.title AS template_title, ct.requires_guardian
+     FROM consent_signatures cs JOIN consent_templates ct ON ct.id = cs.template_id
+     WHERE cs.patient_id = ? ORDER BY cs.signed_at DESC`,
+    [id],
+  );
+  return c.json({ consents: rows });
+});
+
+app.post("/api/consent-signatures", async (c) => {
+  const parsed = await parseJson(c, ConsentSignatureInput);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const { template_id, patient_id, appointment_id, signer_name, signer_role, signature_data } = parsed.data;
+  const template = await get("SELECT id, requires_guardian FROM consent_templates WHERE id = ?", [template_id]);
+  if (!template) return c.json({ error: "Template not found" }, 404);
+  if ((template.requires_guardian as number) === 1 && (signer_role ?? "patient") !== "guardian") {
+    return c.json({ error: "This form requires a parent or guardian signature" }, 400);
+  }
+  if (!signature_data.startsWith("data:image/png;base64,")) {
+    return c.json({ error: "Signature must be a PNG data URL" }, 400);
+  }
+  const result = await run(
+    "INSERT INTO consent_signatures (template_id, patient_id, appointment_id, signer_name, signer_role, signature_data) VALUES (?, ?, ?, ?, ?, ?)",
+    [template_id, patient_id, appointment_id ?? null, signer_name, signer_role ?? "patient", signature_data],
+  );
+  const row = await get("SELECT * FROM consent_signatures WHERE id = ?", [result.lastInsertRowid]);
+  return c.json({ consent: row }, 201);
+});
+
+app.delete("/api/consent-signatures/:id", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  // Signatures are legal records — delete only removes the canvas data, keeping
+  // the audit row (who signed, when) intact.
+  const r = await run("UPDATE consent_signatures SET signature_data = '' WHERE id = ?", [id]);
+  if (!r.changes) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true });
+});
+
 // ── Lab cases ─────────────────────────────────────────────────────
 
 const LabCaseInput = z.object({
@@ -1721,6 +2267,10 @@ app.get("/api/reports/summary", async (c) => {
     monthCancelled,
     byTreatmentRows,
     bySourceRows,
+    planAccepted,
+    planCompleted,
+    planDeclined,
+    planTotal,
     productionRow,
     paidRow,
     aged0_30,
@@ -1746,6 +2296,24 @@ app.get("/api/reports/summary", async (c) => {
     safeQuery<{ source: string; n: number }>(
       `SELECT COALESCE(NULLIF(referral_source, ''), 'Unknown') as source, COUNT(*) as n
        FROM patients GROUP BY source ORDER BY n DESC`,
+    ),
+    // Case-acceptance funnel: treatment plan items presented this month.
+    // "Accepted" = accepted or already completed; declined counts losses.
+    safeGet<{ n: number }>(
+      "SELECT COUNT(*) as n FROM treatment_plan_items WHERE status IN ('accepted', 'completed') AND substr(created_at, 1, 10) >= ?",
+      [startOfMonth], { n: 0 },
+    ),
+    safeGet<{ n: number }>(
+      "SELECT COUNT(*) as n FROM treatment_plan_items WHERE status = 'completed' AND substr(created_at, 1, 10) >= ?",
+      [startOfMonth], { n: 0 },
+    ),
+    safeGet<{ n: number }>(
+      "SELECT COUNT(*) as n FROM treatment_plan_items WHERE status = 'declined' AND substr(created_at, 1, 10) >= ?",
+      [startOfMonth], { n: 0 },
+    ),
+    safeGet<{ n: number }>(
+      "SELECT COUNT(*) as n FROM treatment_plan_items WHERE substr(created_at, 1, 10) >= ?",
+      [startOfMonth], { n: 0 },
     ),
     safeGet<{ total: number }>(
       "SELECT COALESCE(SUM(total), 0) as total FROM invoices WHERE substr(issued_at, 1, 10) >= ? AND status != 'void'",
@@ -1797,7 +2365,591 @@ app.get("/api/reports/summary", async (c) => {
     },
     overdue_lab_cases: overdueLabs.n ?? 0,
     waiting_list_count: waitingCount.n ?? 0,
+    by_provider: await (async () => {
+      // Production & collections attributed via the appointment that generated
+      // each invoice (invoices.appointment_id), falling back to the patient's
+      // most recent completed appointment's practitioner.
+      try {
+        return await query<{ name: string; production: number; collections: number; visits: number }>(
+          `SELECT COALESCE(pr.name, 'Unassigned') as name,
+                  COALESCE(SUM(i.total), 0) as production,
+                  COALESCE(SUM(i.amount_paid), 0) as collections,
+                  COUNT(DISTINCT i.appointment_id) as visits
+           FROM invoices i
+           LEFT JOIN appointments a ON a.id = i.appointment_id
+           LEFT JOIN practitioners pr ON pr.id = a.practitioner_id
+           WHERE substr(i.issued_at, 1, 10) >= ? AND i.status != 'void'
+           GROUP BY pr.id ORDER BY production DESC`,
+          [startOfMonth],
+        );
+      } catch {
+        return [] as { name: string; production: number; collections: number; visits: number }[];
+      }
+    })(),
+    case_acceptance: {
+      presented: planTotal.n ?? 0,
+      accepted: planAccepted.n ?? 0,
+      completed: planCompleted.n ?? 0,
+      declined: planDeclined.n ?? 0,
+      // ADA benchmark: healthy practices accept 75–80% of presented cases.
+      rate: (planTotal.n ?? 0) > 0 ? Math.round(((planAccepted.n ?? 0) / (planTotal.n ?? 1)) * 100) : null,
+    },
   });
+});
+
+// ── Follow-up worklists (unscheduled treatment + dormant patients) ──
+
+/**
+ * The two call lists every practice runs weekly (Dentrix's "Treatment
+ * Manager" / "Unscheduled Treatment Plans" reports):
+ *
+ *  1. **Unscheduled treatment** — accepted plan items with no future
+ *     appointment for that patient. These patients already said yes; a quick
+ *     call converts them into production.
+ *  2. **Dormant patients** — no visit at all in the last N months (default
+ *     12), not deceased/archived (there's no such flag, so just visit-free).
+ *     Recall/reactivation candidates.
+ *
+ * Both lists include phone/email so the UI can offer one-click outreach.
+ */
+app.get("/api/followups", async (c) => {
+  const dormantMonths = Math.min(Math.max(parseInt(c.req.query("dormant_months") ?? "12", 10) || 12, 3), 36);
+
+  const [unscheduled, dormant] = await Promise.all([
+    // Accepted or completed plan items that are NOT completed yet, whose
+    // patient has no upcoming appointment.
+    query<{
+      item_id: number; patient_id: number; tooth: string | null; fee: number; status: string;
+      created_at: string; first_name: string | null; last_name: string | null;
+      phone: string | null; email: string | null; treatment_name: string | null;
+      next_appt: string | null;
+    }>(
+      `SELECT tpi.id as item_id, tpi.patient_id, tpi.tooth, tpi.fee, tpi.status, tpi.created_at,
+              p.first_name, p.last_name, p.phone, p.email,
+              tt.name as treatment_name,
+              (SELECT MIN(a.start_time) FROM appointments a
+               WHERE a.patient_id = tpi.patient_id AND a.start_time >= datetime('now')
+                 AND a.status NOT IN ('cancelled', 'no_show')) as next_appt
+       FROM treatment_plan_items tpi
+       LEFT JOIN patients p ON p.id = tpi.patient_id
+       LEFT JOIN treatment_types tt ON tt.id = tpi.treatment_type_id
+       WHERE tpi.status = 'accepted'
+         AND NOT EXISTS (
+           SELECT 1 FROM appointments a
+           WHERE a.patient_id = tpi.patient_id
+             AND a.start_time >= datetime('now')
+             AND a.status NOT IN ('cancelled', 'no_show')
+         )
+       ORDER BY tpi.created_at DESC
+       LIMIT 100`,
+    ).catch(() => []),
+
+    query<{
+      id: number; first_name: string | null; last_name: string | null;
+      phone: string | null; email: string | null;
+      last_visit: string | null; total_spent: number;
+    }>(
+      `SELECT p.id, p.first_name, p.last_name, p.phone, p.email,
+              (SELECT MAX(substr(a.start_time, 1, 10)) FROM appointments a
+               WHERE a.patient_id = p.id AND a.status = 'completed') as last_visit,
+              COALESCE((SELECT SUM(i.total) FROM invoices i WHERE i.patient_id = p.id AND i.status != 'void'), 0) as total_spent
+       FROM patients p
+       WHERE NOT EXISTS (
+         SELECT 1 FROM appointments a
+         WHERE a.patient_id = p.id AND a.status NOT IN ('cancelled', 'no_show')
+           AND a.start_time >= datetime('now', ?)
+       )
+       ORDER BY last_visit ASC NULLS FIRST
+       LIMIT 100`,
+      [`-${dormantMonths} months`],
+    ).catch(() => []),
+  ]);
+
+  return c.json({
+    unscheduled_treatment: unscheduled.filter((r) => !r.next_appt),
+    dormant_patients: dormant,
+    dormant_months: dormantMonths,
+  });
+});
+
+// ── Appointment reminders: upcoming visits with contact info ──────
+
+/**
+ * Reminders work list: patient appointments in the next N days that haven't
+ * been confirmed/cancelled yet, with phone + email for one-click outreach.
+ * The browser generates the WhatsApp deep link; the server just needs to
+ * track which appointments have been contacted (reminded_at).
+ */
+app.get("/api/appointments/reminders", async (c) => {
+  const days = Math.min(Math.max(parseInt(c.req.query("days") ?? "2", 10) || 2, 1), 14);
+  const today = new Date().toISOString().slice(0, 10);
+  const end = new Date();
+  end.setDate(end.getDate() + days);
+  const rows = await query<{
+    id: number; patient_id: number | null; start_time: string; status: string;
+    first_name: string | null; last_name: string | null; phone: string | null;
+    email: string | null; treatment_name: string | null; operatory_name: string | null;
+    practitioner_name: string | null; reminded_at: string | null;
+  }>(
+    `SELECT a.id, a.patient_id, a.start_time, a.status,
+            p.first_name, p.last_name, p.phone, p.email,
+            tt.name as treatment_name, o.name as operatory_name, pr.name as practitioner_name,
+            NULL as reminded_at
+     FROM appointments a
+     LEFT JOIN patients p ON p.id = a.patient_id
+     LEFT JOIN treatment_types tt ON tt.id = a.treatment_type_id
+     LEFT JOIN operatories o ON o.id = a.operatory_id
+     LEFT JOIN practitioners pr ON pr.id = a.practitioner_id
+     WHERE substr(a.start_time, 1, 10) >= ? AND substr(a.start_time, 1, 10) <= ?
+       AND a.kind = 'patient' AND a.status = 'scheduled'
+     ORDER BY a.start_time`,
+    [today, end.toISOString().slice(0, 10)],
+  ).catch(() => []);
+  return c.json({ reminders: rows });
+});
+
+/**
+ * Offer a waiting-list patient the next open slot: marks their entry and
+ * returns a pre-filled WhatsApp message. The front desk confirms and books
+ * through the normal register-and-book flow.
+ */
+app.post("/api/waiting-list/:id/offer", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const slot = c.req.query("slot") ?? ""; // ISO datetime of the offered slot
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(slot)) return c.json({ error: "slot must be an ISO datetime" }, 400);
+
+  const entry = await get<{ id: number; patient_id: number; notes: string | null }>(
+    "SELECT id, patient_id, notes FROM waiting_list WHERE id = ?",
+    [id],
+  );
+  if (!entry) return c.json({ error: "Not found" }, 404);
+  const patient = entry.patient_id
+    ? await get<{ first_name: string | null; last_name: string | null; phone: string | null }>(
+        "SELECT first_name, last_name, phone FROM patients WHERE id = ?",
+        [entry.patient_id],
+      )
+    : null;
+  if (!patient?.phone) return c.json({ error: "Patient has no phone number on file" }, 400);
+
+  const offered = slot.slice(11, 16);
+  const offeredDate = new Date(slot);
+  const dateLabel = offeredDate.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+  const message = `Hello ${patient.first_name ?? ""}! A slot just opened at our clinic on ${dateLabel} at ${offered}. You were on our waiting list — reply to confirm and we'll hold it for you.`;
+  const waUrl = `https://wa.me/${patient.phone.replace(/[^\d]/g, "")}?text=${encodeURIComponent(message)}`;
+
+  // Stamp the offer on the entry so the team can see who was contacted.
+  const stamp = `${new Date().toISOString()} ${slot}`;
+  await run("UPDATE waiting_list SET notes = COALESCE(notes, '') || ? WHERE id = ?", [
+    `\n[offer ${stamp}]`, id,
+  ]);
+
+  return c.json({ ok: true, message, wa_url: waUrl });
+});
+
+// ── Review requests: patients whose visit just completed ─────────
+// Google reviews are the #1 local-SEO channel for clinics. This worklist
+// surfaces visits that completed in the last N days and haven't been asked
+// for a review yet — the browser opens the WhatsApp deep link, the server
+// stamps review_requested_at so each patient is only asked once.
+
+app.get("/api/review-requests", async (c) => {
+  const days = Math.min(Math.max(parseInt(c.req.query("days") ?? "7", 10) || 7, 1), 60);
+  const since = new Date();
+  since.setDate(since.getDate() - days);
+  const rows = await query<{
+    id: number; patient_id: number | null; end_time: string; first_name: string | null;
+    last_name: string | null; phone: string | null; treatment_name: string | null;
+    practitioner_name: string | null; review_requested_at: string | null;
+  }>(
+    `SELECT a.id, a.patient_id, a.end_time, p.first_name, p.last_name, p.phone,
+            tt.name as treatment_name, pr.name as practitioner_name, a.review_requested_at
+     FROM appointments a
+     LEFT JOIN patients p ON p.id = a.patient_id
+     LEFT JOIN treatment_types tt ON tt.id = a.treatment_type_id
+     LEFT JOIN practitioners pr ON pr.id = a.practitioner_id
+     WHERE substr(a.end_time, 1, 10) >= ? AND a.status = 'completed' AND a.kind = 'patient'
+       AND a.review_requested_at IS NULL AND p.id IS NOT NULL
+     ORDER BY a.end_time DESC LIMIT 200`,
+    [since.toISOString().slice(0, 10)],
+  ).catch(() => []);
+  return c.json({ requests: rows });
+});
+
+app.post("/api/appointments/:id/review-requested", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const r = await run(
+    "UPDATE appointments SET review_requested_at = datetime('now') WHERE id = ? AND review_requested_at IS NULL",
+    [id],
+  );
+  if (!r.changes) return c.json({ error: "Not found or already requested" }, 404);
+  return c.json({ ok: true });
+});
+
+// ── Hygiene recall (continuing care) ─────────────────────────
+// Open Dental's "Recall" / Dentrix's "Continuing Care": each patient gets a
+// recall type (prophy, perio maintenance…) and an interval. Completing a
+// recall appointment stamps last_completed and schedules the next due date
+// as a system-generated "appointment to make".
+
+const RecallConfigInput = z.object({
+  recall_type_id: z.number().int().nullable().optional(),
+  interval_months: z.number().int().min(1).max(24),
+  last_completed: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+});
+
+function addMonths(isoDate: string, months: number): string {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  const day = d.getUTCDate();
+  d.setUTCMonth(d.getUTCMonth() + months);
+  if (d.getUTCDate() < day) d.setUTCDate(0); // clamp Jan 31 + 1mo → Feb 28
+  return d.toISOString().slice(0, 10);
+}
+
+app.get("/api/patients/:id/recall", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const config = await get(
+    `SELECT rc.*, tt.name AS recall_type_name FROM patient_recall_config rc
+     LEFT JOIN treatment_types tt ON tt.id = rc.recall_type_id WHERE rc.patient_id = ?`,
+    [id],
+  );
+  return c.json({ recall: config ?? null });
+});
+
+app.put("/api/patients/:id/recall", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const parsed = await parseJson(c, RecallConfigInput);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const patient = await get("SELECT id FROM patients WHERE id = ?", [id]);
+  if (!patient) return c.json({ error: "Patient not found" }, 404);
+  const { recall_type_id, interval_months, last_completed } = parsed.data;
+  await run(
+    `INSERT INTO patient_recall_config (patient_id, recall_type_id, interval_months, last_completed)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(patient_id) DO UPDATE SET
+       recall_type_id = excluded.recall_type_id,
+       interval_months = excluded.interval_months,
+       last_completed = COALESCE(excluded.last_completed, patient_recall_config.last_completed)`,
+    [id, recall_type_id ?? null, interval_months, last_completed ?? null],
+  );
+  const row = await get("SELECT * FROM patient_recall_config WHERE patient_id = ?", [id]);
+  return c.json({ recall: row });
+});
+
+/**
+ * The recall due list: patients whose next due date has arrived (or passed)
+ * and who have no scheduled recall appointment yet. Due dates are computed
+ * as last_completed + interval, falling back to the due_after of the latest
+ * system recall entry when no visit has been completed yet.
+ */
+app.get("/api/recalls/due", async (c) => {
+  const rows = await query<{ id: number; patient_id: number; name: string; phone: string | null;
+    email: string | null; recall_type: string | null; interval_months: number;
+    due_date: string; days_overdue: number }>(
+    `SELECT * FROM (
+      SELECT atm.id, atm.patient_id, p.first_name || ' ' || p.last_name AS name, p.phone, p.email,
+             tt.name AS recall_type, rc.interval_months,
+             COALESCE(
+               (SELECT date(rc2.last_completed, '+' || rc2.interval_months || ' months')
+                FROM patient_recall_config rc2 WHERE rc2.patient_id = atm.patient_id),
+               atm.due_after,
+               date(atm.created_at)
+             ) AS due_date
+      FROM appointments_to_make atm
+      JOIN patients p ON p.id = atm.patient_id
+      LEFT JOIN treatment_types tt ON tt.id = atm.treatment_type_id
+      LEFT JOIN patient_recall_config rc ON rc.patient_id = atm.patient_id
+      WHERE atm.status = 'open' AND atm.source = 'system'
+        AND COALESCE(
+          (SELECT date(rc4.last_completed, '+' || rc4.interval_months || ' months')
+           FROM patient_recall_config rc4 WHERE rc4.patient_id = atm.patient_id),
+          atm.due_after, date(atm.created_at)
+        ) <= date('now', '+30 days')
+     )
+     ORDER BY due_date ASC LIMIT 200`,
+  ).then((rows) =>
+    // days_overdue needs the computed due_date, so it's applied post-query.
+    rows.map((r) => ({ ...r, days_overdue: Math.max(0, Math.round(Date.now() / 86400000 - new Date(`${r.due_date}T00:00:00Z`).getTime() / 86400000)) })),
+  ).catch(() => []);
+  return c.json({ recalls: rows });
+});
+
+/** Mark a recall as confirmed by the patient (front desk logs the call/text). */
+app.post("/api/recalls/:id/confirm", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const r = await run(
+    "UPDATE appointments_to_make SET confirmed_at = datetime('now') WHERE id = ? AND status = 'open'",
+    [id],
+  );
+  if (!r.changes) return c.json({ error: "Not found or already scheduled" }, 404);
+  return c.json({ ok: true });
+});
+
+/**
+ * Auto-recall: when a patient appointment is completed, find (or create) the
+ * patient's recall config, stamp last_completed, and reschedule the next
+ * system "appointment to make" at interval months out. Only fires for
+ * patient appointments that already have a system recall entry or a recall
+ * config — one-off treatment visits don't invent recall schedules.
+ */
+async function processRecallOnCompletion(patientId: number, completedDate: string): Promise<void> {
+  try {
+    const config = await get<{ interval_months: number; recall_type_id: number | null }>(
+      "SELECT interval_months, recall_type_id FROM patient_recall_config WHERE patient_id = ?",
+      [patientId],
+    );
+    if (!config) return; // no recall schedule on file
+    const nextDue = addMonths(completedDate, config.interval_months);
+    await run("UPDATE patient_recall_config SET last_completed = ? WHERE patient_id = ?", [completedDate, patientId]);
+    // Retire the currently-open system recall (it's now fulfilled) and create
+    // the next cycle.
+    await run(
+      "UPDATE appointments_to_make SET status = 'scheduled' WHERE patient_id = ? AND source = 'system' AND status = 'open'",
+      [patientId],
+    );
+    await run(
+      "INSERT INTO appointments_to_make (patient_id, treatment_type_id, due_after, source, notes) VALUES (?, ?, ?, 'system', ?)",
+      [patientId, config.recall_type_id, nextDue, `Auto-recall: ${config.interval_months}-month cycle`],
+    );
+  } catch {
+    // recall processing must never break appointment completion
+  }
+}
+
+// ── Self check-in kiosk ──────────────────────────────────────
+// A tablet-facing page: the patient picks today's appointment, confirms their
+// contact details, signs pending consent forms, and arrives themselves. The
+// front desk sees the arrival in real time (the appointment flips to 'arrived'
+// with checked_in_at stamped for wait-time tracking).
+
+app.get("/api/kiosk/today", async (c) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = await query(
+    `SELECT a.id, a.start_time, a.status, a.checked_in_at,
+            p.id AS patient_id, p.first_name, p.last_name,
+            tt.name AS treatment_name, pr.name AS practitioner_name
+     FROM appointments a
+     LEFT JOIN patients p ON p.id = a.patient_id
+     LEFT JOIN treatment_types tt ON tt.id = a.treatment_type_id
+     LEFT JOIN practitioners pr ON pr.id = a.practitioner_id
+     WHERE substr(a.start_time, 1, 10) = ? AND a.kind = 'patient'
+       AND a.status IN ('scheduled', 'confirmed')
+     ORDER BY a.start_time`,
+    [today],
+  ).catch(() => []);
+  return c.json({ appointments: rows });
+});
+
+// Unsigned-but-required consent templates for one patient (kiosk step 3).
+app.get("/api/kiosk/pending-consents/:patientId", async (c) => {
+  const patientId = intParam(c.req.param("patientId"));
+  if (!patientId) return c.json({ error: "Invalid ID" }, 400);
+  const rows = await query(
+    `SELECT ct.* FROM consent_templates ct
+     WHERE ct.active = 1 AND NOT EXISTS (
+       SELECT 1 FROM consent_signatures cs
+       WHERE cs.template_id = ct.id AND cs.patient_id = ?
+         AND cs.signature_data != ''
+     ) ORDER BY ct.title`,
+    [patientId],
+  ).catch(() => []);
+  return c.json({ templates: rows });
+});
+
+/**
+ * Kiosk check-in: stamps checked_in_at, flips the status to 'arrived', and
+ * captures any demographic updates the patient made on the tablet. Idempotent
+ * per appointment (a second check-in updates the details but not the stamp).
+ */
+app.post("/api/kiosk/check-in", async (c) => {
+  const parsed = await parseJson(
+    c,
+    z.object({
+      appointment_id: z.number().int(),
+      phone: z.string().nullable().optional(),
+      email: z.string().nullable().optional(),
+      address: z.string().nullable().optional(),
+    }),
+  );
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const { appointment_id, phone, email, address } = parsed.data;
+  const appt = await get<{ id: number; patient_id: number | null; status: string; checked_in_at: string | null }>(
+    "SELECT id, patient_id, status, checked_in_at FROM appointments WHERE id = ? AND kind = 'patient'",
+    [appointment_id],
+  );
+  if (!appt) return c.json({ error: "Appointment not found" }, 404);
+  if (!appt.patient_id) return c.json({ error: "Appointment has no patient" }, 400);
+
+  // Demographic updates from the kiosk (only fields the patient actually edited).
+  const updates: string[] = [];
+  const params: unknown[] = [];
+  if (phone) { updates.push("phone = ?"); params.push(phone); }
+  if (email) { updates.push("email = ?"); params.push(email); }
+  if (address) { updates.push("address = ?"); params.push(address); }
+  if (updates.length) {
+    await run(`UPDATE patients SET ${updates.join(", ")} WHERE id = ?`, [...params, appt.patient_id]);
+  }
+
+  if (!appt.checked_in_at) {
+    await run(
+      "UPDATE appointments SET checked_in_at = datetime('now'), status = CASE WHEN status IN ('scheduled', 'confirmed') THEN 'arrived' ELSE status END WHERE id = ?",
+      [appointment_id],
+    );
+  }
+  const row = await get("SELECT id, status, checked_in_at FROM appointments WHERE id = ?", [appointment_id]);
+  return c.json({ appointment: row });
+});
+
+// ── Payment plans (installments) ────────────────────────────────
+
+const PaymentPlanInput = z.object({
+  installment_count: z.number().int().min(2).max(24),
+  interval: z.enum(["weekly", "monthly"]),
+  start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+function addInterval(isoDate: string, interval: "weekly" | "monthly", n: number): string {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  if (interval === "weekly") {
+    d.setUTCDate(d.getUTCDate() + 7 * n);
+  } else {
+    const day = d.getUTCDate();
+    d.setUTCMonth(d.getUTCMonth() + n);
+    if (d.getUTCDate() < day) d.setUTCDate(0);
+  }
+  return d.toISOString().slice(0, 10);
+}
+
+app.get("/api/invoices/:id/payment-plan", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const plan = await get("SELECT * FROM invoice_payment_plans WHERE invoice_id = ? AND active = 1", [id]);
+  if (!plan) return c.json({ plan: null });
+  const schedule = [];
+  for (let i = 0; i < (plan.installment_count as number); i++) {
+    schedule.push({
+      n: i + 1,
+      due_date: addInterval(plan.start_date as string, plan.interval as "weekly" | "monthly", i),
+      amount: plan.installment_amount as number,
+    });
+  }
+  return c.json({ plan, schedule });
+});
+
+app.post("/api/invoices/:id/payment-plan", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const parsed = await parseJson(c, PaymentPlanInput);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const invoice = await get("SELECT id, total, amount_paid FROM invoices WHERE id = ?", [id]);
+  if (!invoice) return c.json({ error: "Invoice not found" }, 404);
+  const balance = Math.round(((invoice.total as number) - (invoice.amount_paid as number)) * 100) / 100;
+  if (balance <= 0) return c.json({ error: "Invoice has no outstanding balance" }, 400);
+  const { installment_count, interval, start_date } = parsed.data;
+  // Replace any existing plan.
+  await run("UPDATE invoice_payment_plans SET active = 0 WHERE invoice_id = ?", [id]);
+  const amount = Math.floor((balance / installment_count) * 100) / 100;
+  const result = await run(
+    "INSERT INTO invoice_payment_plans (invoice_id, installment_count, interval, start_date, installment_amount) VALUES (?, ?, ?, ?, ?)",
+    [id, installment_count, interval, start_date, amount],
+  );
+  const plan = await get("SELECT * FROM invoice_payment_plans WHERE id = ?", [result.lastInsertRowid]);
+  return c.json({ plan }, 201);
+});
+
+app.delete("/api/invoices/:id/payment-plan", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const r = await run("UPDATE invoice_payment_plans SET active = 0 WHERE invoice_id = ? AND active = 1", [id]);
+  if (!r.changes) return c.json({ error: "No active plan" }, 404);
+  return c.json({ ok: true });
+});
+
+// ── Installment reminders: due installments across all active plans ──
+// A worklist for the front desk: every unpaid installment that has come due
+// (or is due within the `days` window), with the invoice's remaining balance.
+// The browser opens the WhatsApp deep link; the server tracks which plan was
+// last contacted (payment_plan_reminded_at) so each installment is asked once.
+
+/** Days covered by each plan interval — one cycle ahead. */
+function planIntervalDays(interval: string): number {
+  return interval === "weekly" ? 7 : 31;
+}
+
+app.get("/api/payment-reminders", async (c) => {
+  const days = Math.min(Math.max(parseInt(c.req.query("days") ?? "3", 10) || 3, 0), 60);
+  const plans = await query<{
+    id: number; invoice_id: number; installment_count: number; interval: string;
+    start_date: string; installment_amount: number; payment_plan_reminded_at: string | null;
+    patient_id: number; first_name: string | null; last_name: string | null;
+    phone: string | null; invoice_total: number; amount_paid: number;
+  }>(
+    `SELECT ipp.*, i.patient_id, i.total AS invoice_total, i.amount_paid,
+            p.first_name, p.last_name, p.phone
+     FROM invoice_payment_plans ipp
+     JOIN invoices i ON i.id = ipp.invoice_id
+     LEFT JOIN patients p ON p.id = i.patient_id
+     WHERE ipp.active = 1 AND i.status != 'void' AND i.total > i.amount_paid`,
+  ).catch(() => []);
+
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const horizon = new Date(today);
+  horizon.setUTCDate(horizon.getUTCDate() + days);
+
+  const reminders: Array<{
+    plan_id: number; invoice_id: number; patient_id: number; installment_n: number;
+    due_date: string; amount: number; days_until_due: number; overdue: boolean;
+    balance: number; patient_name: string; phone: string | null;
+    payment_plan_reminded_at: string | null;
+  }> = [];
+  for (const plan of plans) {
+    // Find the next unpaid installment: the first whose due date is >= the
+    // date the plan was last contacted (or the plan start for first contact).
+    const startRef = plan.payment_plan_reminded_at?.slice(0, 10) ?? plan.start_date;
+    for (let i = 0; i < plan.installment_count; i++) {
+      const dueDate = addInterval(plan.start_date, plan.interval as "weekly" | "monthly", i);
+      const due = new Date(`${dueDate}T00:00:00Z`);
+      // Only installments due within the window (or already past) count.
+      if (due > horizon) break;
+      const balance = Math.round((plan.invoice_total - plan.amount_paid) * 100) / 100;
+      if (balance <= 0) break; // fully paid — nothing to chase
+      const daysUntil = Math.round((due.getTime() - today.getTime()) / 86400000);
+      reminders.push({
+        plan_id: plan.id,
+        invoice_id: plan.invoice_id,
+        patient_id: plan.patient_id,
+        installment_n: i + 1,
+        due_date: dueDate,
+        amount: plan.installment_amount,
+        days_until_due: daysUntil,
+        overdue: daysUntil < 0,
+        balance,
+        patient_name: [plan.first_name, plan.last_name].filter(Boolean).join(" ") || "Unnamed",
+        phone: plan.phone,
+        payment_plan_reminded_at: plan.payment_plan_reminded_at,
+      });
+      void startRef;
+    }
+  }
+  reminders.sort((a, b) => a.due_date.localeCompare(b.due_date));
+  return c.json({ reminders });
+});
+
+/** Stamp a plan as contacted (the front desk sent the reminder). */
+app.post("/api/payment-plans/:id/reminded", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const r = await run(
+    "UPDATE invoice_payment_plans SET payment_plan_reminded_at = datetime('now') WHERE id = ?",
+    [id],
+  );
+  if (!r.changes) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true });
 });
 
 // ── Backups: export / import / snapshots / auto-backup schedule ───
@@ -1806,6 +2958,23 @@ const BackupSettingsInput = z.object({
   auto_backup_interval_minutes: z.number().int().min(0).max(10080).optional(), // 0 = off, max 1 week
   auto_backup_keep: z.number().int().min(1).max(100).optional(),
 });
+
+/** Backup filename used for both the local snapshot record and Drive. */
+function backupFilename(stamp: string): string {
+  return `dental-canvas-backup-${stamp}.json`;
+}
+
+/**
+ * Push a backup payload to Google Drive (best-effort). Never throws: a Drive
+ * outage must not fail the local snapshot — the outcome is recorded in
+ * settings so the UI can show what happened.
+ */
+async function pushBackupToDrive(payload: BackupPayload, stamp: string): Promise<void> {
+  const d = await getDriveSettings();
+  if (!d.enabled || !isDriveConfigured(d)) return;
+  const r = await uploadJsonToDrive(backupFilename(stamp), JSON.stringify(payload), d);
+  await recordUploadResult(r.ok, r.error);
+}
 
 async function getSettingsForBackup() {
   const rows = await query<{ key: string; value: string }>(
@@ -1874,7 +3043,8 @@ app.get("/api/backup/snapshots", async (c) => {
 // Create a snapshot now (manual).
 app.post("/api/backup/snapshots", async (c) => {
   const backupSettings = await getSettingsForBackup();
-  const { snapshot } = await createSnapshot("manual", "user", backupSettings.auto_backup_keep);
+  const { snapshot, payload } = await createSnapshot("manual", "user", backupSettings.auto_backup_keep);
+  await pushBackupToDrive(payload, snapshot.created_at);
   return c.json({ snapshot }, 201);
 });
 
@@ -1907,8 +3077,151 @@ app.post("/api/backup/auto", async (c) => {
   if (backupSettings.auto_backup_interval_minutes === 0) {
     return c.json({ skipped: true, reason: "auto-backup disabled" }, 200);
   }
-  const { snapshot } = await createSnapshot("auto", "timer", backupSettings.auto_backup_keep);
+  const { snapshot, payload } = await createSnapshot("auto", "timer", backupSettings.auto_backup_keep);
+  await pushBackupToDrive(payload, snapshot.created_at);
   return c.json({ snapshot }, 201);
+});
+
+// ── Google Drive backup destination ─────────────────────────────
+
+/** Connection status + last upload outcome for the settings card. */
+app.get("/api/backup/drive/status", async (c) => {
+  const d = await getDriveSettings();
+  return c.json({
+    configured: isDriveConfigured(d),
+    connected: isDriveConfigured(d),
+    has_credentials: hasCredentials(d),
+    enabled: d.enabled,
+    folder_id: d.folder_id || null,
+    last_upload_at: d.last_upload_at || null,
+    last_upload_ok: d.last_upload_ok,
+    last_upload_error: d.last_upload_error || null,
+  });
+});
+
+/** Save the OAuth client credentials + optional folder id. */
+const DriveConfigInput = z
+  .object({
+    client_id: z.string().trim().min(1).optional(),
+    client_secret: z.string().trim().min(1).optional(),
+    folder_id: z.string().trim().optional(),
+    enabled: z.boolean().optional(),
+  })
+  .strict();
+
+app.put("/api/backup/drive/config", async (c) => {
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }
+  const parsed = DriveConfigInput.safeParse(body);
+  if (!parsed.success) return c.json({ error: "Invalid Drive configuration" }, 400);
+
+  const updates: [string, string][] = [];
+  if (parsed.data.client_id !== undefined) updates.push(["gdrive_client_id", parsed.data.client_id]);
+  if (parsed.data.client_secret !== undefined) updates.push(["gdrive_client_secret", parsed.data.client_secret]);
+  if (parsed.data.folder_id !== undefined) updates.push(["gdrive_folder_id", parsed.data.folder_id]);
+  if (parsed.data.enabled !== undefined) updates.push(["gdrive_enabled", parsed.data.enabled ? "1" : "0"]);
+
+  for (const [key, value] of updates) {
+    await run(
+      `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+      [key, value],
+    );
+  }
+  const d = await getDriveSettings();
+  return c.json({
+    configured: isDriveConfigured(d),
+    connected: isDriveConfigured(d),
+    has_credentials: hasCredentials(d),
+    enabled: d.enabled,
+    folder_id: d.folder_id || null,
+  });
+});
+
+/**
+ * Start the OAuth consent flow. The redirect URI must exactly match one
+ * registered on the Google Cloud OAuth client, so it is derived from the
+ * incoming request's own origin.
+ */
+app.get("/api/backup/drive/auth", async (c) => {
+  const d = await getDriveSettings();
+  if (!hasCredentials(d)) {
+    return c.json({ error: "Save the Google OAuth client ID and secret first." }, 400);
+  }
+  const origin = new URL(c.req.url).origin;
+  const redirectUri = `${origin}/api/backup/drive/callback`;
+  return c.redirect(driveAuthUrl(d.client_id, redirectUri));
+});
+
+/**
+ * OAuth redirect target. Exchanges the code, stores the refresh token, then
+ * bounces the user's browser back to the settings page with a result flag.
+ */
+app.get("/api/backup/drive/callback", async (c) => {
+  const origin = new URL(c.req.url).origin;
+  const back = (flag: string, msg: string) =>
+    c.redirect(`${origin}/settings?tab=backup&drive_${flag}=${encodeURIComponent(msg)}`);
+
+  const error = c.req.query("error");
+  if (error) return back("error", c.req.query("error_description") || error);
+
+  const code = c.req.query("code");
+  if (!code) return back("error", "Google did not return an authorization code");
+
+  const d = await getDriveSettings();
+  const redirectUri = `${origin}/api/backup/drive/callback`;
+  const r = await exchangeCodeForTokens(d, code, redirectUri);
+  if (!r.ok) return back("error", r.error);
+
+  await run(
+    `INSERT INTO settings (key, value, updated_at) VALUES ('gdrive_refresh_token', ?, datetime('now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+    [r.refresh_token],
+  );
+  return back("connected", "1");
+});
+
+/** Revoke + forget the stored tokens. */
+app.post("/api/backup/drive/disconnect", async (c) => {
+  const d = await getDriveSettings();
+  if (d.refresh_token) {
+    await fetch("https://oauth2.googleapis.com/revoke", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ token: d.refresh_token }).toString(),
+    }).catch(() => undefined); // best-effort; local credentials are cleared regardless
+  }
+  for (const key of ["gdrive_refresh_token", "gdrive_last_upload_at", "gdrive_last_upload_ok", "gdrive_last_upload_error"]) {
+    await run("DELETE FROM settings WHERE key = ?", [key]);
+  }
+  await run("INSERT INTO settings (key, value) VALUES ('gdrive_enabled', '0') ON CONFLICT(key) DO UPDATE SET value = '0'");
+  return c.json({ ok: true });
+});
+
+/** Push an existing stored snapshot to Drive right now. */
+app.post("/api/backup/drive/upload/:id", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const payload = await getSnapshotPayload(id);
+  if (!payload) return c.json({ error: "Snapshot not found" }, 404);
+
+  const d = await getDriveSettings();
+  if (!isDriveConfigured(d)) return c.json({ error: "Google Drive is not connected yet." }, 400);
+
+  const filename = backupFilename(`${payload.created_at.slice(0, 10)}-id${id}`);
+  const r = await uploadJsonToDrive(filename, JSON.stringify(payload), d);
+  await recordUploadResult(r.ok, r.error);
+  if (!r.ok) return c.json({ error: r.error }, 502);
+  return c.json({ ok: true, file_id: r.file_id });
+});
+
+/** Connectivity probe: uploads a tiny test file. */
+app.post("/api/backup/drive/test", async (c) => {
+  const d = await getDriveSettings();
+  if (!isDriveConfigured(d)) return c.json({ error: "Google Drive is not connected yet." }, 400);
+  const r = await testDriveConnection(d);
+  if (!r.ok) return c.json({ error: r.error }, 502);
+  return c.json({ ok: true, file_id: r.file_id });
 });
 
 // Import: accept a portable backup JSON, safety-snapshot first, then replace.
@@ -2104,6 +3417,78 @@ app.get("/api/dashboard/summary", async (c) => {
   });
 });
 
+/**
+ * Birthdays in a date window, for the dashboard's birthday board.
+ * ?days=N looks N days ahead (including today, wrapping across the year end);
+ * ?month=YYYY-MM lists a whole month. Age is computed as of this year's
+ * birthday so the card can show "turning 34".
+ */
+app.get("/api/dashboard/birthdays", async (c) => {
+  const days = Math.min(Math.max(parseInt(c.req.query("days") ?? "7", 10) || 7, 1), 60);
+  const month = c.req.query("month"); // YYYY-MM, overrides ?days
+  const today = new Date();
+
+  const rows = await query<{
+    id: number; first_name: string | null; last_name: string | null;
+    date_of_birth: string | null; phone: string | null;
+  }>(
+    `SELECT id, first_name, last_name, date_of_birth, phone
+     FROM patients
+     WHERE date_of_birth IS NOT NULL AND date_of_birth != ''
+     ORDER BY substr(date_of_birth, 6, 5)`,
+  ).catch(() => []);
+
+  const toMd = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const windowEnd = new Date(today);
+  windowEnd.setDate(windowEnd.getDate() + days - 1);
+  const startMd = toMd(today);
+  const endMd = toMd(windowEnd);
+
+  const monthStr = month ?? "";
+  const inWindow = (md: string) =>
+    // Wrap-around window (e.g. Dec 28 → Jan 3) must match both tails.
+    startMd <= endMd ? md >= startMd && md <= endMd : md >= startMd || md <= endMd;
+  const inMonth = (md: string, m: string) => m === monthStr.slice(5, 7);
+
+  const year = today.getFullYear();
+  const birthdays = rows
+    .filter((r) => {
+      const md = (r.date_of_birth ?? "").slice(5, 10);
+      if (!/^\d{2}-\d{2}$/.test(md)) return false;
+      // Feb 29 birthdays celebrate on Mar 1 in non-leap years.
+      const shifted = md === "02-29" && !leap(year) ? "03-01" : md;
+      return monthStr ? inMonth(shifted, monthStr) : inWindow(shifted);
+    })
+    .map((r) => {
+      const md = (r.date_of_birth ?? "").slice(5, 10);
+      const thisYearMd = md === "02-29" && !leap(year) ? "03-01" : md;
+      const nextBirthday = new Date(`${year}-${thisYearMd}T00:00:00`);
+      if (nextBirthday < new Date(`${today.toISOString().slice(0, 10)}T00:00:00`)) {
+        nextBirthday.setFullYear(nextBirthday.getFullYear() + 1);
+      }
+      const age = year - parseInt((r.date_of_birth ?? "").slice(0, 4), 10);
+      const daysAway = Math.round(
+        (nextBirthday.getTime() - new Date(`${today.toISOString().slice(0, 10)}T00:00:00`).getTime()) / 86_400_000,
+      );
+      return {
+        id: r.id,
+        name: [r.first_name, r.last_name].filter(Boolean).join(" "),
+        date_of_birth: r.date_of_birth,
+        phone: r.phone,
+        turning: age + (daysAway === 0 ? 0 : 1),
+        days_away: daysAway,
+        is_today: daysAway === 0,
+      };
+    })
+    .sort((a, b) => a.days_away - b.days_away);
+
+  return c.json({ birthdays, days: month ? null : days });
+});
+
+function leap(y: number): boolean {
+  return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+}
+
 app.get("/api/dashboard/consultation", async (c) => {
   const id = intParam(c.req.query("patient_id"));
   if (!id) return c.json({ error: "patient_id is required" }, 400);
@@ -2199,7 +3584,7 @@ app.delete("/api/dentist-notes/:id", async (c) => {
  * real values from the settings table directly; responses show a non-empty
  * placeholder so UI code can still tell "configured ✓" from "empty".
  */
-const SECRET_SETTINGS = new Set(["storage_secret_access_key", "email_api_key"]);
+const SECRET_SETTINGS = new Set(["storage_secret_access_key", "email_api_key", "gdrive_client_secret"]);
 
 function redactSettings(out: Record<string, string>): Record<string, string> {
   for (const key of SECRET_SETTINGS) {
@@ -2212,7 +3597,7 @@ app.get("/api/settings", async (c) => {
   const rows = await query<{ key: string; value: string }>(
     "SELECT key, value FROM settings",
   ).catch(() => []);
-  const out: Record<string, string> = { ...DEFAULT_SETTINGS, ...DEFAULT_PROFILE_SETTINGS, ...DEFAULT_BACKUP_SETTINGS, ...DEFAULT_INVENTORY_SETTINGS, ...DEFAULT_STORAGE_SETTINGS };
+  const out: Record<string, string> = { ...DEFAULT_SETTINGS, ...DEFAULT_PROFILE_SETTINGS, ...DEFAULT_BACKUP_SETTINGS, ...DEFAULT_INVENTORY_SETTINGS, ...DEFAULT_STORAGE_SETTINGS, gdrive_client_id: "", gdrive_client_secret: "", gdrive_folder_id: "", gdrive_enabled: "0" };
   for (const r of rows) out[r.key] = r.value;
   return c.json({ settings: redactSettings(out) });
 });
@@ -2229,17 +3614,28 @@ app.put("/api/settings", async (c) => {
     if (key === "clinic_logo" && value !== "" && !isSafeLogoDataUrl(value)) {
       return c.json({ error: "Logo must be an image data URL under 400 KB" }, 400);
     }
+    // Invoice style must be one of the known sheet ids; accent must be a hex
+    // color (it is inlined into printed documents). Both fall back to the
+    // defaults silently in the renderer, but rejecting here keeps junk out.
+    if (key === "invoice_style" && !INVOICE_STYLE_IDS.includes(value as (typeof INVOICE_STYLE_IDS)[number])) {
+      return c.json({ error: "Unknown invoice style" }, 400);
+    }
+    if (key === "invoice_accent" && !/^#[0-9a-fA-F]{6}$/.test(String(value))) {
+      return c.json({ error: "Accent must be a hex color like #0e7490" }, 400);
+    }
     await run(
       `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
       [key, String(value)],
     );
-  }
-  const rows = await query<{ key: string; value: string }>("SELECT key, value FROM settings");
-  const out: Record<string, string> = { ...DEFAULT_SETTINGS, ...DEFAULT_PROFILE_SETTINGS, ...DEFAULT_BACKUP_SETTINGS, ...DEFAULT_INVENTORY_SETTINGS, ...DEFAULT_STORAGE_SETTINGS };
+  }  const rows = await query<{ key: string; value: string }>("SELECT key, value FROM settings");
+  const out: Record<string, string> = { ...DEFAULT_SETTINGS, ...DEFAULT_PROFILE_SETTINGS, ...DEFAULT_BACKUP_SETTINGS, ...DEFAULT_INVENTORY_SETTINGS, ...DEFAULT_STORAGE_SETTINGS, gdrive_client_id: "", gdrive_client_secret: "", gdrive_folder_id: "", gdrive_enabled: "0" };
   for (const r of rows) out[r.key] = r.value;
   return c.json({ settings: redactSettings(out) });
 });
+
+
+
 
 // ── Images & object storage (S3/R2, presigned URLs) ──────────────
 

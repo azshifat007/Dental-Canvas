@@ -28,7 +28,7 @@ interface Props {
   defaults?: { operatoryId: number; minutesFromMidnight: number };
 }
 
-const STATUSES: AppointmentStatus[] = ["scheduled", "arrived", "in_chair", "completed", "no_show", "cancelled"];
+const STATUSES: AppointmentStatus[] = ["scheduled", "confirmed", "arrived", "in_chair", "completed", "no_show", "cancelled"];
 const KINDS: AppointmentKind[] = ["patient", "break", "lunch", "block"];
 
 export function AppointmentDialog({ open, onOpenChange, appointment, date, defaults }: Props) {

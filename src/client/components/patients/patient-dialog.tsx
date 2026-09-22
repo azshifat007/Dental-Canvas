@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { api } from "@/api";
 import { useApp } from "@/context";
+import { toast } from "@/components/ui/toast";
 import type { Patient } from "@/types";
 
 const REFERRAL_SOURCES = ["Google", "Facebook", "Yelp", "Friend / family", "Insurance directory", "Walk-in", "Other"];
@@ -155,12 +156,15 @@ export function PatientDialog({
         : await api<{ patient: Patient }>("POST", "/api/patients", body);
       onSaved?.(res.patient);
       if (patient) {
+        toast.success(`${res.patient.first_name} ${res.patient.last_name} updated`);
         onOpenChange(false); // editing: close as before
       } else {
+        toast.success(`${res.patient.first_name} ${res.patient.last_name} registered`);
         setCreated(res.patient); // creating: show the success screen
         resetForm();
       }
     } catch (err) {
+      toast.error((err as Error).message);
       app.setError((err as Error).message);
     } finally {
       setSaving(false);

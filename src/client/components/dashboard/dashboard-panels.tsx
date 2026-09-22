@@ -103,6 +103,7 @@ interface ListAppointment {
 
 const STATUS_LABELS: Record<string, { label: string; classes: string }> = {
   scheduled: { label: "Weekly Visit", classes: "text-sky-700" },
+  confirmed: { label: "Confirmed",    classes: "text-teal-700" },
   arrived:   { label: "Arrived",       classes: "text-emerald-700" },
   in_chair:  { label: "In Chair",      classes: "text-violet-700" },
   completed: { label: "Completed",     classes: "text-emerald-700" },
@@ -169,7 +170,7 @@ export function PatientListPanel({ navigate }: { navigate: (to: string) => void 
   }, [filter]);
 
   return (
-    <div className="min-w-0 rounded-2xl border bg-card p-5 shadow-sm">
+    <div className="card-lift animate-rise min-w-0 rounded-2xl border bg-card p-5 shadow-sm">
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-lg font-semibold tracking-tight">Patient List</h2>
         <DropdownMenu>
@@ -330,7 +331,7 @@ export function ConsultationPanel({ navigate }: { navigate: (to: string) => void
   const age = ageFromDob(patient?.date_of_birth ?? null);
 
   return (
-    <div className="min-w-0 rounded-2xl border bg-card p-5 shadow-sm">
+    <div className="card-lift animate-rise min-w-0 rounded-2xl border bg-card p-5 shadow-sm">
       <div className="flex items-start justify-between gap-2">
         <h2 className="text-lg font-semibold tracking-tight">Consultation</h2>
         {patient && (
@@ -587,7 +588,7 @@ export function DentistNotesPanel() {
   }
 
   return (
-    <div className="rounded-2xl border bg-card p-5 shadow-sm">
+    <div className="card-lift animate-rise rounded-2xl border bg-card p-5 shadow-sm">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold tracking-tight">Dentist Notes</h2>
         <Button

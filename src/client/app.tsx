@@ -6,6 +6,7 @@ import { AppContext } from "./context";
 import { Sidebar } from "./components/sidebar";
 import { MobileTopBar, BottomNav } from "./components/mobile-nav";
 import { ErrorBanner } from "./components/error-banner";
+import { Toaster } from "./components/ui/toast";
 import { useAutoBackup } from "./hooks/use-auto-backup";
 import { useDailyInventoryScan } from "./hooks/use-daily-inventory-scan";
 import { useTheme } from "./hooks/use-theme";
@@ -16,6 +17,7 @@ import { PatientDialog } from "./components/patients/patient-dialog";
 import { PrescriptionPrintView } from "./components/prescriptions/prescription-print-view";
 import { InvoicePrintView } from "./components/patients/invoice-print-view";
 import { OPEN_REGISTER_PATIENT } from "./lib/quick-register";
+import { KioskPage } from "./components/kiosk/kiosk-page";
 import type { Patient } from "./types";
 import { AgendaPage } from "./components/agenda/agenda-page";
 import { DashboardPage } from "./components/dashboard/dashboard-page";
@@ -26,6 +28,7 @@ import { LabPage } from "./components/lab/lab-page";
 import { MedicinesPage } from "./components/medicines/medicines-page";
 import { InventoryPage } from "./components/inventory/inventory-page";
 import { SettingsPage } from "./components/settings/settings-page";
+import { FinancePage } from "./components/finance/finance-page";
 
 export function App() {
   const state = useAppState();
@@ -88,8 +91,18 @@ export function App() {
   useEffect(() => { reportLocation(window.location.pathname + window.location.search); }, [path]);
 
   // Full-screen paper routes (prescription/invoice print views) render without
-  // nav chrome, like a document viewer.
+  // nav chrome, like a document viewer. The check-in kiosk is likewise
+  // chrome-free — it runs unattended on a waiting-room tablet.
   const isPrintRoute = route.name === "patient-prescription" || route.name === "patient-invoice";
+  // The check-in kiosk is a full-screen takeover — no app chrome at all.
+  if (route.name === "kiosk") {
+    return (
+      <AppContext.Provider value={state}>
+        <KioskPage />
+        <ErrorBanner />
+      </AppContext.Provider>
+    );
+  }
 
   return (
     <AppContext.Provider value={state}>
@@ -115,6 +128,9 @@ export function App() {
                 <InvoicePrintView invoiceId={route.invoiceId} navigate={navigate} />
               )}
               {route.name === "reports" && <ReportsPage />}
+              {(route.name === "finance-billing" || route.name === "finance-revenue" || route.name === "finance-appointments") && (
+                <FinancePage route={route} navigate={navigate} />
+              )}
               {route.name === "lab" && <LabPage navigate={navigate} />}
               {route.name === "medicines" && <MedicinesPage />}
               {route.name === "inventory" && <InventoryPage />}
@@ -128,6 +144,7 @@ export function App() {
         </div>
         {!isPrintRoute && <BottomNav route={route} navigate={navigate} />}
         <ErrorBanner />
+        <Toaster />
       </div>
       <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} navigate={navigate} />
       <PatientDialog

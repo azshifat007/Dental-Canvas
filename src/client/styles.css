@@ -192,6 +192,168 @@ html.a11y-reduce-motion *::after {
   scroll-behavior: auto !important;
 }
 
+/* ── Dashboard animations ──────────────────────────────────────────
+   Pure-CSS entrance + interaction animations. Everything decorative here is
+   automatically disabled by the .a11y-reduce-motion block above (0.01ms),
+   which respects both the OS setting and the in-app toggle.
+
+   Usage: `animate-rise` on any card; `stagger` sets `--stagger-i` (child
+   index) on a container and children delay accordingly. */
+
+@keyframes dc-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes dc-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes dc-pop {
+  0% { opacity: 0; transform: scale(0.92); }
+  60% { transform: scale(1.02); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes dc-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+@keyframes dc-pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgb(14 165 233 / 0.35); }
+  70% { box-shadow: 0 0 0 12px rgb(14 165 233 / 0); }
+  100% { box-shadow: 0 0 0 0 rgb(14 165 233 / 0); }
+}
+
+@keyframes dc-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+/* Toast notifications: slide in from the right, slide out. */
+@keyframes dc-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes dc-toast-out {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+
+.toast-in {
+  animation: dc-toast-in 0.25s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.toast-out {
+  animation: dc-toast-out 0.2s ease-in both;
+}
+
+.animate-rise {
+  animation: dc-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--stagger-i, 0) * 70ms);
+}
+
+.animate-fade {
+  animation: dc-fade 0.4s ease-out both;
+  animation-delay: calc(var(--stagger-i, 0) * 60ms);
+}
+
+.animate-pop {
+  animation: dc-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: calc(var(--stagger-i, 0) * 60ms);
+}
+
+.animate-float {
+  animation: dc-float 5s ease-in-out infinite;
+}
+
+.animate-pulse-ring {
+  animation: dc-pulse-ring 2.2s ease-out infinite;
+}
+
+/* Count-up: numbers flip in with a small rise — applied per stat value. */
+.animate-count {
+  animation: dc-rise 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--stagger-i, 0) * 90ms + 150ms);
+}
+
+/* Staggered children: set --stagger-i per child via nth-child. Supports the
+   first ~12 children, which covers every dashboard container. */
+.stagger > *:nth-child(1) { --stagger-i: 0; }
+.stagger > *:nth-child(2) { --stagger-i: 1; }
+.stagger > *:nth-child(3) { --stagger-i: 2; }
+.stagger > *:nth-child(4) { --stagger-i: 3; }
+.stagger > *:nth-child(5) { --stagger-i: 4; }
+.stagger > *:nth-child(6) { --stagger-i: 5; }
+.stagger > *:nth-child(7) { --stagger-i: 6; }
+.stagger > *:nth-child(8) { --stagger-i: 7; }
+.stagger > *:nth-child(9) { --stagger-i: 8; }
+.stagger > *:nth-child(10) { --stagger-i: 9; }
+.stagger > *:nth-child(11) { --stagger-i: 10; }
+.stagger > *:nth-child(12) { --stagger-i: 11; }
+
+/* Card hover lift — subtle; pairs with existing shadow-sm. */
+.card-lift {
+  transition:
+    transform 0.25s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.card-lift:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 8px 24px -6px rgb(0 0 0 / 0.12),
+    0 2px 8px -2px rgb(0 0 0 / 0.06);
+}
+
+/* Calendar day pop when the month changes. */
+.animate-day {
+  animation: dc-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: calc(var(--stagger-i, 0) * 12ms);
+}
+
+/* Loading shimmer for summary placeholders. */
+.dc-shimmer {
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    rgb(255 255 255 / 0.25) 50%,
+    transparent 70%
+  );
+  background-size: 200% 100%;
+  animation: dc-shimmer 1.6s linear infinite;
+}
+
+.dark .dc-shimmer {
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    rgb(255 255 255 / 0.06) 50%,
+    transparent 70%
+  );
+  background-size: 200% 100%;
+}
+
 /* Striped pattern used for past/closed time slots in the agenda.
    The stripe color is a variable (not light-dark()) so the gradient survives
    in browsers without light-dark() support. */

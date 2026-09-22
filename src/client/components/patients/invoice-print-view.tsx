@@ -3,14 +3,14 @@ import { ArrowLeft, Printer } from "lucide-react";
 import { api } from "@/api";
 import { useApp } from "@/context";
 import type { Invoice, InvoiceItem, InvoicePayment } from "@/types";
-import { formatDate, formatTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { InvoiceSheet, isInvoiceStyle, type InvoiceSheetData } from "./invoice-sheet";
 
 /**
  * Printable A4 invoice / receipt. Reuses the print-iframe technique from the
- * prescription view; the sheet itself is bespoke (itemized lines, totals,
- * payment history) but shares the prescription letterhead conventions so the
- * practice's paperwork looks consistent.
+ * prescription view; the sheet itself (InvoiceSheet) is styleable from
+ * Settings → Billing — template, accent color, terms and footer note — and
+ * this view simply renders whatever the practice configured.
  */
 export function InvoicePrintView({
   invoiceId,
@@ -25,6 +25,7 @@ export function InvoicePrintView({
     items: InvoiceItem[];
     payments: InvoicePayment[];
   } | null>(null);
+  const [sheet, setSheet] = useState<Omit<InvoiceSheetData, "invoice_id" | "issued_at" | "status" | "patient_name" | "items" | "total" | "amount_paid" | "balance" | "payments"> | null>(null);
   const [loading, setLoading] = useState(true);
   const printHostRef = useRef<HTMLDivElement>(null);
 
@@ -32,12 +33,31 @@ export function InvoicePrintView({
     let cancelled = false;
     (async () => {
       try {
-        const res = await api<{
-          invoice: Invoice & { patient_first_name: string | null; patient_last_name: string | null };
-          items: InvoiceItem[];
-          payments: InvoicePayment[];
-        }>("GET", `/api/invoices/${invoiceId}`);
-        if (!cancelled) setData(res);
+        const [res, settings] = await Promise.all([
+          api<{
+            invoice: Invoice & { patient_first_name: string | null; patient_last_name: string | null };
+            items: InvoiceItem[];
+            payments: InvoicePayment[];
+          }>("GET", `/api/invoices/${invoiceId}`),
+          api<{ settings: Record<string, string> }>("GET", "/api/settings").catch(() => ({ settings: {} as Record<string, string> })),
+        ]);
+        if (cancelled) return;
+        setData(res);
+        const s = settings.settings ?? {};
+        setSheet({
+          style: isInvoiceStyle(s.invoice_style) ? s.invoice_style : "classic",
+          accent: /^#[0-9a-fA-F]{6}$/.test(s.invoice_accent ?? "") ? s.invoice_accent : "#0e7490",
+          payment_terms: s.invoice_payment_terms ?? "",
+          footer_note: s.invoice_footer_note ?? "",
+          show_payments: (s.invoice_show_payments ?? "1") !== "0",
+          clinic_name: s.clinic_name ?? "",
+          clinic_address: s.clinic_address ?? "",
+          clinic_phone: s.doctor_phone ?? "",
+          clinic_logo: s.clinic_logo ?? "",
+          doctor_name: s.doctor_name ?? "",
+          doctor_specialty: s.doctor_specialty ?? "",
+          doctor_license: s.doctor_license ?? "",
+        });
       } catch (err) {
         if (!cancelled) app.setError((err as Error).message);
       } finally {
@@ -72,7 +92,7 @@ export function InvoicePrintView({
   };
 
   if (loading) return <div className="flex flex-1 items-center justify-center text-muted-foreground">Loading…</div>;
-  if (!data) {
+  if (!data || !sheet) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3">
         <p>Invoice not found.</p>
@@ -85,9 +105,19 @@ export function InvoicePrintView({
 
   const { invoice, items, payments } = data;
   const patientName = `${invoice.patient_first_name ?? ""} ${invoice.patient_last_name ?? ""}`.trim() || "Patient";
-  const balance = invoice.total - invoice.amount_paid;
-  const money = (n: number) => n.toLocaleString(undefined, { style: "currency", currency: "USD" });
-  const profile = app.profile;
+
+  const sheetData: InvoiceSheetData = {
+    ...sheet,
+    invoice_id: invoice.id,
+    issued_at: invoice.issued_at,
+    status: invoice.status,
+    patient_name: patientName,
+    items: items.map((it) => ({ description: it.description, quantity: it.quantity, unit_price: it.unit_price })),
+    total: invoice.total,
+    amount_paid: invoice.amount_paid,
+    balance: invoice.total - invoice.amount_paid,
+    payments: payments.map((p) => ({ id: p.id, paid_at: p.paid_at, method: p.method, note: p.note, amount: p.amount })),
+  };
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-muted/60 dark:bg-background">
@@ -108,130 +138,7 @@ export function InvoicePrintView({
       <div className="flex-1 overflow-auto p-4 md:p-6">
         <div className="mx-auto w-fit origin-top shadow-xl" style={{ transform: "scale(0.75)" }}>
           <div ref={printHostRef}>
-            {/* The A4 sheet — inline styles so the print iframe needs no CSS. */}
-            <div
-              style={{
-                width: "210mm",
-                minHeight: "297mm",
-                margin: "0 auto",
-                background: "#ffffff",
-                color: "#1a2430",
-                boxSizing: "border-box",
-                display: "flex",
-                flexDirection: "column",
-                fontFamily: 'Inter, "Segoe UI", system-ui, sans-serif',
-                padding: "14mm 16mm",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "3px double #0e7490", paddingBottom: "6mm" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "5mm" }}>
-                  {profile.clinic_logo ? (
-                    <img
-                      src={profile.clinic_logo}
-                      alt=""
-                      style={{ height: "12mm", maxWidth: "55mm", objectFit: "contain", display: "block" }}
-                    />
-                  ) : null}
-                  <div>
-                  <div style={{ fontSize: "18pt", fontWeight: 700 }}>
-                    {profile.doctor_name ? (profile.doctor_name.startsWith("Dr") ? profile.doctor_name : `Dr. ${profile.doctor_name}`) : "Dental Practice"}
-                  </div>
-                  <div style={{ fontSize: "9pt", color: "#64748b", marginTop: 2 }}>
-                    {[profile.doctor_specialty, profile.doctor_license ? `License ${profile.doctor_license}` : null].filter(Boolean).join(" · ")}
-                  </div>
-                  <div style={{ fontSize: "8pt", color: "#64748b", whiteSpace: "pre-line" }}>
-                    {[profile.clinic_name, profile.clinic_address, profile.doctor_phone].filter(Boolean).join("\n")}
-                  </div>
-                  </div>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: "22pt", fontWeight: 800, color: "#0e7490", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                    Invoice
-                  </div>
-                  <div style={{ fontSize: "10pt" }}>
-                    <strong>#{String(invoice.id).padStart(5, "0")}</strong>
-                  </div>
-                  <div style={{ fontSize: "9pt", color: "#64748b" }}>Issued {formatDate(invoice.issued_at)}</div>
-                </div>
-              </div>
-
-              <div style={{ display: "flex", justifyContent: "space-between", padding: "8mm 0 4mm", fontSize: "10pt" }}>
-                <div>
-                  <div style={{ fontSize: "8pt", textTransform: "uppercase", letterSpacing: "0.08em", color: "#64748b" }}>Billed to</div>
-                  <div style={{ fontWeight: 700 }}>{patientName}</div>
-                </div>
-                <div style={{ textAlign: "right", fontSize: "9pt", color: "#64748b" }}>
-                  Status: <strong style={{ color: invoice.status === "paid" ? "#047857" : "#b45309" }}>{invoice.status.toUpperCase()}</strong>
-                </div>
-              </div>
-
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "10pt" }}>
-                <thead>
-                  <tr style={{ borderBottom: "2px solid #0e7490", textAlign: "left" }}>
-                    <th style={{ padding: "2mm 0", fontSize: "8pt", textTransform: "uppercase", letterSpacing: "0.06em", color: "#64748b" }}>Description</th>
-                    <th style={{ padding: "2mm 0", textAlign: "right", fontSize: "8pt", textTransform: "uppercase", letterSpacing: "0.06em", color: "#64748b" }}>Qty</th>
-                    <th style={{ padding: "2mm 0", textAlign: "right", fontSize: "8pt", textTransform: "uppercase", letterSpacing: "0.06em", color: "#64748b" }}>Unit</th>
-                    <th style={{ padding: "2mm 0", textAlign: "right", fontSize: "8pt", textTransform: "uppercase", letterSpacing: "0.06em", color: "#64748b" }}>Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} style={{ padding: "4mm 0", color: "#94a3b8" }}>No line items.</td>
-                    </tr>
-                  ) : (
-                    items.map((it, i) => (
-                      <tr key={i} style={{ borderBottom: "1px solid #e2e8f0" }}>
-                        <td style={{ padding: "2.5mm 0" }}>{it.description}</td>
-                        <td style={{ padding: "2.5mm 0", textAlign: "right" }}>{it.quantity}</td>
-                        <td style={{ padding: "2.5mm 0", textAlign: "right" }}>{money(it.unit_price)}</td>
-                        <td style={{ padding: "2.5mm 0", textAlign: "right", fontWeight: 600 }}>{money(it.quantity * it.unit_price)}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-
-              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "6mm" }}>
-                <table style={{ fontSize: "10pt", minWidth: "70mm" }}>
-                  <tbody>
-                    <tr>
-                      <td style={{ padding: "1.5mm 0", color: "#64748b" }}>Total</td>
-                      <td style={{ padding: "1.5mm 0", textAlign: "right", fontWeight: 700 }}>{money(invoice.total)}</td>
-                    </tr>
-                    <tr>
-                      <td style={{ padding: "1.5mm 0", color: "#64748b" }}>Paid</td>
-                      <td style={{ padding: "1.5mm 0", textAlign: "right", color: "#047857" }}>{money(invoice.amount_paid)}</td>
-                    </tr>
-                    <tr style={{ borderTop: "2px solid #0e7490" }}>
-                      <td style={{ padding: "2mm 0", fontWeight: 800 }}>Balance due</td>
-                      <td style={{ padding: "2mm 0", textAlign: "right", fontWeight: 800, color: balance > 0 ? "#be123c" : "#047857" }}>{money(balance)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              {payments.length > 0 && (
-                <div style={{ marginTop: "8mm", fontSize: "9pt" }}>
-                  <div style={{ fontSize: "8pt", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "#64748b", marginBottom: "1mm" }}>
-                    Payment history
-                  </div>
-                  {payments.map((p) => (
-                    <div key={p.id} style={{ display: "flex", justifyContent: "space-between", padding: "1mm 0", color: "#334155" }}>
-                      <span>
-                        {formatDate(p.paid_at)} {formatTime(p.paid_at)} — {p.method}
-                        {p.note ? ` (${p.note})` : ""}
-                      </span>
-                      <span style={{ fontWeight: 600 }}>{money(p.amount)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div style={{ marginTop: "auto", borderTop: "1px solid #e2e8f0", paddingTop: "3mm", fontSize: "7.5pt", color: "#94a3b8", textAlign: "center" }}>
-                Thank you for your visit. {profile.clinic_name || ""} {profile.doctor_phone ? `· ${profile.doctor_phone}` : ""}
-              </div>
-            </div>
+            <InvoiceSheet data={sheetData} />
           </div>
         </div>
       </div>

@@ -95,6 +95,10 @@ export async function createTestContext(): Promise<TestContext> {
       // not be toggled reliably per-session, and PRAGMA has no effect here.
       const order = [
         "invoice_payments",
+        "consent_signatures",
+        "consent_templates",
+        "patient_memberships",
+        "membership_plans",
         "prescription_items",
         "prescriptions",
         "patient_images",

@@ -15,6 +15,9 @@ import {
   Users,
   Boxes,
   Ellipsis,
+  Receipt,
+  TrendingUp,
+  CalendarClock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { openQuickRegister } from "@/lib/quick-register";
@@ -49,6 +52,9 @@ const PRIMARY_ITEMS: NavItem[] = [
 ];
 
 const MORE_ITEMS: NavItem[] = [
+  { label: "Billing Record",        icon: Receipt,      path: "/finance/billing-record",       match: (r) => r.name === "finance-billing" },
+  { label: "Revenue",              icon: TrendingUp,   path: "/finance/revenue-breakdown",    match: (r) => r.name === "finance-revenue" },
+  { label: "Appt. Overview",       icon: CalendarClock, path: "/finance/appointment-overview", match: (r) => r.name === "finance-appointments" },
   { label: "Medicines", icon: Pill, path: "/medicines", match: (r) => r.name === "medicines" },
   { label: "Inventory", icon: Boxes, path: "/inventory", match: (r) => r.name === "inventory" },
   { label: "Reports", icon: FileBarChart2, path: "/reports", match: (r) => r.name === "reports" },

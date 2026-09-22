@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "@/components/ui/toast";
 import { api } from "../api";
 import type {
   Appointment,
@@ -42,6 +43,8 @@ export interface ProfileSettings {
   clinic_logo: string;
   /** Fixed practice instructions printed in the Chamber template's footer. Newline = new line on the sheet. Empty = none. */
   chamber_footer_instructions: string;
+  /** Google review link included in post-visit review-request messages. Empty = no link. */
+  google_review_url: string;
 }
 
 const DEFAULT_SETTINGS: PracticeSettings = {
@@ -60,6 +63,7 @@ export const DEFAULT_PROFILE: ProfileSettings = {
   clinic_address: "",
   clinic_logo: "",
   chamber_footer_instructions: "",
+  google_review_url: "",
 };
 
 const PROFILE_KEYS = Object.keys(DEFAULT_PROFILE) as (keyof ProfileSettings)[];
@@ -191,18 +195,25 @@ export function useAppState() {
   const createAppointment = useCallback(async (data: NewAppointment) => {
     const res = await api<{ appointment: Appointment }>("POST", "/api/appointments", data);
     setAppointments((prev) => [...prev, res.appointment].sort((a, b) => a.start_time.localeCompare(b.start_time)));
+    toast.success(`Appointment booked for ${new Date(res.appointment.start_time).toLocaleDateString()}`);
     return res.appointment;
   }, []);
 
   const updateAppointment = useCallback(async (id: number, patch: Partial<NewAppointment>) => {
     const res = await api<{ appointment: Appointment }>("PUT", `/api/appointments/${id}`, patch);
     setAppointments((prev) => prev.map((a) => (a.id === id ? res.appointment : a)));
+    if (patch.status === "cancelled") toast.info("Appointment cancelled");
+    else if (patch.status === "no_show") toast.info("Marked as no-show");
+    else if (patch.status === "completed") toast.success("Visit completed");
+    else if (patch.status === "confirmed") toast.success("Appointment confirmed");
+    else toast.success("Appointment updated");
     return res.appointment;
   }, []);
 
   const deleteAppointment = useCallback(async (id: number) => {
     await api("DELETE", `/api/appointments/${id}`);
     setAppointments((prev) => prev.filter((a) => a.id !== id));
+    toast.success("Appointment deleted");
   }, []);
 
   const searchPatients = useCallback(async (q: string): Promise<Patient[]> => {

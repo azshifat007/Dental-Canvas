@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Plus, Trash2, Pencil, Check, X, Clock, UserRound, DatabaseBackup, Palette, Monitor, Sun, Moon, ImageUp, Mail } from "lucide-react";
+import { Plus, Trash2, Pencil, Check, X, Clock, UserRound, DatabaseBackup, Palette, Monitor, Sun, Moon, ImageUp, Mail, ReceiptText } from "lucide-react";
 import { useApp } from "@/context";
 import { api } from "@/api";
+import { toast } from "@/components/ui/toast";
 import { BackupTab } from "./backup-tab";
 import { StorageTab } from "./storage-tab";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
@@ -17,8 +18,10 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import type { ConsentTemplate, MembershipPlan } from "@/types";
 import type { Operatory, Practitioner, PractitionerRole, TreatmentType } from "@/types";
 import { fileToLogoDataUrl } from "@/lib/logo";
+import { INVOICE_STYLES, InvoiceSheet, type InvoiceStyle } from "@/components/patients/invoice-sheet";
 
 const COLOR_TOKENS = ["sky", "emerald", "amber", "rose", "violet", "fuchsia", "teal", "orange", "slate"] as const;
 const ROLES: PractitionerRole[] = ["dentist", "hygienist", "assistant"];
@@ -37,9 +40,14 @@ export function SettingsPage() {
             <TabsTrigger value="operatories">Operatories</TabsTrigger>
             <TabsTrigger value="practitioners">Practitioners</TabsTrigger>
             <TabsTrigger value="treatments">Treatment types</TabsTrigger>
+            <TabsTrigger value="membership">Membership</TabsTrigger>
+            <TabsTrigger value="consents">Consent forms</TabsTrigger>
             <TabsTrigger value="hours">Hours</TabsTrigger>
             <TabsTrigger value="email" className="gap-1.5">
               <Mail className="h-3.5 w-3.5" /> Email
+            </TabsTrigger>
+            <TabsTrigger value="billing" className="gap-1.5">
+              <ReceiptText className="h-3.5 w-3.5" /> Billing
             </TabsTrigger>
             <TabsTrigger value="storage" className="gap-1.5">
               <ImageUp className="h-3.5 w-3.5" /> Storage
@@ -65,11 +73,20 @@ export function SettingsPage() {
           <TabsContent value="treatments" className="mt-4">
             <TreatmentTypesTab />
           </TabsContent>
+          <TabsContent value="membership" className="mt-4">
+            <MembershipPlansTab />
+          </TabsContent>
+          <TabsContent value="consents" className="mt-4">
+            <ConsentTemplatesTab />
+          </TabsContent>
           <TabsContent value="hours" className="mt-4">
             <HoursTab />
           </TabsContent>
           <TabsContent value="email" className="mt-4">
             <EmailTab />
+          </TabsContent>
+          <TabsContent value="billing" className="mt-4">
+            <InvoiceStyleTab />
           </TabsContent>
           <TabsContent value="storage" className="mt-4">
             <StorageTab />
@@ -114,9 +131,12 @@ function ProfileTab() {
         clinic_address: form.clinic_address.trim(),
         clinic_logo: form.clinic_logo,
         chamber_footer_instructions: form.chamber_footer_instructions,
+        google_review_url: form.google_review_url.trim(),
       });
+      toast.success("Profile saved");
       setSavedAt(Date.now());
     } catch (err) {
+      toast.error((err as Error).message);
       app.setError((err as Error).message);
     } finally {
       setBusy(false);
@@ -252,6 +272,16 @@ function ProfileTab() {
               value={form.chamber_footer_instructions}
               onChange={(e) => setForm({ ...form, chamber_footer_instructions: e.target.value })}
               placeholder={"e.g. In case of bleeding or fever, call +1 555 010 2030\nAvoid hot drinks for 2 hours after extraction"}
+            />
+          </FieldGroup>
+          <FieldGroup
+            label="Google review URL"
+            hint="Included as a clickable link in post-visit review requests (Agenda → Reviews tab)."
+          >
+            <Input
+              value={form.google_review_url}
+              onChange={(e) => setForm({ ...form, google_review_url: e.target.value })}
+              placeholder="https://g.page/r/your-clinic/review"
             />
           </FieldGroup>
           <div className="flex items-center gap-3">
@@ -1099,4 +1129,478 @@ function ColorSelect({ value, onChange }: { value: string; onChange: (v: string)
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// ── Billing (invoice look & feel) ──────────────────────────────
+
+const INVOICE_ACCENT_SWATCHES = [
+  "#0e7490", // teal (default)
+  "#0f766e", // pine
+  "#1d4ed8", // royal blue
+  "#6d28d9", // violet
+  "#b91c1c", // crimson
+  "#b45309", // amber
+  "#be185d", // rose
+  "#374151", // graphite
+];
+
+function InvoiceStyleTab() {
+  const app = useApp();
+  const [style, setStyle] = useState<InvoiceStyle>("classic");
+  const [accent, setAccent] = useState("#0e7490");
+  const [paymentTerms, setPaymentTerms] = useState("");
+  const [footerNote, setFooterNote] = useState("");
+  const [showPayments, setShowPayments] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await api<{ settings: Record<string, string> }>("GET", "/api/settings");
+        const s = data.settings ?? {};
+        if (INVOICE_STYLES.some((t) => t.id === s.invoice_style)) setStyle(s.invoice_style as InvoiceStyle);
+        if (/^#[0-9a-fA-F]{6}$/.test(s.invoice_accent ?? "")) setAccent(s.invoice_accent);
+        setPaymentTerms(s.invoice_payment_terms ?? "");
+        setFooterNote(s.invoice_footer_note ?? "");
+        setShowPayments((s.invoice_show_payments ?? "1") !== "0");
+      } catch (err) {
+        app.setError((err as Error).message);
+      } finally {
+        setLoaded(true);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setSavedAt(null);
+    try {
+      await api("PUT", "/api/settings", {
+        invoice_style: style,
+        invoice_accent: accent,
+        invoice_payment_terms: paymentTerms,
+        invoice_footer_note: footerNote,
+        invoice_show_payments: showPayments ? "1" : "0",
+      });
+      setSavedAt(Date.now());
+    } catch (err) {
+      app.setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const sample = {
+    invoice_id: 42,
+    issued_at: new Date().toISOString(),
+    status: "open",
+    patient_name: "Alex Rivera",
+    items: [
+      { description: "Consultation & examination", quantity: 1, unit_price: 50 },
+      { description: "Composite filling, tooth 26", quantity: 1, unit_price: 120 },
+      { description: "Scaling & polishing", quantity: 1, unit_price: 70 },
+    ],
+    total: 240,
+    amount_paid: 100,
+    balance: 140,
+    payments: [{ id: 1, paid_at: new Date().toISOString(), method: "Cash", note: "Deposit", amount: 100 }],
+    clinic_name: app.profile.clinic_name,
+    clinic_address: app.profile.clinic_address,
+    clinic_phone: app.profile.doctor_phone,
+    clinic_logo: app.profile.clinic_logo,
+    doctor_name: app.profile.doctor_name || "Dr. Sarah",
+    doctor_specialty: app.profile.doctor_specialty,
+    doctor_license: app.profile.doctor_license,
+    style,
+    accent,
+    payment_terms: paymentTerms,
+    footer_note: footerNote,
+    show_payments: showPayments,
+  };
+
+  return (
+    <div className="space-y-4">
+      <form onSubmit={save} className="space-y-4">
+        {/* Style gallery — real scaled-down sheets, WYSIWYG. */}
+        <div>
+          <Label className="text-xs">Invoice style</Label>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {INVOICE_STYLES.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setStyle(t.id)}
+                className={cn(
+                  "group relative overflow-hidden rounded-lg border-2 bg-white text-left transition-all",
+                  style === t.id ? "border-primary shadow-md ring-2 ring-primary/20" : "border-transparent shadow-sm hover:shadow-md",
+                )}
+              >
+                <div className="pointer-events-none h-[150px] w-full origin-top-left" style={{ width: "210mm", transform: "scale(0.24)", transformOrigin: "top left" }}>
+                  <div aria-hidden style={{ filter: "saturate(0.85)", pointerEvents: "none" }}>
+                    <InvoiceSheet data={{ ...sample, style: t.id }} />
+                  </div>
+                </div>
+                <div className="border-t bg-card p-2">
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-sm font-medium">{t.label}</span>
+                    {style === t.id && <Check className="h-4 w-4 text-primary" />}
+                  </div>
+                  <p className="mt-0.5 text-xs text-muted-foreground">{t.blurb}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Accent color */}
+        <div className="rounded-lg border p-3">
+          <Label className="text-xs">Accent color</Label>
+          <p className="mt-0.5 text-xs text-muted-foreground">Colors the header, rules and totals on every invoice.</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {INVOICE_ACCENT_SWATCHES.map((hex) => (
+              <button
+                key={hex}
+                type="button"
+                onClick={() => setAccent(hex)}
+                title={hex}
+                className={cn(
+                  "h-8 w-8 rounded-full border-2 transition-transform",
+                  accent.toLowerCase() === hex ? "scale-110 border-foreground shadow-md" : "border-transparent hover:scale-105",
+                )}
+                style={{ background: hex }}
+              />
+            ))}
+            <label className="ml-1 inline-flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+              Custom
+              <input
+                type="color"
+                value={accent}
+                onChange={(e) => setAccent(e.target.value)}
+                className="h-8 w-10 cursor-pointer rounded border bg-background"
+              />
+            </label>
+            <span className="ml-auto font-mono text-xs text-muted-foreground">{accent}</span>
+          </div>
+        </div>
+
+        {/* Terms + footer note */}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Payment terms line</Label>
+            <Textarea
+              rows={2}
+              value={paymentTerms}
+              onChange={(e) => setPaymentTerms(e.target.value)}
+              placeholder="e.g. Payment due within 14 days · Bank transfer details on request"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Footer note</Label>
+            <Textarea
+              rows={2}
+              value={footerNote}
+              onChange={(e) => setFooterNote(e.target.value)}
+              placeholder="e.g. Thank you for choosing Bright Smile Dental"
+            />
+            <p className="text-xs text-muted-foreground">Empty = the standard thank-you line with clinic contact.</p>
+          </div>
+        </div>
+
+        {/* Payment history visibility */}
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={showPayments}
+            onChange={(e) => setShowPayments(e.target.checked)}
+            className="h-4 w-4 rounded border-input accent-primary"
+          />
+          Show payment history on the invoice
+        </label>
+
+        <div className="flex items-center gap-3">
+          <Button type="submit" disabled={busy}>
+            Save invoice style
+          </Button>
+          {savedAt && <span className="text-xs text-emerald-700">Saved ✓</span>}
+        </div>
+      </form>
+
+      {/* Full-size live preview of the CURRENT form values (not just saved). */}
+      {loaded && (
+        <div className="rounded-lg border p-3">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">Live preview</p>
+          <div className="max-h-[600px] overflow-auto rounded bg-muted/40 p-4">
+            <div className="mx-auto w-fit origin-top shadow-lg" style={{ transform: "scale(0.72)" }}>
+              <InvoiceSheet data={sample} />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Membership plans (Settings) ───────────────────────────────────
+
+function MembershipPlansTab() {
+  const app = useApp();
+  const [plans, setPlans] = useState<MembershipPlan[]>([]);
+  const [editing, setEditing] = useState<MembershipPlan | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [form, setForm] = useState({ name: "", monthly_fee: "", discount_percent: "", benefits: "" });
+
+  const load = async () => {
+    try {
+      const data = await api<{ plans: MembershipPlan[] }>("GET", "/api/membership-plans");
+      setPlans(data.plans);
+    } catch (err) {
+      app.setError((err as Error).message);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const openNew = () => {
+    setForm({ name: "", monthly_fee: "", discount_percent: "", benefits: "" });
+    setCreating(true);
+    setEditing(null);
+  };
+
+  const openEdit = (p: MembershipPlan) => {
+    setForm({
+      name: p.name,
+      monthly_fee: String(p.monthly_fee),
+      discount_percent: String(p.discount_percent),
+      benefits: p.benefits ?? "",
+    });
+    setEditing(p);
+    setCreating(false);
+  };
+
+  const save = async () => {
+    const body = {
+      name: form.name.trim(),
+      monthly_fee: Number(form.monthly_fee) || 0,
+      discount_percent: Math.min(100, Math.max(0, Number(form.discount_percent) || 0)),
+      benefits: form.benefits.trim() || null,
+    };
+    if (!body.name) return;
+    try {
+      if (editing) {
+        await api("PUT", `/api/membership-plans/${editing.id}`, body);
+        toast.success("Plan updated");
+      } else {
+        await api("POST", "/api/membership-plans", body);
+        toast.success("Plan created");
+      }
+      setEditing(null);
+      setCreating(false);
+      await load();
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
+  const remove = async (p: MembershipPlan) => {
+    if (!confirm(`Delete plan "${p.name}"? Enrolled patients keep their history but the plan disappears from enrollment.`)) return;
+    try {
+      await api("DELETE", `/api/membership-plans/${p.id}`);
+      toast.info("Plan deleted");
+      await load();
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between space-y-0">
+        <CardTitle className="text-base">Membership plans</CardTitle>
+        <Button size="sm" onClick={openNew}><Plus className="mr-1 h-3.5 w-3.5" /> New plan</Button>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {!plans.length ? (
+          <p className="text-sm text-muted-foreground">
+            No plans yet. An in-house membership plan gives enrolled patients a standing discount (e.g. "Wellness Plan — $25/mo, 15% off all treatment").
+          </p>
+        ) : (
+          plans.map((p) => (
+            <div key={p.id} className="flex items-start justify-between gap-3 rounded-lg border p-3">
+              <div className="min-w-0">
+                <div className="font-medium">
+                  {p.name}
+                  {!p.active && <span className="ml-2 text-xs text-muted-foreground">(inactive)</span>}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  ${p.monthly_fee}/month · {p.discount_percent}% off · {p.member_count ?? 0} active member{(p.member_count ?? 0) === 1 ? "" : "s"}
+                </div>
+                {p.benefits && <p className="mt-1 text-xs text-muted-foreground">{p.benefits}</p>}
+              </div>
+              <div className="flex shrink-0 gap-1">
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(p)}><Pencil className="h-3.5 w-3.5" /></Button>
+                <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => remove(p)}><Trash2 className="h-3.5 w-3.5" /></Button>
+              </div>
+            </div>
+          ))
+        )}
+
+        {(creating || editing) && (
+          <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-1.5 sm:col-span-3">
+                <Label>Plan name</Label>
+                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Wellness Plan" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Monthly fee ($)</Label>
+                <Input type="number" min="0" step="0.01" value={form.monthly_fee} onChange={(e) => setForm({ ...form, monthly_fee: e.target.value })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Discount (%)</Label>
+                <Input type="number" min="0" max="100" value={form.discount_percent} onChange={(e) => setForm({ ...form, discount_percent: e.target.value })} />
+              </div>
+              <div className="space-y-1.5 sm:col-span-3">
+                <Label>Benefits shown to patients (optional)</Label>
+                <Textarea rows={2} value={form.benefits} onChange={(e) => setForm({ ...form, benefits: e.target.value })} placeholder="2 free cleanings per year, all x-rays included, 15% off other treatment" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => { setCreating(false); setEditing(null); }}>Cancel</Button>
+              <Button size="sm" onClick={save} disabled={!form.name.trim()}>{editing ? "Save changes" : "Create plan"}</Button>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Consent form templates (Settings) ─────────────────────────────
+
+function ConsentTemplatesTab() {
+  const app = useApp();
+  const [templates, setTemplates] = useState<ConsentTemplate[]>([]);
+  const [editing, setEditing] = useState<ConsentTemplate | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [form, setForm] = useState({ title: "", body: "", requires_guardian: false });
+
+  const load = async () => {
+    try {
+      const data = await api<{ templates: ConsentTemplate[] }>("GET", "/api/consent-templates");
+      setTemplates(data.templates);
+    } catch (err) {
+      app.setError((err as Error).message);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const openNew = () => {
+    setForm({ title: "", body: "", requires_guardian: false });
+    setCreating(true);
+    setEditing(null);
+  };
+
+  const openEdit = (t: ConsentTemplate) => {
+    setForm({ title: t.title, body: t.body, requires_guardian: !!t.requires_guardian });
+    setEditing(t);
+    setCreating(false);
+  };
+
+  const save = async () => {
+    const body = { title: form.title.trim(), body: form.body, requires_guardian: form.requires_guardian };
+    if (!body.title || !body.body.trim()) return;
+    try {
+      if (editing) {
+        await api("PUT", `/api/consent-templates/${editing.id}`, body);
+        toast.success("Template updated");
+      } else {
+        await api("POST", "/api/consent-templates", body);
+        toast.success("Template created");
+      }
+      setEditing(null);
+      setCreating(false);
+      await load();
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
+  const remove = async (t: ConsentTemplate) => {
+    if (!confirm(`Delete template "${t.title}"? Signed forms already on record are kept.`)) return;
+    try {
+      await api("DELETE", `/api/consent-templates/${t.id}`);
+      toast.info("Template deleted");
+      await load();
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between space-y-0">
+        <CardTitle className="text-base">Consent form templates</CardTitle>
+        <Button size="sm" onClick={openNew}><Plus className="mr-1 h-3.5 w-3.5" /> New template</Button>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {!templates.length ? (
+          <p className="text-sm text-muted-foreground">
+            No templates yet. Create reusable forms (anesthesia consent, extraction consent, HIPAA acknowledgment…) that get signed on a tablet at check-in.
+          </p>
+        ) : (
+          templates.map((t) => (
+            <div key={t.id} className="flex items-start justify-between gap-3 rounded-lg border p-3">
+              <div className="min-w-0">
+                <div className="font-medium">
+                  {t.title}
+                  {t.requires_guardian ? <span className="ml-2 text-xs text-muted-foreground">(guardian required)</span> : null}
+                  {!t.active && <span className="ml-2 text-xs text-muted-foreground">(inactive)</span>}
+                </div>
+                <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{t.body}</p>
+              </div>
+              <div className="flex shrink-0 gap-1">
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(t)}><Pencil className="h-3.5 w-3.5" /></Button>
+                <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => remove(t)}><Trash2 className="h-3.5 w-3.5" /></Button>
+              </div>
+            </div>
+          ))
+        )}
+
+        {(creating || editing) && (
+          <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+            <div className="space-y-1.5">
+              <Label>Title</Label>
+              <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Local anesthesia consent" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Form text</Label>
+              <Textarea rows={8} value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} placeholder="I understand that… risks include…" />
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={form.requires_guardian}
+                onChange={(e) => setForm({ ...form, requires_guardian: e.target.checked })}
+                className="h-4 w-4 rounded border-input"
+              />
+              Requires a parent/guardian signature
+            </label>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => { setCreating(false); setEditing(null); }}>Cancel</Button>
+              <Button size="sm" onClick={save} disabled={!form.title.trim() || !form.body.trim()}>{editing ? "Save changes" : "Create template"}</Button>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
 }

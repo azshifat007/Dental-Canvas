@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Copy, Eye, FileText, Plus, Printer, Trash2 } from "lucide-react";
 import { api } from "@/api";
 import { useApp } from "@/context";
+import { toast } from "@/components/ui/toast";
 import type {
   Patient,
   PatientImage,
@@ -88,7 +89,9 @@ export function PrescriptionsTab({
     try {
       await api("DELETE", `/api/prescriptions/${id}`);
       setList((prev) => prev.filter((p) => p.id !== id));
+      toast.success("Prescription deleted");
     } catch (err) {
+      toast.error((err as Error).message);
       app.setError((err as Error).message);
     }
   }
@@ -469,9 +472,15 @@ export function PrescriptionDialog({
         isEdit && !duplicateOf
           ? await api<{ prescription: Prescription }>("PUT", `/api/prescriptions/${prescription!.id}`, body)
           : await api<{ prescription: Prescription }>("POST", "/api/prescriptions", body);
+      toast.success(
+        isEdit && !duplicateOf
+          ? "Prescription updated"
+          : `Prescription issued with ${valid.length} medication${valid.length === 1 ? "" : "s"}`,
+      );
       onSaved();
       if (thenPrint) onOpenPrint(res.prescription.id);
     } catch (err) {
+      toast.error((err as Error).message);
       app.setError((err as Error).message);
     } finally {
       setSaving(false);

@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Banknote, Plus, Printer, Receipt, Trash2, X } from "lucide-react";
+import { Banknote, CalendarClock, Plus, Printer, Receipt, Trash2, X } from "lucide-react";
 import { api } from "@/api";
 import { useApp } from "@/context";
+import { toast } from "@/components/ui/toast";
 import type { Invoice, InvoiceItem, InvoicePayment, PaymentMethod, TreatmentType } from "@/types";
+import { PaymentPlanDialog } from "./payment-plan-dialog";
 import { cn, formatDate, formatTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -54,6 +56,7 @@ export function Billing({
   const [loading, setLoading] = useState(true);
   const [itemsFor, setItemsFor] = useState<Invoice | null>(null); // line-item editor
   const [payFor, setPayFor] = useState<Invoice | null>(null); // payment dialog
+  const [planFor, setPlanFor] = useState<Invoice | null>(null); // installment plan dialog
 
   const reload = async () => {
     try {
@@ -103,8 +106,10 @@ export function Billing({
       setItemsDesc("");
       setItemsQty("1");
       setItemsPrice("");
+      toast.success(`Invoice #${created.invoice.id} created`);
       await reload();
     } catch (err) {
+      toast.error((err as Error).message);
       app.setError((err as Error).message);
     }
   }
@@ -118,7 +123,9 @@ export function Billing({
     try {
       await api("DELETE", `/api/invoices/${id}`);
       setInvoices((prev) => prev.filter((i) => i.id !== id));
+      toast.success(`Invoice #${id} deleted`);
     } catch (err) {
+      toast.error((err as Error).message);
       app.setError((err as Error).message);
     }
   }
@@ -190,9 +197,14 @@ export function Billing({
                       <td className="px-3 py-2">
                         <div className="flex justify-end gap-1">
                           {inv.status !== "void" && (inv.balance ?? inv.total - inv.amount_paid) > 0 && (
-                            <Button size="sm" variant="outline" onClick={() => setPayFor(inv)}>
-                              <Banknote className="h-4 w-4" /> Pay
-                            </Button>
+                            <>
+                              <Button size="sm" variant="outline" onClick={() => setPayFor(inv)}>
+                                <Banknote className="h-4 w-4" /> Pay
+                              </Button>
+                              <Button size="icon" variant="ghost" title="Payment plan (installments)" onClick={() => setPlanFor(inv)}>
+                                <CalendarClock className="h-4 w-4" />
+                              </Button>
+                            </>
                           )}
                           <Button size="icon" variant="ghost" title="Edit line items" onClick={() => setItemsFor(inv)}>
                             <Receipt className="h-4 w-4" />
@@ -235,6 +247,15 @@ export function Billing({
           onClose={() => setPayFor(null)}
           onSaved={async () => {
             setPayFor(null);
+            await reload();
+          }}
+        />
+      )}
+      {planFor && (
+        <PaymentPlanDialog
+          invoice={planFor}
+          onClose={() => setPlanFor(null)}
+          onChanged={async () => {
             await reload();
           }}
         />
@@ -429,8 +450,10 @@ function PaymentDialog({
     setBusy(true);
     try {
       await api("POST", `/api/invoices/${invoice.id}/payments`, { amount: amt, method });
+      toast.success(`Payment of ${amt.toLocaleString(undefined, { style: "currency", currency: "USD" })} recorded`);
       onSaved();
     } catch (err) {
+      toast.error((err as Error).message);
       app.setError((err as Error).message);
     } finally {
       setBusy(false);

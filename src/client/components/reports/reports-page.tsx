@@ -74,6 +74,38 @@ export function ReportsPage() {
             </CardContent>
           </Card>
 
+          {/* Case acceptance — the ADA-benchmarked treatment funnel */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Case acceptance (MTD)</CardTitle>
+              <p className="text-xs text-muted-foreground">Treatment plan items presented this month — the industry benchmark is 75–80%</p>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {data.case_acceptance.presented === 0 ? (
+                <p className="text-sm text-muted-foreground">No treatment plan items presented yet this month.</p>
+              ) : (
+                <>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-bold tracking-tight">{data.case_acceptance.rate}%</span>
+                    <span
+                      className={cn(
+                        "rounded-full px-2 py-0.5 text-xs font-medium",
+                        (data.case_acceptance.rate ?? 0) >= 75
+                          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
+                          : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200",
+                    )}
+                    >
+                      {(data.case_acceptance.rate ?? 0) >= 75 ? "at benchmark" : "below benchmark"}
+                    </span>
+                  </div>
+                  <Bar label="Accepted" count={data.case_acceptance.accepted} total={data.case_acceptance.presented} pct={Math.round((data.case_acceptance.accepted / data.case_acceptance.presented) * 100)} tone="emerald" />
+                  <Bar label="Completed (delivered)" count={data.case_acceptance.completed} total={data.case_acceptance.presented} pct={Math.round((data.case_acceptance.completed / data.case_acceptance.presented) * 100)} tone="sky" />
+                  <Bar label="Declined" count={data.case_acceptance.declined} total={data.case_acceptance.presented} pct={Math.round((data.case_acceptance.declined / data.case_acceptance.presented) * 100)} tone="rose" />
+                </>
+              )}
+            </CardContent>
+          </Card>
+
           {/* Operational alerts */}
           <Card>
             <CardHeader>
@@ -86,6 +118,31 @@ export function ReportsPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Production by provider */}
+        {data.by_provider.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Production by provider (MTD)</CardTitle>
+              <p className="text-xs text-muted-foreground">Invoices attributed to the appointment that generated them</p>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {data.by_provider.map((p, i) => {
+                const max = data.by_provider[0].production || 1;
+                return (
+                  <Bar
+                    key={p.name}
+                    label={`${p.name} · $${p.production.toFixed(0)} prod / $${p.collections.toFixed(0)} collected`}
+                    count={p.visits}
+                    total={max}
+                    pct={Math.round((p.production / max) * 100)}
+                    tone={i === 0 ? "violet" : "sky"}
+                  />
+                );
+              })}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Aged receivables */}
         <Card>

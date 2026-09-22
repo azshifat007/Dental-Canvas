@@ -223,13 +223,13 @@ async function pruneSnapshots(keep: number): Promise<number> {
 /**
  * Create a snapshot row. `kind`/`trigger` describe why it exists; the payload
  * is the same portable format used for file exports, so any snapshot can be
- * downloaded or restored later.
+ * downloaded, restored later, or pushed to Google Drive by the caller.
  */
 export async function createSnapshot(
   kind: "auto" | "manual",
   trigger: "timer" | "user" | "pre-import" | "pre-restore",
   keep: number,
-): Promise<{ snapshot: BackupSummary; pruned: number }> {
+): Promise<{ snapshot: BackupSummary; pruned: number; payload: BackupPayload }> {
   const payload = await dumpAllData();
   const json = JSON.stringify(payload);
   const counts = tableRowCounts(payload);
@@ -243,13 +243,11 @@ export async function createSnapshot(
     "SELECT id, kind, trigger, table_counts, size_bytes, created_at FROM backups WHERE id = ?",
     [result.lastInsertRowid],
   );
-  return {
-    snapshot: {
-      ...row,
-      table_counts: row?.table_counts ? JSON.parse(row.table_counts as unknown as string) : null,
-    } as BackupSummary,
-    pruned,
-  };
+  const snapshot = {
+    ...row,
+    table_counts: row?.table_counts ? JSON.parse(row.table_counts as unknown as string) : null,
+  } as BackupSummary;
+  return { snapshot, pruned, payload };
 }
 
 export async function listSnapshots(limit = 50): Promise<BackupSummary[]> {

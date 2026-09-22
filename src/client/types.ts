@@ -148,6 +148,7 @@ export interface Patient {
 
 export type AppointmentStatus =
   | "scheduled"
+  | "confirmed"
   | "arrived"
   | "in_chair"
   | "completed"
@@ -169,6 +170,8 @@ export interface Appointment {
   title: string | null;
   notes: string | null;
   created_at: string;
+  checked_in_at?: string | null;
+  review_requested_at?: string | null;
   // Joined fields
   patient_first_name?: string | null;
   patient_last_name?: string | null;
@@ -291,6 +294,60 @@ export interface WaitingListEntry {
 
 export type InsuranceRank = "primary" | "secondary" | "tertiary";
 
+// ── In-house membership plans ─────────────────────────────────
+
+export interface MembershipPlan {
+  id: number;
+  name: string;
+  monthly_fee: number;
+  annual_fee: number | null;
+  discount_percent: number;
+  benefits: string | null;
+  active: number | boolean;
+  member_count?: number;
+  created_at: string;
+}
+
+export interface PatientMembership {
+  id: number;
+  patient_id: number;
+  plan_id: number;
+  start_date: string;
+  end_date: string | null;
+  status: "active" | "cancelled" | "expired";
+  last_billed_at: string | null;
+  notes: string | null;
+  created_at: string;
+  plan_name?: string;
+  monthly_fee?: number;
+  annual_fee?: number | null;
+  discount_percent?: number;
+  benefits?: string | null;
+}
+
+// ── Digital consent forms ─────────────────────────────────────
+
+export interface ConsentTemplate {
+  id: number;
+  title: string;
+  body: string;
+  requires_guardian: number | boolean;
+  active: number | boolean;
+  created_at: string;
+}
+
+export interface ConsentSignature {
+  id: number;
+  template_id: number;
+  patient_id: number;
+  appointment_id: number | null;
+  signer_name: string;
+  signer_role: "patient" | "guardian";
+  signature_data: string;
+  signed_at: string;
+  template_title?: string;
+}
+
 export interface InsurancePlan {
   id: number;
   patient_id: number;
@@ -351,6 +408,92 @@ export interface ReportsSummary {
   aged_receivables: Record<"0-30" | "31-60" | "61-90" | "90+", number>;
   overdue_lab_cases: number;
   waiting_list_count: number;
+  case_acceptance: {
+    presented: number;
+    accepted: number;
+    completed: number;
+    declined: number;
+    rate: number | null;
+  };
+  by_provider: { name: string; production: number; collections: number; visits: number }[];
+}
+
+/** A patient with accepted treatment but no upcoming appointment. */
+export interface UnscheduledTreatmentRow {
+  item_id: number;
+  patient_id: number;
+  tooth: string | null;
+  fee: number;
+  status: string;
+  created_at: string;
+  first_name: string | null;
+  last_name: string | null;
+  phone: string | null;
+  email: string | null;
+  treatment_name: string | null;
+  next_appt: string | null;
+}
+
+/** A patient who hasn't visited in the dormant window. */
+export interface DormantPatientRow {
+  id: number;
+  first_name: string | null;
+  last_name: string | null;
+  phone: string | null;
+  email: string | null;
+  last_visit: string | null;
+  total_spent: number;
+}
+
+export interface FollowUpsResponse {
+  unscheduled_treatment: UnscheduledTreatmentRow[];
+  dormant_patients: DormantPatientRow[];
+  dormant_months: number;
+}
+
+/** A scheduled appointment upcoming within the reminder window. */
+export interface ReminderRow {
+  id: number;
+  patient_id: number | null;
+  start_time: string;
+  status: string;
+  first_name: string | null;
+  last_name: string | null;
+  phone: string | null;
+  email: string | null;
+  treatment_name: string | null;
+  operatory_name: string | null;
+  practitioner_name: string | null;
+  reminded_at: string | null;
+}
+
+/** An unpaid installment due now or within the reminder window. */
+export interface PaymentReminderRow {
+  plan_id: number;
+  invoice_id: number;
+  patient_id: number;
+  installment_n: number;
+  due_date: string;
+  amount: number;
+  days_until_due: number;
+  overdue: boolean;
+  balance: number;
+  patient_name: string;
+  phone: string | null;
+  payment_plan_reminded_at: string | null;
+}
+
+/** A completed appointment whose patient hasn't been asked for a review yet. */
+export interface ReviewRequestRow {
+  id: number;
+  patient_id: number | null;
+  end_time: string;
+  first_name: string | null;
+  last_name: string | null;
+  phone: string | null;
+  treatment_name: string | null;
+  practitioner_name: string | null;
+  review_requested_at: string | null;
 }
 
 export type ToMakeSource = "reception" | "patient" | "system";
