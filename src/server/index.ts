@@ -4085,12 +4085,16 @@ app.put("/api/image-file", async (c) => {
 /** Serve a blob stored in the database (same origin — safe for print/Pdf). */
 app.get("/api/image-file", async (c) => {
   const key = c.req.query("key") ?? "";
-  const row = await get<{ mime_type: string; data: ArrayBuffer }>(
+  const row = await get<{ mime_type: string; data: ArrayBuffer | number[] }>(
     "SELECT mime_type, data FROM patient_image_blobs WHERE file_key = ?",
     [key],
   );
   if (!row) return c.json({ error: "Not found" }, 404);
-  return new Response(row.data as BodyInit, {
+  // Different runtimes materialize BLOB columns differently: production D1
+  // returns an ArrayBuffer, Miniflare (tests / offline dev) returns a plain
+  // number[]. Normalize both to a real byte body.
+  const bytes = row.data instanceof ArrayBuffer ? new Uint8Array(row.data) : Uint8Array.from(row.data);
+  return new Response(bytes as BodyInit, {
     headers: {
       "Content-Type": row.mime_type,
       "Cache-Control": "private, max-age=3600",

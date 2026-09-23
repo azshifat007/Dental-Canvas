@@ -1,7 +1,7 @@
 {
   "name": "dental-canvas",
   "description": "Dental Canvas - Chamber Management System",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
     "db:migrate": "wrangler d1 execute dental-canvas-db --local --file=src/server/schema.sql",
-    "build": "vite build",
+    "build": "vite build && vite build --mode sw",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
@@ -37,6 +37,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-odontogram": "^0.5.5",
+    "sql.js": "^1.14.2",
     "tailwind-merge": "^2.2.0",
     "zod": "^3.24.0"
   },
