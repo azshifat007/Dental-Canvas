@@ -23,6 +23,17 @@ export function isOfflineReady(): boolean {
   return offlineReady;
 }
 
+/**
+ * Ask the service worker to persist any pending DB writes right now. Called
+ * from main.tsx on pagehide/visibilitychange so a hard kill (Alt+F4, Windows
+ * shutdown) can't lose the last 400ms of writes that the debounced saver
+ * hasn't flushed yet. Fire-and-forget safe: if the SW isn't there yet, or is
+ * gone with the page, nothing can be done anyway.
+ */
+export function flushDatabase(): void {
+  navigator.serviceWorker?.controller?.postMessage("dental-canvas:flush-db");
+}
+
 export async function activateOfflineMode(): Promise<void> {
   if (!isTauriDesktop() || !("serviceWorker" in navigator)) return;
 
@@ -53,10 +64,28 @@ export async function activateOfflineMode(): Promise<void> {
     }
     throw new Error("Offline server did not become ready within 30s");
   } catch (err) {
-    // Surface a clear failure rather than a blank screen: the app shell will
-    // show the message through the offline-gate below.
+    // Surface a clear failure rather than a blank screen: main.tsx renders
+    // the diagnostic screen with a Retry button from this message.
     (window as unknown as { __OFFLINE_ERROR__?: string }).__OFFLINE_ERROR__ =
       (err as Error).message;
     throw err;
   }
+}
+
+/**
+ * Watch for a newer service worker taking over (an app update installed
+ * while this window is open) and reload once so the UI matches the worker.
+ * `skipWaiting` + `clients.claim` in the SW make the takeover instant; the
+ * reload here just replaces the old shell assets with the new ones.
+ */
+export function watchForUpdates(): void {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    // Only reload if this page was already controlled — the first claim on a
+    // fresh boot is our own worker, and reloading would loop.
+    if (sessionStorage.getItem("dental-canvas:had-controller") === "1") {
+      window.location.reload();
+    }
+    sessionStorage.setItem("dental-canvas:had-controller", "1");
+  });
 }

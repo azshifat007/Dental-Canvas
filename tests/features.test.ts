@@ -39,8 +39,11 @@ describe("birthday board", () => {
     const { patientId } = await seedFixtures();
     // Bella was born 1990-06-15. Set the query window around today, then
     // instead of faking the clock, insert a patient whose birthday is today.
+    // The server derives "today" from SQLite's date('now'), which is UTC —
+    // compute the month/day the same way or the test breaks near midnight in
+    // timezones ahead of UTC (the birthday flips a day early/late).
     const today = new Date();
-    const md = `${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    const md = `${String(today.getUTCMonth() + 1).padStart(2, "0")}-${String(today.getUTCDate()).padStart(2, "0")}`;
     const db = jsonRequest("PUT", `/api/patients/${patientId}`, { date_of_birth: `1985-${md}` });
     await app.request(db.path, db.init, { DB: ctx.db });
 

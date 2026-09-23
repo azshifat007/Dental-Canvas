@@ -3705,9 +3705,8 @@ app.get("/api/dashboard/birthdays", async (c) => {
      ORDER BY substr(date_of_birth, 6, 5)`,
   ).catch(() => []);
 
-  const toMd = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  const windowEnd = new Date(today);
-  windowEnd.setDate(windowEnd.getDate() + days - 1);
+  const toMd = (d: Date) => `${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+  const windowEnd = new Date(today.getTime() + (days - 1) * 86_400_000);
   const startMd = toMd(today);
   const endMd = toMd(windowEnd);
 
@@ -3717,7 +3716,7 @@ app.get("/api/dashboard/birthdays", async (c) => {
     startMd <= endMd ? md >= startMd && md <= endMd : md >= startMd || md <= endMd;
   const inMonth = (md: string, m: string) => m === monthStr.slice(5, 7);
 
-  const year = today.getFullYear();
+  const year = today.getUTCFullYear();
   const birthdays = rows
     .filter((r) => {
       const md = (r.date_of_birth ?? "").slice(5, 10);

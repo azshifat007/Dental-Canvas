@@ -31,6 +31,9 @@ const SHELL_CACHE = "dental-canvas-shell-v1";
 let serverFetch: ((req: Request) => Promise<Response> | Response) | null = null;
 let serverReady: Promise<void> | null = null;
 
+/** The live adapter, kept so the shutdown flush can reach `flush()`. */
+let liveDb: { flush(): Promise<void> } | null = null;
+
 async function initServer(): Promise<void> {
   const d1 = await createOfflineD1({
     schemaSql,
@@ -39,6 +42,7 @@ async function initServer(): Promise<void> {
       self.__OFFLINE_READY__ = true;
     },
   });
+  liveDb = d1;
 
   // Import the real server (module singletons initialize against our binding).
   const mod = await import("../../server/index");
@@ -74,9 +78,26 @@ self.addEventListener("activate", (event: ExtendableEvent) => {
       }
       await self.clients.claim();
       serverReady ??= initServer();
-      await serverReady;
+      // initServer failure must not brick the worker: leave serverReady
+      // rejected-cached so /api returns the 503 diagnostic and the page can
+      // show it, but the shell still serves.
+      await serverReady.catch(() => undefined);
     })(),
   );
+});
+
+// Shutdown flush: the page asks us to persist pending writes when it's being
+// hidden/closed (see activate.ts). Must complete before the worker dies.
+self.addEventListener("message", (event: ExtendableMessageEvent) => {
+  if (event.data === "dental-canvas:flush-db") {
+    event.waitUntil(
+      (async () => {
+        serverReady ??= initServer();
+        await serverReady.catch(() => undefined);
+        await liveDb?.flush().catch(() => undefined);
+      })(),
+    );
+  }
 });
 
 self.addEventListener("fetch", (event: FetchEvent) => {

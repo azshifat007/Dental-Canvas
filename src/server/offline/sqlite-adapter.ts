@@ -49,6 +49,12 @@ export interface D1LikeDatabase {
   prepare(sql: string): D1PreparedStatement;
   exec(sql: string): Promise<D1Result>;
   batch(stmts: D1PreparedStatement[]): Promise<D1Result[]>;
+  /**
+   * Flush any pending debounced persistence immediately. Called by the shell
+   * when the app is being hidden/closed so a hard kill can't lose the last
+   * writes. Resolves once the image (if any) is in IndexedDB.
+   */
+  flush(): Promise<void>;
 }
 
 // ── Constants ──────────────────────────────────────────────────────
@@ -245,6 +251,23 @@ export async function createOfflineD1(opts: OfflineAdapterOptions): Promise<D1Li
     }, PERSIST_DEBOUNCE_MS);
   }
 
+  /** Write the DB image now if a persist is pending (or in flight). */
+  async function flush(): Promise<void> {
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+      persistChain = persistChain.then(async () => {
+        try {
+          await store.save(db.export());
+          opts.onSaved?.();
+        } catch {
+          /* best-effort — see schedulePersist */
+        }
+      });
+    }
+    await persistChain;
+  }
+
   /** Wrap every mutating statement with a persistence schedule. */
   const MUTATION_RE = /^\s*(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER|VACUUM|REINDEX)/i;
 
@@ -354,6 +377,7 @@ export async function createOfflineD1(opts: OfflineAdapterOptions): Promise<D1Li
     async withSession<T>(_cb: (session: unknown) => Promise<T>): Promise<T> {
       throw new Error("Sessions are not supported in offline mode");
     },
+    flush,
   } as unknown as D1LikeDatabase;
 
   return d1;

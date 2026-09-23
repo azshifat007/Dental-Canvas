@@ -4,7 +4,9 @@ import {
   ArrowRight,
   Building2,
   Check,
+  FolderSync,
   Loader2,
+  ShieldCheck,
   Sparkles,
   Stethoscope,
 } from "lucide-react";
@@ -14,6 +16,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import type { ProfileSettings } from "@/hooks/use-app-state";
+import {
+  chooseDesktopBackupFolder,
+  isDesktopBackupSupported,
+} from "@/offline/desktop-backup";
 
 /**
  * First-run setup wizard (desktop only).
@@ -21,7 +27,7 @@ import type { ProfileSettings } from "@/hooks/use-app-state";
  * A fresh offline install starts with an empty profile — no doctor name, no
  * clinic name — which the rest of the app (dashboard greeting, prescription
  * letterheads, invoices) depends on. This wizard collects the essentials in
- * two friendly steps before the app is usable, writing through the same
+ * three friendly steps before the app is usable, writing through the same
  * settings API that Settings → Profile uses, so everything it fills in is
  * immediately editable there later.
  *
@@ -42,13 +48,24 @@ interface Draft {
 const STEPS = [
   { id: 1, title: "The doctor", icon: Stethoscope },
   { id: 2, title: "The clinic", icon: Building2 },
+  // Only rendered when folder backup is supported (desktop WebView2); the
+  // progress row filters it out otherwise.
+  { id: 3, title: "Safety net", icon: FolderSync },
 ] as const;
 
 export function SetupWizard({ onDone }: { onDone: () => void }) {
   const { updateProfile } = useApp();
-  const [step, setStep] = useState<1 | 2>(1);
+  const backupSupported = isDesktopBackupSupported();
+  const steps = backupSupported ? STEPS : STEPS.filter((s) => s.id !== 3);
+  const lastStep = steps[steps.length - 1].id;
+  const [step, setStep] = useState<1 | 2 | 3>(1);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Step 3 state: picking the folder writes the first backup immediately, so
+  // the button doubles as the action; the result feeds a small status line.
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupMsg, setBackupMsg] = useState<string | null>(null);
+  const [backupOk, setBackupOk] = useState(false);
   const [draft, setDraft] = useState<Draft>({
     doctor_name: "",
     doctor_specialty: "Dentist",
@@ -64,6 +81,22 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
 
   const doctorOk = draft.doctor_name.trim().length > 0;
   const clinicOk = draft.clinic_name.trim().length > 0;
+
+  async function pickBackupFolder() {
+    setBackupBusy(true);
+    setError(null);
+    try {
+      const res = await chooseDesktopBackupFolder();
+      if (res.ok) {
+        setBackupOk(true);
+        setBackupMsg(`Backups on — "${res.folderName}" (first backup written).`);
+      } else if (res.error !== "cancelled") {
+        setBackupMsg(res.error);
+      }
+    } finally {
+      setBackupBusy(false);
+    }
+  }
 
   async function finish() {
     setSaving(true);
@@ -96,12 +129,13 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
             Let&apos;s set up your practice
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Two quick steps — you can change everything later in Settings →
-            Profile.
+            {backupSupported
+              ? "Three quick steps — everything can be changed later in Settings."
+              : "Two quick steps — you can change everything later in Settings →\n            Profile."}
           </p>
           {/* Progress dots */}
           <div className="mt-5 flex items-center gap-2">
-            {STEPS.map((s, i) => (
+            {steps.map((s, i) => (
               <div key={s.id} className="flex items-center gap-2">
                 <div
                   className={cn(
@@ -227,6 +261,49 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
             </>
           )}
 
+          {step === 3 && (
+            <div className="space-y-4">
+              <div className="flex items-start gap-3 rounded-lg border bg-muted/30 p-4">
+                <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
+                <div className="min-w-0 text-sm">
+                  <p className="font-medium">Keep a safety copy of your data</p>
+                  <p className="mt-1 text-muted-foreground">
+                    Your data lives on this computer. Pick a folder (a USB
+                    drive or a synced folder like Google Drive works great) and
+                    Dental Canvas writes a full backup file there
+                    <span className="font-medium"> right now</span>, then
+                    automatically once a week — the last 12 are kept.
+                  </p>
+                </div>
+              </div>
+              {backupOk ? (
+                <p className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200">
+                  <Check className="h-4 w-4 shrink-0" />
+                  {backupMsg}
+                </p>
+              ) : (
+                <Button onClick={pickBackupFolder} disabled={backupBusy} className="w-full">
+                  {backupBusy ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" /> Waiting for folder…
+                    </>
+                  ) : (
+                    <>
+                      <FolderSync className="h-4 w-4" /> Choose backup folder…
+                    </>
+                  )}
+                </Button>
+              )}
+              {!backupOk && backupMsg && (
+                <p className="text-xs text-rose-600">{backupMsg}</p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Optional — you can set this up (daily or Drive sync too) anytime
+                in Settings → Backup.
+              </p>
+            </div>
+          )}
+
           {error && (
             <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800 dark:border-rose-800 dark:bg-rose-950/60 dark:text-rose-200">
               {error}
@@ -238,7 +315,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
         <div className="flex items-center justify-between border-t px-8 py-4">
           <Button
             variant="ghost"
-            onClick={() => (step === 1 ? onDone() : setStep(1))}
+            onClick={() => (step === 1 ? onDone() : setStep((step - 1) as 1 | 2))}
             disabled={saving}
           >
             {step === 1 ? (
@@ -249,8 +326,8 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
               </>
             )}
           </Button>
-          {step === 1 ? (
-            <Button onClick={() => setStep(2)} disabled={!doctorOk || saving}>
+          {step < lastStep ? (
+            <Button onClick={() => setStep((step + 1) as 2 | 3)} disabled={!doctorOk || saving}>
               Next <ArrowRight className="h-4 w-4" />
             </Button>
           ) : (
