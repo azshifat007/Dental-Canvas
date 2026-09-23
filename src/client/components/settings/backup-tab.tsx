@@ -4,6 +4,7 @@ import {
   FileSpreadsheet,
   HardDriveDownload,
   HardDriveUpload,
+  FolderSync,
   Loader2,
   PlugZap,
   RotateCcw,
@@ -15,6 +16,15 @@ import {
 import { api } from "@/api";
 import { useApp } from "@/context";
 import { cn } from "@/lib/utils";
+import { isTauriDesktop } from "@/offline/activate";
+import {
+  chooseDesktopBackupFolder,
+  clearDesktopBackupFolder,
+  getDesktopBackupState,
+  regrantDesktopBackupPermission,
+  runDesktopBackup,
+  type DesktopBackupState,
+} from "@/offline/desktop-backup";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -226,6 +236,7 @@ export function BackupTab() {
 
       <PortableCard onDone={reload} setMessage={setMessage} />
       <ScheduleCard />
+      <DesktopFolderCard setMessage={setMessage} />
       <GoogleDriveCard setMessage={setMessage} />
 
       <Card>
@@ -554,6 +565,158 @@ function ScheduleCard() {
           <p className="mt-2 text-xs text-muted-foreground">
             Timer runs while Dental Canvas is open in any tab of this device.
           </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Desktop folder auto-backup (Tauri only) ─────────────────────────
+
+function DesktopFolderCard({ setMessage }: { setMessage: (m: BackupMessage) => void }) {
+  const [state, setState] = useState<DesktopBackupState | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    setState(await getDesktopBackupState());
+  }, []);
+
+  useEffect(() => {
+    if (isTauriDesktop()) void reload();
+  }, [reload]);
+
+  if (!isTauriDesktop()) return null;
+  if (!state) return null; // still loading (desktop only)
+
+  async function pickFolder() {
+    setBusy("pick");
+    setMessage(null);
+    try {
+      const res = await chooseDesktopBackupFolder();
+      if (res.ok) {
+        setMessage({ tone: "ok", text: `Backup folder set to "${res.folderName}" — first backup written (${res.file}).` });
+      } else if (res.error !== "cancelled") {
+        setMessage({ tone: "err", text: res.error });
+      }
+    } finally {
+      setBusy(null);
+      await reload();
+    }
+  }
+
+  async function regrant() {
+    setBusy("regrant");
+    try {
+      const ok = await regrantDesktopBackupPermission();
+      if (ok) {
+        // Permission restored — take a fresh backup right away so the folder
+        // isn't stale while the clinic catches up.
+        const r = await runDesktopBackup();
+        setMessage(
+          r.ok
+            ? { tone: "ok", text: `Access restored — backup written (${r.file}).` }
+            : { tone: "err", text: r.error },
+        );
+      }
+    } finally {
+      setBusy(null);
+      await reload();
+    }
+  }
+
+  async function backupNow() {
+    setBusy("now");
+    setMessage(null);
+    try {
+      const r = await runDesktopBackup();
+      setMessage(
+        r.ok
+          ? { tone: "ok", text: `Backup written to "${state?.folderName}" (${r.file}).` }
+          : { tone: "err", text: r.error },
+      );
+    } finally {
+      setBusy(null);
+      await reload();
+    }
+  }
+
+  async function stop() {
+    if (!confirm(`Stop automatic folder backups and forget "${state?.folderName ?? "the folder"}"?
+
+Existing backup files in the folder are not deleted.`)) return;
+    setBusy("stop");
+    try {
+      await clearDesktopBackupFolder();
+      setMessage({ tone: "ok", text: "Automatic folder backups stopped." });
+    } finally {
+      setBusy(null);
+      await reload();
+    }
+  }
+
+  const fmtDate = (ms: number) =>
+    ms > 0
+      ? new Date(ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+      : "—";
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <FolderSync className="h-4 w-4" />
+          Folder auto-backup (this computer)
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Writes a full portable backup file into a folder on this computer — once when you set it up, then
+          automatically once a week while the app is open. Keeps the last 12 files. Works fully offline.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {!state.supported ? (
+          <p className="text-sm text-muted-foreground">
+            This environment does not support folder access. Update the desktop app to use this feature.
+          </p>
+        ) : state.needsPermission ? (
+          <div className="space-y-2">
+            <p className="text-sm">
+              Access to <span className="font-medium">{state.folderName}</span> was revoked — re-grant it to
+              resume automatic backups.
+            </p>
+            <Button size="sm" onClick={regrant} disabled={busy !== null}>
+              {busy === "regrant" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderSync className="h-4 w-4" />}
+              Re-grant access
+            </Button>
+          </div>
+        ) : !state.active ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button onClick={pickFolder} disabled={busy !== null}>
+              {busy === "pick" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderSync className="h-4 w-4" />}
+              Choose backup folder…
+            </Button>
+            <span className="text-xs text-muted-foreground">A backup is written immediately, then weekly.</span>
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border p-3">
+              <span className="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+              <span className="min-w-0 flex-1 text-sm">
+                Backing up to <span className="font-medium">{state.folderName}</span>
+                <span className="ml-2 text-xs text-muted-foreground">
+                  weekly · next {fmtDate(state.nextRunAt ?? 0)}
+                </span>
+              </span>
+              <Button size="sm" variant="outline" onClick={backupNow} disabled={busy !== null}>
+                {busy === "now" ? <Loader2 className="h-4 w-4 animate-spin" /> : <HardDriveDownload className="h-4 w-4" />}
+                Back up now
+              </Button>
+              <Button size="sm" variant="ghost" onClick={stop} disabled={busy !== null}>
+                Stop
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Last folder backup: {fmtDate(state.lastRunAt)} · restores via "Import from file" above.
+            </p>
+          </>
         )}
       </CardContent>
     </Card>

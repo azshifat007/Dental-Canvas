@@ -8,12 +8,15 @@ import { MobileTopBar, BottomNav } from "./components/mobile-nav";
 import { ErrorBanner } from "./components/error-banner";
 import { Toaster } from "./components/ui/toast";
 import { useAutoBackup } from "./hooks/use-auto-backup";
+import { isTauriDesktop } from "./offline/activate";
+import { startDesktopBackupScheduler } from "./offline/desktop-backup";
 import { useDailyInventoryScan } from "./hooks/use-daily-inventory-scan";
 import { useDailyDigest } from "./hooks/use-daily-digest";
 import { useTheme } from "./hooks/use-theme";
 import { useAccessibility } from "./hooks/use-accessibility";
 import { useBrandAccent } from "./hooks/use-brand-accent";
 import { SearchPalette, useGlobalSearchHotkey } from "./components/search/search-palette";
+import { SetupWizard } from "./components/setup/setup-wizard";
 import { PatientDialog } from "./components/patients/patient-dialog";
 import { PrescriptionPrintView } from "./components/prescriptions/prescription-print-view";
 import { InvoicePrintView } from "./components/patients/invoice-print-view";
@@ -37,8 +40,41 @@ export function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [registerOpen, setRegisterOpen] = useState(false);
 
+  // First-run setup wizard (desktop only): on a fresh offline install the
+  // profile is empty — no doctor name, no clinic name — and the whole app
+  // (dashboard greeting, letterheads, invoices) is built around them. Show a
+  // two-step wizard once; "Skip for now" is remembered so it never nags.
+  const [wizardDone, setWizardDone] = useState(() => {
+    try {
+      return window.localStorage.getItem("dental-canvas:setup-wizard-done") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const showWizard =
+    isTauriDesktop() &&
+    !state.loading &&
+    !wizardDone &&
+    state.profile.doctor_name.trim() === "" &&
+    state.profile.clinic_name.trim() === "";
+  const completeWizard = useCallback(() => {
+    try {
+      window.localStorage.setItem("dental-canvas:setup-wizard-done", "1");
+    } catch {
+      /* private mode — profile will be non-empty anyway, or it re-offers */
+    }
+    setWizardDone(true);
+  }, []);
+
   // Timer-based auto backup — runs app-wide while Dental Canvas is open.
   useAutoBackup(state.backupSchedule);
+
+  // Desktop only: weekly folder auto-backup (first one right after a folder is
+  // picked — "on install"). No-op in the browser.
+  useEffect(() => {
+    if (!isTauriDesktop()) return;
+    return startDesktopBackupScheduler();
+  }, []);
 
   // Once-per-day stock scan — refreshes low-stock/expiry alerts and the
   // dashboard notification panel (serverless: the timer lives in the browser).
@@ -111,6 +147,7 @@ export function App() {
 
   return (
     <AppContext.Provider value={state}>
+      {showWizard && <SetupWizard onDone={completeWizard} />}
       <div className="flex h-screen min-h-0 flex-col md:flex-row overflow-hidden">
         {!isPrintRoute && <MobileTopBar onOpenSearch={openSearch} />}
         <div className="flex min-h-0 flex-1 overflow-hidden">
