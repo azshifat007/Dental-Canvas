@@ -50,8 +50,10 @@ jobs:
           if ($env:GITHUB_REF_NAME -ne "v$version") {
             throw "Release tag must match package.json version (v$version)."
           }
+          # Windows runners check files out with CRLF (core.autocrlf), so
+          # the line-end must tolerate an optional \r or the check false-fails.
           $cargo = Get-Content src-tauri/Cargo.toml -Raw
-          if ($cargo -notmatch ('(?m)^version = "' + [regex]::Escape($version) + '"$')) {
+          if ($cargo -notmatch ('(?m)^version = "' + [regex]::Escape($version) + '"\r?$')) {
             throw 'Cargo.toml version must match package.json.'
           }
 
