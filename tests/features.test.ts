@@ -1078,4 +1078,80 @@ describe("daily worklist digest", () => {
     expect(res.settings.digest_time).toBe("08:15");
     expect(res.settings.digest_recipient).toBe("front@clinic.com");
   });
+
+  it("stores digest_sections and returns them to the client", async () => {
+    const put = await app.request(
+      "/api/settings",
+      { method: "PUT", body: JSON.stringify({ digest_sections: "recalls,installments" }), headers: { "content-type": "application/json" } },
+      { DB: ctx.db },
+    );
+    expect(put.status).toBe(200);
+
+    const res = (await (await app.request("/api/settings", undefined, { DB: ctx.db })).json()) as {
+      settings: Record<string, string>;
+    };
+    expect(res.settings.digest_sections).toBe("recalls,installments");
+
+    // Reset to all sections.
+    await app.request(
+      "/api/settings",
+      { method: "PUT", body: JSON.stringify({ digest_sections: "" }), headers: { "content-type": "application/json" } },
+      { DB: ctx.db },
+    );
+    const after = (await (await app.request("/api/settings", undefined, { DB: ctx.db })).json()) as {
+      settings: Record<string, string>;
+    };
+    expect(after.settings.digest_sections).toBe("");
+  });
+
+  it("builds a digest containing only the enabled sections", async () => {
+    // Talk directly to the handler through the app router by intercepting the
+    // sendEmail fetch — a valid recipient + section config, no real provider.
+    const captured: { subject: string; html: string }[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.startsWith("https://api.resend.com")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { subject: string; html: string };
+        captured.push({ subject: body.subject, html: body.html });
+        return new Response(JSON.stringify({ id: "test-msg" }), { status: 200 });
+      }
+      return realFetch(input as Request, init);
+    }) as typeof fetch;
+
+    try {
+      await app.request(
+        "/api/settings",
+        { method: "PUT", body: JSON.stringify({ email_api_key: "re_test", email_from: "clinic@test.com", digest_recipient: "front@clinic.com", digest_sections: "reminders" }), headers: { "content-type": "application/json" } },
+        { DB: ctx.db },
+      );
+      const res = await app.request("/api/email/worklist-digest", { method: "POST", body: "{}", headers: { "content-type": "application/json" } }, { DB: ctx.db });
+      expect(res.status).toBe(200);
+      const sent = (await res.json()) as { ok: boolean; counts: { reminders: number; recalls: number; installments: number } };
+      expect(sent.ok).toBe(true);
+      expect(sent.counts.recalls).toBe(0);
+      expect(sent.counts.installments).toBe(0);
+      expect(captured).toHaveLength(1);
+      expect(captured[0].subject).not.toMatch(/recall/);
+      expect(captured[0].subject).not.toMatch(/installment/);
+      expect(captured[0].html).not.toMatch(/Hygiene recalls due/);
+      expect(captured[0].html).not.toMatch(/Installments due/);
+
+      // With no filter, all three sections appear again.
+      await app.request(
+        "/api/settings",
+        { method: "PUT", body: JSON.stringify({ digest_sections: "" }), headers: { "content-type": "application/json" } },
+        { DB: ctx.db },
+      );
+      captured.length = 0;
+      const res2 = await app.request("/api/email/worklist-digest", { method: "POST", body: "{}", headers: { "content-type": "application/json" } }, { DB: ctx.db });
+      expect(res2.status).toBe(200);
+      expect(captured).toHaveLength(1);
+      expect(captured[0].html).toMatch(/Appointment reminders/);
+      expect(captured[0].html).toMatch(/Hygiene recalls due/);
+      expect(captured[0].html).toMatch(/Installments due/);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
 });

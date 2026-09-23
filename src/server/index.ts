@@ -956,7 +956,6 @@ app.post("/api/prescriptions/:id/email", async (c) => {
 interface DigestDigestInput {
   to?: string;
 }
-
 /** Shared email-settings loader (Resend key + from address). */
 async function loadEmailSettings(): Promise<{ apiKey: string; from: string; clinicName: string; doctorName: string }> {
   const rows = await query<{ key: string; value: string }>("SELECT key, value FROM settings").catch(() => []);
@@ -984,14 +983,37 @@ async function sendEmail(apiKey: string, from: string, to: string, subject: stri
   return sent.id ?? null;
 }
 
-async function buildDigestHtml(): Promise<{ subject: string; html: string; counts: { reminders: number; recalls: number; installments: number } }> {
+/** The digest's worklist sections, in email order. */
+const DIGEST_SECTIONS = ["reminders", "recalls", "installments"] as const;
+type DigestSection = (typeof DIGEST_SECTIONS)[number];
+
+/**
+ * Parse the digest_sections setting: a comma list of section ids. An empty or
+ * unrecognized value means "all sections" — the pre-selection behavior, so
+ * existing clinics keep their digest untouched after upgrade.
+ */
+function parseDigestSections(raw: string | undefined): DigestSection[] {
+  const wanted = (raw ?? "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter((x): x is DigestSection => (DIGEST_SECTIONS as readonly string[]).includes(x));
+  return wanted.length ? wanted : [...DIGEST_SECTIONS];
+}
+
+async function buildDigestHtml(sections: DigestSection[]): Promise<{ subject: string; html: string; counts: { reminders: number; recalls: number; installments: number } }> {
   const { clinicName, doctorName } = await loadEmailSettings();
   const practiceLabel = clinicName || doctorName || "Dental Canvas";
   const esc = escapeEmailHtml;
   const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 
+  const wantReminders = sections.includes("reminders");
+  const wantRecalls = sections.includes("recalls");
+  const wantInstallments = sections.includes("installments");
+
   const [reminders, recalls, installments] = await Promise.all([
-    query<{ start_time: string; first_name: string | null; last_name: string | null; treatment_name: string | null; practitioner_name: string | null }>(
+    // A disabled section resolves as an empty list without touching the DB.
+    wantReminders
+      ? query<{ start_time: string; first_name: string | null; last_name: string | null; treatment_name: string | null; practitioner_name: string | null }>(
       `SELECT a.start_time, p.first_name, p.last_name, tt.name as treatment_name, pr.name as practitioner_name
        FROM appointments a
        LEFT JOIN patients p ON p.id = a.patient_id
@@ -999,8 +1021,10 @@ async function buildDigestHtml(): Promise<{ subject: string; html: string; count
        LEFT JOIN practitioners pr ON pr.id = a.practitioner_id
        WHERE substr(a.start_time, 1, 10) = date('now', '+1 day') AND a.kind = 'patient' AND a.status = 'scheduled'
        ORDER BY a.start_time LIMIT 50`,
-    ).catch(() => []),
-    query<{ name: string; recall_type: string | null; due_date: string; days_overdue: number }>(
+    ).catch(() => [])
+      : Promise.resolve([] as { start_time: string; first_name: string | null; last_name: string | null; treatment_name: string | null; practitioner_name: string | null }[]),
+    wantRecalls
+      ? query<{ name: string; recall_type: string | null; due_date: string; days_overdue: number }>(
       `SELECT * FROM (
         SELECT atm.id, p.first_name || ' ' || p.last_name AS name,
                tt.name AS recall_type,
@@ -1019,8 +1043,10 @@ async function buildDigestHtml(): Promise<{ subject: string; html: string; count
             atm.due_after, date(atm.created_at)
           ) <= date('now', '+30 days')
       ) ORDER BY due_date ASC LIMIT 50`,
-    ).catch(() => [] as { name: string; recall_type: string | null; due_date: string; days_overdue: number }[]),
-    query<{ patient_name: string; installment_n: number; amount: number; due_date: string; overdue: number; balance: number }>(
+    ).catch(() => [] as { name: string; recall_type: string | null; due_date: string; days_overdue: number }[])
+      : Promise.resolve([] as { name: string; recall_type: string | null; due_date: string; days_overdue: number }[]),
+    wantInstallments
+      ? query<{ patient_name: string; installment_n: number; amount: number; due_date: string; overdue: number; balance: number }>(
       `SELECT * FROM (
         SELECT ipp.id,
                p.first_name || ' ' || p.last_name AS patient_name,
@@ -1035,10 +1061,10 @@ async function buildDigestHtml(): Promise<{ subject: string; html: string; count
         WHERE ipp.active = 1 AND i.status != 'void' AND i.total > i.amount_paid
           AND date(ipp.start_date) <= date('now', '+3 days')
       ) ORDER BY due_date ASC LIMIT 50`,
-    ).catch(() => [] as { patient_name: string; installment_n: number; amount: number; due_date: string; overdue: number; balance: number }[]),
+    ).catch(() => [] as { patient_name: string; installment_n: number; amount: number; due_date: string; overdue: number; balance: number }[])
+      : Promise.resolve([] as { patient_name: string; installment_n: number; amount: number; due_date: string; overdue: number; balance: number }[]),
   ]);
 
-  const dayLabel = new Date(Date.now() + 86400000).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
   const rows = (items: string[]) =>
     items.length === 0
       ? `<li style="color:#9ca3af">Nothing today ✓</li>`
@@ -1055,19 +1081,37 @@ async function buildDigestHtml(): Promise<{ subject: string; html: string; count
     <h3 style="margin:20px 0 6px;font-size:14px;color:${color}">${title}</h3>
     <ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.5">${rows(items)}</ul>`;
 
+  // Only the enabled sections render; disabled ones vanish entirely (not even
+  // a "Nothing today ✓" line — the clinic asked for them out of the email).
+  const sectionBlock = (id: DigestSection, title: string, items: string[], color: string) =>
+    sections.includes(id) ? section(title, items, color) : "";
+
+  // The header summary and subject only mention the sections that appear.
+  const summaryParts: string[] = [];
+  if (sections.includes("reminders")) summaryParts.push(`tomorrow's appointments: ${reminders.length}`);
+  if (sections.includes("recalls")) summaryParts.push(`recalls due (30d): ${recalls.length}`);
+  if (sections.includes("installments")) summaryParts.push(`installments due (3d): ${installments.length}`);
+
+  const subjectParts: string[] = [];
+  if (sections.includes("reminders")) subjectParts.push(`${reminders.length} reminder${reminders.length === 1 ? "" : "s"}`);
+  if (sections.includes("recalls")) subjectParts.push(`${recalls.length} recall${recalls.length === 1 ? "" : "s"}`);
+  if (sections.includes("installments")) subjectParts.push(`${installments.length} installment${installments.length === 1 ? "" : "s"}`);
+
+  const dayLabel = new Date(Date.now() + 86400000).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+
   const html = `
     <div style="font-family:Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;color:#1f2937">
       <h2 style="margin:0 0 2px;color:#166534">${esc(practiceLabel)} — daily worklist</h2>
-      <p style="margin:0 0 4px;color:#6b7280;font-size:13px">Tomorrow's appointments: ${reminders.length} · recalls due (30d): ${recalls.length} · installments due (3d): ${installments.length}</p>
+      <p style="margin:0 0 4px;color:#6b7280;font-size:13px">${esc(summaryParts.join(" · ").replace(/^./, (ch) => ch.toUpperCase()))}</p>
       <p style="margin:0 0 8px;color:#9ca3af;font-size:12px">Sent ${esc(new Date().toLocaleString("en-US"))}</p>
-      ${section(`📅 Appointment reminders — ${dayLabel}`, reminderItems, "#1d4ed8")}
-      ${section("🔁 Hygiene recalls due", recallItems, "#047857")}
-      ${section("💳 Installments due", installmentItems, "#b45309")}
+      ${sectionBlock("reminders", `📅 Appointment reminders — ${dayLabel}`, reminderItems, "#1d4ed8")}
+      ${sectionBlock("recalls", "🔁 Hygiene recalls due", recallItems, "#047857")}
+      ${sectionBlock("installments", "💳 Installments due", installmentItems, "#b45309")}
       <p style="margin:20px 0 0;color:#9ca3af;font-size:11px">Open Dental Canvas → Agenda side panel to work these lists with one-click WhatsApp actions.</p>
     </div>`;
 
   return {
-    subject: `${practiceLabel} daily worklist — ${reminders.length} reminder${reminders.length === 1 ? "" : "s"}, ${recalls.length} recall${recalls.length === 1 ? "" : "s"}, ${installments.length} installment${installments.length === 1 ? "" : "s"}`,
+    subject: `${practiceLabel} daily worklist — ${subjectParts.join(", ")}`,
     html,
     counts: { reminders: reminders.length, recalls: recalls.length, installments: installments.length },
   };
@@ -1095,7 +1139,7 @@ app.post("/api/email/worklist-digest", async (c) => {
   }
 
   try {
-    const { subject, html, counts } = await buildDigestHtml();
+    const { subject, html, counts } = await buildDigestHtml(parseDigestSections(s.digest_sections));
     const providerId = await sendEmail(apiKey, from, to, subject, html);
     await run(
       `INSERT INTO settings (key, value, updated_at) VALUES ('digest_last_sent', datetime('now'), datetime('now'))

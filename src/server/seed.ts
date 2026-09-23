@@ -44,6 +44,9 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   digest_enabled: "",
   digest_time: "07:30",
   digest_recipient: "",
+  // Which worklists appear in the digest: comma list from
+  // reminders,recalls,installments. Empty = all three (backward compatible).
+  digest_sections: "",
 };
 
 /**

@@ -1180,6 +1180,7 @@ function DigestTab() {
   const [enabled, setEnabled] = useState(false);
   const [time, setTime] = useState("07:30");
   const [recipient, setRecipient] = useState("");
+  const [sections, setSections] = useState<Record<string, boolean>>({ reminders: true, recalls: true, installments: true });
   const [lastSent, setLastSent] = useState<string | null>(null);
   const [emailReady, setEmailReady] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1194,6 +1195,13 @@ function DigestTab() {
         setEnabled((data.settings.digest_enabled ?? "") === "1");
         setTime(data.settings.digest_time || "07:30");
         setRecipient(data.settings.digest_recipient ?? "");
+        // Empty/absent = all sections (the default before this existed).
+        const saved = (data.settings.digest_sections ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+        setSections({
+          reminders: saved.length === 0 || saved.includes("reminders"),
+          recalls: saved.length === 0 || saved.includes("recalls"),
+          installments: saved.length === 0 || saved.includes("installments"),
+        });
         setLastSent(data.settings.digest_last_sent || null);
         setEmailReady(Boolean((data.settings.email_api_key ?? "").trim()) && Boolean((data.settings.email_from ?? "").trim()));
       } catch (err) {
@@ -1209,10 +1217,13 @@ function DigestTab() {
     e.preventDefault();
     setBusy(true);
     try {
+      // Store only the enabled sections; all-on stores "" (the default).
+      const wanted = (Object.entries(sections) as [string, boolean][]).filter(([, on]) => on).map(([id]) => id);
       await api("PUT", "/api/settings", {
         digest_enabled: enabled ? "1" : "",
         digest_time: time,
         digest_recipient: recipient.trim(),
+        digest_sections: wanted.length === 3 ? "" : wanted.join(","),
       });
       toast.success("Digest schedule saved");
     } catch (err) {
@@ -1230,7 +1241,11 @@ function DigestTab() {
         "POST", "/api/email/worklist-digest", {},
       );
       const c = res.counts;
-      setSendResult({ ok: true, message: `Sent ✓ — ${c.reminders} reminder${c.reminders === 1 ? "" : "s"}, ${c.recalls} recall${c.recalls === 1 ? "" : "s"}, ${c.installments} installment${c.installments === 1 ? "" : "s"}` });
+      const parts: string[] = [];
+      if (sections.reminders) parts.push(`${c.reminders} reminder${c.reminders === 1 ? "" : "s"}`);
+      if (sections.recalls) parts.push(`${c.recalls} recall${c.recalls === 1 ? "" : "s"}`);
+      if (sections.installments) parts.push(`${c.installments} installment${c.installments === 1 ? "" : "s"}`);
+      setSendResult({ ok: true, message: `Sent ✓ — ${parts.join(", ")}` });
       setLastSent(new Date().toISOString().slice(0, 19).replace("T", " "));
     } catch (err) {
       setSendResult({ ok: false, message: (err as Error).message });
@@ -1282,6 +1297,31 @@ function DigestTab() {
                   placeholder="reception@yourclinic.com"
                 />
               </FieldGroup>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Sections in the email</Label>
+              <div className="flex flex-wrap gap-x-5 gap-y-2">
+                {(
+                  [
+                    { id: "reminders", label: "Appointment reminders" },
+                    { id: "recalls", label: "Hygiene recalls" },
+                    { id: "installments", label: "Installments due" },
+                  ] as const
+                ).map((s) => (
+                  <label key={s.id} className="flex items-center gap-2 text-sm font-normal">
+                    <input
+                      type="checkbox"
+                      checked={sections[s.id]}
+                      onChange={(e) => setSections((prev) => ({ ...prev, [s.id]: e.target.checked }))}
+                      className="h-4 w-4 rounded border-input"
+                    />
+                    {s.label}
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Untick a section to leave it out of the daily email entirely — the subject line and counts update to match.
+              </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <Button type="submit" disabled={busy}>{busy ? "Saving…" : "Save schedule"}</Button>
