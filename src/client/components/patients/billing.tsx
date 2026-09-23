@@ -413,18 +413,27 @@ function ItemsDialog({
 
 // ── Payment dialog ─────────────────────────────────────────────────
 
-function PaymentDialog({
+/**
+ * Record-a-payment dialog for one invoice. `prefillAmount` seeds the amount
+ * field (used by the installment-reminder shortcut, which opens it with the
+ * installment's amount instead of the full balance).
+ */
+export function PaymentDialog({
   invoice,
+  prefillAmount,
   onClose,
   onSaved,
 }: {
   invoice: Invoice;
+  prefillAmount?: number;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const app = useApp();
   const balance = invoice.balance ?? invoice.total - invoice.amount_paid;
-  const [amount, setAmount] = useState(balance.toFixed(2));
+  const [amount, setAmount] = useState(
+    Math.min(balance, prefillAmount ?? balance).toFixed(2),
+  );
   const [method, setMethod] = useState<PaymentMethod>("card");
   const [payments, setPayments] = useState<InvoicePayment[]>([]);
   const [busy, setBusy] = useState(false);

@@ -9,6 +9,7 @@ import { ErrorBanner } from "./components/error-banner";
 import { Toaster } from "./components/ui/toast";
 import { useAutoBackup } from "./hooks/use-auto-backup";
 import { useDailyInventoryScan } from "./hooks/use-daily-inventory-scan";
+import { useDailyDigest } from "./hooks/use-daily-digest";
 import { useTheme } from "./hooks/use-theme";
 import { useAccessibility } from "./hooks/use-accessibility";
 import { useBrandAccent } from "./hooks/use-brand-accent";
@@ -42,6 +43,10 @@ export function App() {
   // Once-per-day stock scan — refreshes low-stock/expiry alerts and the
   // dashboard notification panel (serverless: the timer lives in the browser).
   useDailyInventoryScan();
+
+  // Once-per-day worklist digest email (reminders/recalls/installments) to
+  // the clinic inbox — same serverless pattern, scheduled in Settings → Email.
+  useDailyDigest(true);
 
   // Theme: follows the OS dark mode by default, with a manual override.
   useTheme();

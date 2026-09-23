@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS appointments (
   notes TEXT,
   review_requested_at TEXT,             -- set when a Google review was requested after this visit
   checked_in_at TEXT,                   -- when the patient physically arrived (kiosk/front-desk check-in)
+  in_chair_at TEXT,                     -- when the patient actually got into the chair (wait ends)
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

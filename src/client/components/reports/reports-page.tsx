@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   CalendarDays, CalendarRange, TrendingUp, Wallet, AlertTriangle, FlaskConical, Users, ListChecks,
+  Armchair, Timer,
 } from "lucide-react";
 import { api } from "@/api";
 import { useApp } from "@/context";
@@ -144,6 +145,61 @@ export function ReportsPage() {
           </Card>
         )}
 
+        {/* Chair utilization & wait time (from kiosk/front-desk check-in data) */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Armchair className="h-4 w-4 text-violet-600 dark:text-violet-400" /> Clinic efficiency (MTD)
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Measured from patient check-ins (kiosk or front desk). {data.clinic_efficiency.visits_with_checkin} visit{data.clinic_efficiency.visits_with_checkin === 1 ? "" : "s"} tracked this month.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <EffStat
+                label="Avg wait"
+                value={data.clinic_efficiency.avg_wait_minutes != null ? `${data.clinic_efficiency.avg_wait_minutes} min` : "—"}
+                sub="check-in → chair"
+                tone={data.clinic_efficiency.avg_wait_minutes == null ? "slate" : data.clinic_efficiency.avg_wait_minutes > 15 ? "rose" : data.clinic_efficiency.avg_wait_minutes > 5 ? "amber" : "emerald"}
+              />
+              <EffStat
+                label="Longest wait"
+                value={data.clinic_efficiency.longest_wait_minutes != null ? `${data.clinic_efficiency.longest_wait_minutes} min` : "—"}
+                sub="this month"
+                tone={data.clinic_efficiency.longest_wait_minutes != null && data.clinic_efficiency.longest_wait_minutes > 30 ? "rose" : "slate"}
+              />
+              <EffStat
+                label="Chairs used"
+                value={String(data.clinic_efficiency.chairs_used)}
+                sub={`over ${data.clinic_efficiency.clinic_days} clinic day${data.clinic_efficiency.clinic_days === 1 ? "" : "s"}`}
+                tone="sky"
+              />
+              <EffStat
+                label="Chair utilization"
+                value={`${data.clinic_efficiency.chair_utilization_pct}%`}
+                sub="of 8h × chairs"
+                tone={data.clinic_efficiency.chair_utilization_pct >= 70 ? "emerald" : data.clinic_efficiency.chair_utilization_pct >= 50 ? "amber" : "rose"}
+              />
+            </div>
+            <div>
+              <div className="mb-1 flex items-baseline justify-between text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-1"><Timer className="h-3 w-3" /> Utilization — busy chair-minutes vs. available capacity</span>
+                <span className="tabular-nums">70%+ is healthy</span>
+              </div>
+              <div className="h-2.5 overflow-hidden rounded-full bg-muted">
+                <div
+                  className={cn(
+                    "h-full rounded-full transition-all",
+                    data.clinic_efficiency.chair_utilization_pct >= 70 ? "bg-emerald-500" : data.clinic_efficiency.chair_utilization_pct >= 50 ? "bg-amber-500" : "bg-rose-500",
+                  )}
+                  style={{ width: `${Math.min(100, data.clinic_efficiency.chair_utilization_pct)}%` }}
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Aged receivables */}
         <Card>
           <CardHeader>
@@ -278,6 +334,17 @@ function ARBucket({ label, amount, tone }: { label: string; amount: number; tone
     <div className={cn("rounded-lg border p-3", t.bg, t.border)}>
       <div className={cn("text-xs font-semibold uppercase tracking-wider opacity-80", t.text)}>{label}</div>
       <div className={cn("mt-1 text-xl font-bold tabular-nums", t.text)}>${amount.toFixed(0)}</div>
+    </div>
+  );
+}
+
+function EffStat({ label, value, sub, tone }: { label: string; value: string; sub: string; tone: keyof typeof TONE }) {
+  const t = TONE[tone];
+  return (
+    <div className={cn("rounded-lg border p-3", t.bg, t.border)}>
+      <div className={cn("text-xs font-semibold uppercase tracking-wider opacity-80", t.text)}>{label}</div>
+      <div className={cn("mt-1 text-xl font-bold tabular-nums", t.text)}>{value}</div>
+      <div className={cn("text-[11px] opacity-70", t.text)}>{sub}</div>
     </div>
   );
 }

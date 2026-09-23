@@ -39,6 +39,11 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   day_start_minute: "420",
   day_end_minute: "1140",
   slot_minutes: "15",
+  // Daily worklist digest (Settings → Email): "1" sends a morning email of
+  // the reminder/recall/installment call lists to digest_recipient.
+  digest_enabled: "",
+  digest_time: "07:30",
+  digest_recipient: "",
 };
 
 /**
@@ -58,6 +63,10 @@ export const DEFAULT_PROFILE_SETTINGS: Record<string, string> = {
   // Clinic logo as a data URL (image/*;base64) — rendered on prescription
   // and invoice letterheads. Kept small client-side; empty = no logo.
   clinic_logo: "",
+  // Payment QR image (bKash/Nagad/bank QR…) as a data URL — printable as a
+  // poster for the waiting room and reachable on patients' phones.
+  payment_qr: "",
+  payment_qr_label: "",
   // Fixed practice instructions printed in the Chamber template's footer
   // (e.g. emergency contact, "report fever after extraction"). Newline =
   // new line on the sheet; empty = footer shows only the contact row.

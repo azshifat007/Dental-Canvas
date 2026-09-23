@@ -416,6 +416,14 @@ export interface ReportsSummary {
     rate: number | null;
   };
   by_provider: { name: string; production: number; collections: number; visits: number }[];
+  clinic_efficiency: {
+    avg_wait_minutes: number | null;
+    longest_wait_minutes: number | null;
+    visits_with_checkin: number;
+    chair_utilization_pct: number;
+    chairs_used: number;
+    clinic_days: number;
+  };
 }
 
 /** A patient with accepted treatment but no upcoming appointment. */

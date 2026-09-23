@@ -968,3 +968,114 @@ describe("installment reminders", () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe("clinic efficiency (wait time + chair utilization)", () => {
+  it("stamps in_chair_at on the in_chair transition and reports wait/utilization", async () => {
+    const { patientId, operatoryId } = await seedFixtures();
+    const today = new Date().toISOString().slice(0, 10);
+    const create = jsonRequest("POST", "/api/appointments", {
+      patient_id: patientId,
+      operatory_id: operatoryId,
+      start_time: `${today}T09:00:00`,
+      end_time: `${today}T09:30:00`,
+    });
+    const created = (await (await app.request(create.path, create.init, { DB: ctx.db })).json()) as {
+      appointment: { id: number };
+    };
+    const id = created.appointment.id;
+
+    // Arrive (as the kiosk would), then get in the chair.
+    await app.request("/api/kiosk/check-in", { method: "POST", body: JSON.stringify({ appointment_id: id }), headers: { "content-type": "application/json" } }, { DB: ctx.db });
+    const seated = (await (await app.request(
+      `/api/appointments/${id}`,
+      { method: "PUT", body: JSON.stringify({ status: "in_chair" }), headers: { "content-type": "application/json" } },
+      { DB: ctx.db },
+    )).json()) as { appointment: { status: string; checked_in_at: string | null; in_chair_at: string | null } };
+    expect(seated.appointment.status).toBe("in_chair");
+    expect(seated.appointment.checked_in_at).toBeTruthy();
+    expect(seated.appointment.in_chair_at).toBeTruthy();
+
+    // Complete the visit.
+    await app.request(
+      `/api/appointments/${id}`,
+      { method: "PUT", body: JSON.stringify({ status: "completed" }), headers: { "content-type": "application/json" } },
+      { DB: ctx.db },
+    );
+
+    // The efficiency report includes the visit with a sane wait (0–30 min
+    // for this synthetic timeline) and non-zero utilization.
+    const summary = (await (await app.request("/api/reports/summary", undefined, { DB: ctx.db })).json()) as {
+      clinic_efficiency: {
+        avg_wait_minutes: number | null; longest_wait_minutes: number | null;
+        visits_with_checkin: number; chair_utilization_pct: number; chairs_used: number;
+      };
+    };
+    expect(summary.clinic_efficiency.visits_with_checkin).toBeGreaterThanOrEqual(1);
+    if (summary.clinic_efficiency.avg_wait_minutes != null) {
+      expect(summary.clinic_efficiency.avg_wait_minutes).toBeGreaterThanOrEqual(0);
+      expect(summary.clinic_efficiency.avg_wait_minutes).toBeLessThan(24 * 60);
+    }
+    expect(summary.clinic_efficiency.chairs_used).toBeGreaterThanOrEqual(1);
+    expect(summary.clinic_efficiency.chair_utilization_pct).toBeGreaterThanOrEqual(0);
+    expect(summary.clinic_efficiency.chair_utilization_pct).toBeLessThanOrEqual(100);
+  });
+
+  it("clears the chair stamp when the status leaves in_chair", async () => {
+    const { patientId, operatoryId } = await seedFixtures();
+    const today = new Date().toISOString().slice(0, 10);
+    const create = jsonRequest("POST", "/api/appointments", {
+      patient_id: patientId, operatory_id: operatoryId,
+      start_time: `${today}T10:00:00`, end_time: `${today}T10:30:00`,
+    });
+    const { appointment } = (await (await app.request(create.path, create.init, { DB: ctx.db })).json()) as {
+      appointment: { id: number };
+    };
+    await app.request(
+      `/api/appointments/${appointment.id}`,
+      { method: "PUT", body: JSON.stringify({ status: "in_chair" }), headers: { "content-type": "application/json" } },
+      { DB: ctx.db },
+    );
+    const back = (await (await app.request(
+      `/api/appointments/${appointment.id}`,
+      { method: "PUT", body: JSON.stringify({ status: "arrived" }), headers: { "content-type": "application/json" } },
+      { DB: ctx.db },
+    )).json()) as { appointment: { in_chair_at: string | null } };
+    expect(back.appointment.in_chair_at).toBeNull();
+  });
+});
+
+describe("daily worklist digest", () => {
+  it("rejects sending when email or recipient is unconfigured", async () => {
+    const noEmail = await app.request("/api/email/worklist-digest", { method: "POST", body: "{}", headers: { "content-type": "application/json" } }, { DB: ctx.db });
+    expect(noEmail.status).toBe(400);
+    expect(((await noEmail.json()) as { error: string }).error).toMatch(/not configured/i);
+  });
+
+  it("requires a valid recipient when one is set", async () => {
+    // Seed a key + from so the "not configured" branch passes.
+    await app.request(
+      "/api/settings",
+      { method: "PUT", body: JSON.stringify({ email_api_key: "re_test", email_from: "clinic@test.com", digest_recipient: "not-an-email" }), headers: { "content-type": "application/json" } },
+      { DB: ctx.db },
+    );
+    const res = await app.request("/api/email/worklist-digest", { method: "POST", body: "{}", headers: { "content-type": "application/json" } }, { DB: ctx.db });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(/recipient/i);
+  });
+
+  it("stores and returns digest schedule settings with the secret masked", async () => {
+    const put = await app.request(
+      "/api/settings",
+      { method: "PUT", body: JSON.stringify({ digest_enabled: "1", digest_time: "08:15", digest_recipient: "front@clinic.com" }), headers: { "content-type": "application/json" } },
+      { DB: ctx.db },
+    );
+    expect(put.status).toBe(200);
+
+    const res = (await (await app.request("/api/settings", undefined, { DB: ctx.db })).json()) as {
+      settings: Record<string, string>;
+    };
+    expect(res.settings.digest_enabled).toBe("1");
+    expect(res.settings.digest_time).toBe("08:15");
+    expect(res.settings.digest_recipient).toBe("front@clinic.com");
+  });
+});

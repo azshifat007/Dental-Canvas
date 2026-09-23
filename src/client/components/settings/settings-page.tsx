@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Plus, Trash2, Pencil, Check, X, Clock, UserRound, DatabaseBackup, Palette, Monitor, Sun, Moon, ImageUp, Mail, ReceiptText } from "lucide-react";
+import { Plus, Trash2, Pencil, Check, X, Clock, UserRound, DatabaseBackup, Palette, Monitor, Sun, Moon, ImageUp, Mail, ReceiptText, MailCheck, QrCode, Printer } from "lucide-react";
 import { useApp } from "@/context";
 import { api } from "@/api";
 import { toast } from "@/components/ui/toast";
@@ -21,6 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import type { ConsentTemplate, MembershipPlan } from "@/types";
 import type { Operatory, Practitioner, PractitionerRole, TreatmentType } from "@/types";
 import { fileToLogoDataUrl } from "@/lib/logo";
+import { printQrPoster } from "@/lib/print";
 import { INVOICE_STYLES, InvoiceSheet, type InvoiceStyle } from "@/components/patients/invoice-sheet";
 
 const COLOR_TOKENS = ["sky", "emerald", "amber", "rose", "violet", "fuchsia", "teal", "orange", "slate"] as const;
@@ -82,8 +83,9 @@ export function SettingsPage() {
           <TabsContent value="hours" className="mt-4">
             <HoursTab />
           </TabsContent>
-          <TabsContent value="email" className="mt-4">
+          <TabsContent value="email" className="mt-4 space-y-4">
             <EmailTab />
+            <DigestTab />
           </TabsContent>
           <TabsContent value="billing" className="mt-4">
             <InvoiceStyleTab />
@@ -108,6 +110,21 @@ function ProfileTab() {
   const [busy, setBusy] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
+  const qrInputRef = useRef<HTMLInputElement>(null);
+
+  function printQr() {
+    const saved = app.profile;
+    const qr = form.payment_qr || saved.payment_qr;
+    if (!qr) {
+      toast.error("Save the QR image first, then print the poster.");
+      return;
+    }
+    printQrPoster({
+      clinicName: form.clinic_name.trim() || saved.clinic_name || "Our Clinic",
+      qrDataUrl: qr,
+      label: form.payment_qr_label.trim() || saved.payment_qr_label,
+    });
+  }
 
   useEffect(() => {
     setForm(app.profile);
@@ -130,6 +147,8 @@ function ProfileTab() {
         doctor_license: form.doctor_license.trim(),
         clinic_address: form.clinic_address.trim(),
         clinic_logo: form.clinic_logo,
+        payment_qr: form.payment_qr,
+        payment_qr_label: form.payment_qr_label.trim(),
         chamber_footer_instructions: form.chamber_footer_instructions,
         google_review_url: form.google_review_url.trim(),
       });
@@ -248,6 +267,75 @@ function ProfileTab() {
               placeholder="+1 555 010 2030"
             />
           </FieldGroup>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Payment QR (printable poster)</Label>
+            <div className="flex items-center gap-3">
+              <div
+                className={cn(
+                  "flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted/40",
+                  !form.payment_qr && "text-muted-foreground/50",
+                )}
+                aria-hidden
+              >
+                {form.payment_qr ? (
+                  <img src={form.payment_qr} alt="Payment QR" className="max-h-full max-w-full object-contain" />
+                ) : (
+                  <QrCode className="h-5 w-5" />
+                )}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => qrInputRef.current?.click()}>
+                    {form.payment_qr ? "Replace" : "Upload QR"}
+                  </Button>
+                  {form.payment_qr && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="text-muted-foreground hover:text-destructive"
+                      onClick={() => setForm({ ...form, payment_qr: "" })}
+                    >
+                      Remove
+                    </Button>
+                  )}
+                  {form.payment_qr && (
+                    <Button type="button" variant="outline" size="sm" onClick={printQr}>
+                      <Printer className="mr-1 h-3.5 w-3.5" /> Print poster
+                    </Button>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Your bKash/Nagad/bank QR image — patients scan it to pay. Print the poster for the waiting room.
+                </p>
+              </div>
+              <input
+                ref={qrInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = ""; // allow re-choosing the same file
+                  if (!file) return;
+                  try {
+                    const dataUrl = await fileToLogoDataUrl(file);
+                    setForm((f) => ({ ...f, payment_qr: dataUrl }));
+                  } catch (err) {
+                    toast.error((err as Error).message);
+                  }
+                }}
+              />
+            </div>
+            {form.payment_qr && (
+              <Input
+                value={form.payment_qr_label}
+                onChange={(e) => setForm({ ...form, payment_qr_label: e.target.value })}
+                placeholder="Caption, e.g. bKash — Personal · 01712-345678"
+                className="max-w-sm"
+              />
+            )}
+          </div>
           <FieldGroup label="License no. (prescriptions)">
             <Input
               value={form.doctor_license}
@@ -1079,6 +1167,139 @@ function EmailTab() {
           </form>
         ) : (
           <p className="text-sm text-muted-foreground">Loading…</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Daily worklist digest (Settings → Email) ────────────────────
+
+function DigestTab() {
+  const app = useApp();
+  const [enabled, setEnabled] = useState(false);
+  const [time, setTime] = useState("07:30");
+  const [recipient, setRecipient] = useState("");
+  const [lastSent, setLastSent] = useState<string | null>(null);
+  const [emailReady, setEmailReady] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sendResult, setSendResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await api<{ settings: Record<string, string> }>("GET", "/api/settings");
+        setEnabled((data.settings.digest_enabled ?? "") === "1");
+        setTime(data.settings.digest_time || "07:30");
+        setRecipient(data.settings.digest_recipient ?? "");
+        setLastSent(data.settings.digest_last_sent || null);
+        setEmailReady(Boolean((data.settings.email_api_key ?? "").trim()) && Boolean((data.settings.email_from ?? "").trim()));
+      } catch (err) {
+        app.setError((err as Error).message);
+      } finally {
+        setLoaded(true);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await api("PUT", "/api/settings", {
+        digest_enabled: enabled ? "1" : "",
+        digest_time: time,
+        digest_recipient: recipient.trim(),
+      });
+      toast.success("Digest schedule saved");
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendNow() {
+    setSending(true);
+    setSendResult(null);
+    try {
+      const res = await api<{ counts: { reminders: number; recalls: number; installments: number } }>(
+        "POST", "/api/email/worklist-digest", {},
+      );
+      const c = res.counts;
+      setSendResult({ ok: true, message: `Sent ✓ — ${c.reminders} reminder${c.reminders === 1 ? "" : "s"}, ${c.recalls} recall${c.recalls === 1 ? "" : "s"}, ${c.installments} installment${c.installments === 1 ? "" : "s"}` });
+      setLastSent(new Date().toISOString().slice(0, 19).replace("T", " "));
+    } catch (err) {
+      setSendResult({ ok: false, message: (err as Error).message });
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <MailCheck className="h-4 w-4" />
+          Daily worklist digest
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Every morning, email the clinic inbox one summary of the three outreach
+          lists: tomorrow's appointment reminders, hygiene recalls due (30 days),
+          and installments due (3 days). Requires the Resend settings above.
+        </p>
+      </CardHeader>
+      <CardContent>
+        {!loaded ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : !emailReady ? (
+          <p className="text-sm text-muted-foreground">
+            Configure the Resend API key and from address above first — then the digest can send.
+          </p>
+        ) : (
+          <form onSubmit={save} className="grid max-w-xl gap-3">
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <input
+                type="checkbox"
+                checked={enabled}
+                onChange={(e) => setEnabled(e.target.checked)}
+                className="h-4 w-4 rounded border-input"
+              />
+              Send the daily digest email
+            </label>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <FieldGroup label="Send at" hint="Local clinic time — the first device open after this sends it.">
+                <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+              </FieldGroup>
+              <FieldGroup label="Clinic inbox" hint="Where the digest is delivered.">
+                <Input
+                  type="email"
+                  value={recipient}
+                  onChange={(e) => setRecipient(e.target.value)}
+                  placeholder="reception@yourclinic.com"
+                />
+              </FieldGroup>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button type="submit" disabled={busy}>{busy ? "Saving…" : "Save schedule"}</Button>
+              <Button type="button" variant="outline" onClick={() => void sendNow()} disabled={sending || !recipient.trim()}>
+                {sending ? "Sending…" : "Send now"}
+              </Button>
+              {lastSent && (
+                <span className="text-xs text-muted-foreground">
+                  Last sent {lastSent.slice(0, 16).replace("T", " ")}
+                </span>
+              )}
+            </div>
+            {sendResult && (
+              <p className={cn("text-sm", sendResult.ok ? "text-emerald-700 dark:text-emerald-400" : "text-destructive")}>
+                {sendResult.message}
+              </p>
+            )}
+          </form>
         )}
       </CardContent>
     </Card>

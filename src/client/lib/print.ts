@@ -42,6 +42,45 @@ export function printSheetHtml(host: HTMLElement | null, title: string): void {
   });
 }
 
+/**
+ * Print a full-page A4 payment-QR poster for the waiting room: clinic header,
+ * the uploaded QR image large enough to scan from a distance, caption and a
+ * call-to-action. Uses the same isolated-iframe technique as printSheetHtml
+ * so the app theme never leaks onto the paper.
+ */
+export function printQrPoster(opts: { clinicName: string; qrDataUrl: string; label: string }): void {
+  const frame = document.createElement("iframe");
+  frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
+  document.body.appendChild(frame);
+  const doc = frame.contentDocument;
+  if (!doc) return;
+  doc.open();
+  doc.write(
+    `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Payment QR — ${escapeHtml(opts.clinicName)}</title>
+      <style>
+        @page { size: A4; margin: 0; }
+        html, body { margin: 0; padding: 0; background: #ffffff; }
+        @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+      </style></head><body>
+      <div style="min-height:297mm;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:24px;padding:20mm;font-family:Arial,Helvetica,sans-serif;color:#111;text-align:center;">
+        <div style="font-size:30px;font-weight:700;letter-spacing:0.02em;">${escapeHtml(opts.clinicName)}</div>
+        <img src="${opts.qrDataUrl}" alt="Payment QR" style="width:150mm;height:150mm;object-fit:contain;" />
+        ${opts.label ? `<div style="font-size:18px;color:#333;">${escapeHtml(opts.label)}</div>` : ""}
+        <div style="font-size:22px;font-weight:600;margin-top:8px;">Scan to pay</div>
+      </div></body></html>`,
+  );
+  doc.close();
+  const done = () => {
+    window.setTimeout(() => frame.remove(), 500);
+    frame.removeEventListener("load", done);
+  };
+  frame.addEventListener("load", () => {
+    frame.contentWindow?.focus();
+    frame.contentWindow?.print();
+    done();
+  });
+}
+
 // html-to-image is lazy-loaded on first PDF download — printing never pays for it.
 async function loadHtmlToImage(): Promise<typeof import("html-to-image")> {
   return import("html-to-image");

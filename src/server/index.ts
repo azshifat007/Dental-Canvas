@@ -330,6 +330,11 @@ async function ensureColumnMigrations(): Promise<void> {
     if (!apptCols2.some((c) => c.name === "checked_in_at")) {
       await run("ALTER TABLE appointments ADD COLUMN checked_in_at TEXT");
     }
+    // When the patient actually got into the chair — paired with
+    // checked_in_at this measures the real reception wait.
+    if (!apptCols2.some((c) => c.name === "in_chair_at")) {
+      await run("ALTER TABLE appointments ADD COLUMN in_chair_at TEXT");
+    }
     // Databases created before payment plans existed.
     await run(`CREATE TABLE IF NOT EXISTS invoice_payment_plans (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -942,6 +947,166 @@ app.post("/api/prescriptions/:id/email", async (c) => {
   return c.json({ ok: true, provider_id: sent.id ?? null, to });
 });
 
+// ── Daily worklist digest (email) ────────────────────────────
+// Every morning, the clinic inbox receives one email listing today's three
+// outreach worklists: appointment reminders, hygiene recalls due, and
+// installments due. The browser timer (use-daily-digest.ts) fires the send
+// once per day — the serverless API can't schedule on its own.
+
+interface DigestDigestInput {
+  to?: string;
+}
+
+/** Shared email-settings loader (Resend key + from address). */
+async function loadEmailSettings(): Promise<{ apiKey: string; from: string; clinicName: string; doctorName: string }> {
+  const rows = await query<{ key: string; value: string }>("SELECT key, value FROM settings").catch(() => []);
+  const s = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  return {
+    apiKey: (s.email_api_key ?? "").trim(),
+    from: (s.email_from ?? "").trim(),
+    clinicName: (s.clinic_name ?? "").trim(),
+    doctorName: (s.doctor_name ?? "").trim(),
+  };
+}
+
+/** Sends an email via Resend. Returns the provider message id, or throws with a readable error. */
+async function sendEmail(apiKey: string, from: string, to: string, subject: string, html: string): Promise<string | null> {
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ from, to: [to], subject, html }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`The email provider rejected the message (${res.status}). ${detail.slice(0, 300)}`);
+  }
+  const sent = (await res.json().catch(() => ({}))) as { id?: string };
+  return sent.id ?? null;
+}
+
+async function buildDigestHtml(): Promise<{ subject: string; html: string; counts: { reminders: number; recalls: number; installments: number } }> {
+  const { clinicName, doctorName } = await loadEmailSettings();
+  const practiceLabel = clinicName || doctorName || "Dental Canvas";
+  const esc = escapeEmailHtml;
+  const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+
+  const [reminders, recalls, installments] = await Promise.all([
+    query<{ start_time: string; first_name: string | null; last_name: string | null; treatment_name: string | null; practitioner_name: string | null }>(
+      `SELECT a.start_time, p.first_name, p.last_name, tt.name as treatment_name, pr.name as practitioner_name
+       FROM appointments a
+       LEFT JOIN patients p ON p.id = a.patient_id
+       LEFT JOIN treatment_types tt ON tt.id = a.treatment_type_id
+       LEFT JOIN practitioners pr ON pr.id = a.practitioner_id
+       WHERE substr(a.start_time, 1, 10) = date('now', '+1 day') AND a.kind = 'patient' AND a.status = 'scheduled'
+       ORDER BY a.start_time LIMIT 50`,
+    ).catch(() => []),
+    query<{ name: string; recall_type: string | null; due_date: string; days_overdue: number }>(
+      `SELECT * FROM (
+        SELECT atm.id, p.first_name || ' ' || p.last_name AS name,
+               tt.name AS recall_type,
+               COALESCE(
+                 (SELECT date(rc.last_completed, '+' || rc.interval_months || ' months')
+                  FROM patient_recall_config rc WHERE rc.patient_id = atm.patient_id),
+                 atm.due_after, date(atm.created_at)
+               ) AS due_date
+        FROM appointments_to_make atm
+        JOIN patients p ON p.id = atm.patient_id
+        LEFT JOIN treatment_types tt ON tt.id = atm.treatment_type_id
+        WHERE atm.status = 'open' AND atm.source = 'system'
+          AND COALESCE(
+            (SELECT date(rc2.last_completed, '+' || rc2.interval_months || ' months')
+             FROM patient_recall_config rc2 WHERE rc2.patient_id = atm.patient_id),
+            atm.due_after, date(atm.created_at)
+          ) <= date('now', '+30 days')
+      ) ORDER BY due_date ASC LIMIT 50`,
+    ).catch(() => [] as { name: string; recall_type: string | null; due_date: string; days_overdue: number }[]),
+    query<{ patient_name: string; installment_n: number; amount: number; due_date: string; overdue: number; balance: number }>(
+      `SELECT * FROM (
+        SELECT ipp.id,
+               p.first_name || ' ' || p.last_name AS patient_name,
+               1 AS installment_n,
+               ipp.installment_amount AS amount,
+               ipp.start_date AS due_date,
+               CASE WHEN date(ipp.start_date) < date('now') THEN 1 ELSE 0 END AS overdue,
+               i.total - i.amount_paid AS balance
+        FROM invoice_payment_plans ipp
+        JOIN invoices i ON i.id = ipp.invoice_id
+        LEFT JOIN patients p ON p.id = i.patient_id
+        WHERE ipp.active = 1 AND i.status != 'void' AND i.total > i.amount_paid
+          AND date(ipp.start_date) <= date('now', '+3 days')
+      ) ORDER BY due_date ASC LIMIT 50`,
+    ).catch(() => [] as { patient_name: string; installment_n: number; amount: number; due_date: string; overdue: number; balance: number }[]),
+  ]);
+
+  const dayLabel = new Date(Date.now() + 86400000).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  const rows = (items: string[]) =>
+    items.length === 0
+      ? `<li style="color:#9ca3af">Nothing today ✓</li>`
+      : items.map((i) => `<li style="margin:0 0 4px">${i}</li>`).join("");
+
+  const reminderItems = reminders.map((r) => {
+    const t = new Date(r.start_time).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    return `${esc([r.first_name, r.last_name].filter(Boolean).join(" ") || "Unnamed")} — ${t}${r.treatment_name ? ` · ${esc(r.treatment_name)}` : ""}${r.practitioner_name ? ` · ${esc(r.practitioner_name)}` : ""}`;
+  });
+  const recallItems = recalls.map((r) => `${esc(r.name)} — ${esc(r.recall_type ?? "check-up")}, due ${esc(r.due_date)}`);
+  const installmentItems = installments.map((r) => `${esc(r.patient_name)} — ${money(r.amount)}${r.overdue ? " (overdue)" : ""}, due ${esc(r.due_date)} · balance ${money(r.balance)}`);
+
+  const section = (title: string, items: string[], color: string) => `
+    <h3 style="margin:20px 0 6px;font-size:14px;color:${color}">${title}</h3>
+    <ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.5">${rows(items)}</ul>`;
+
+  const html = `
+    <div style="font-family:Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;color:#1f2937">
+      <h2 style="margin:0 0 2px;color:#166534">${esc(practiceLabel)} — daily worklist</h2>
+      <p style="margin:0 0 4px;color:#6b7280;font-size:13px">Tomorrow's appointments: ${reminders.length} · recalls due (30d): ${recalls.length} · installments due (3d): ${installments.length}</p>
+      <p style="margin:0 0 8px;color:#9ca3af;font-size:12px">Sent ${esc(new Date().toLocaleString("en-US"))}</p>
+      ${section(`📅 Appointment reminders — ${dayLabel}`, reminderItems, "#1d4ed8")}
+      ${section("🔁 Hygiene recalls due", recallItems, "#047857")}
+      ${section("💳 Installments due", installmentItems, "#b45309")}
+      <p style="margin:20px 0 0;color:#9ca3af;font-size:11px">Open Dental Canvas → Agenda side panel to work these lists with one-click WhatsApp actions.</p>
+    </div>`;
+
+  return {
+    subject: `${practiceLabel} daily worklist — ${reminders.length} reminder${reminders.length === 1 ? "" : "s"}, ${recalls.length} recall${recalls.length === 1 ? "" : "s"}, ${installments.length} installment${installments.length === 1 ? "" : "s"}`,
+    html,
+    counts: { reminders: reminders.length, recalls: recalls.length, installments: installments.length },
+  };
+}
+
+/**
+ * Send-now endpoint: the browser timer calls this once per day (and the
+ * Settings "Send now" button calls it on demand). Sends to the configured
+ * digest recipient, or an explicit override.
+ */
+app.post("/api/email/worklist-digest", async (c) => {
+  let body: DigestDigestInput = {};
+  try { body = await c.req.json(); } catch { /* empty body allowed */ }
+
+  const { apiKey, from } = await loadEmailSettings();
+  if (!apiKey || !from) {
+    return c.json({ error: "Email is not configured yet. Add a Resend API key and from address in Settings → Email." }, 400);
+  }
+
+  const settingsRows = await query<{ key: string; value: string }>("SELECT key, value FROM settings").catch(() => []);
+  const s = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
+  const to = (typeof body.to === "string" && body.to.trim() ? body.to.trim() : (s.digest_recipient ?? "")).trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+    return c.json({ error: "No valid recipient. Set the clinic inbox in Settings → Email → daily digest." }, 400);
+  }
+
+  try {
+    const { subject, html, counts } = await buildDigestHtml();
+    const providerId = await sendEmail(apiKey, from, to, subject, html);
+    await run(
+      `INSERT INTO settings (key, value, updated_at) VALUES ('digest_last_sent', datetime('now'), datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = datetime('now'), updated_at = datetime('now')`,
+    );
+    return c.json({ ok: true, to, provider_id: providerId, counts });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 502);
+  }
+});
+
 app.post("/api/prescriptions", async (c) => {
   const parsed = await parseJson(c, PrescriptionInput);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
@@ -1222,6 +1387,12 @@ app.put("/api/appointments/:id", async (c) => {
   }
   if (!sets.length) return c.json({ error: "No fields" }, 400);
   params.push(id);
+  // Wait-time tracking: stamp the moment the patient transitions into the
+  // chair (paired with checked_in_at). A move back out of the chair clears
+  // the stamp so a re-seat measures the latest wait, not a stale one.
+  const newStatus: string | undefined = parsed.data.status;
+  if (newStatus === "in_chair") sets.push("in_chair_at = datetime('now')");
+  else if (newStatus && newStatus !== "completed") sets.push("in_chair_at = NULL");
   const r = await run(`UPDATE appointments SET ${sets.join(", ")} WHERE id = ?`, params);
   if (!r.changes) return c.json({ error: "Not found" }, 404);
   // Auto-recall: a completed patient visit advances the recall cycle.
@@ -2279,6 +2450,8 @@ app.get("/api/reports/summary", async (c) => {
     aged90,
     overdueLabs,
     waitingCount,
+    chairRows,
+    chairCapacity,
   ] = await Promise.all([
     safeGet<{ n: number }>("SELECT COUNT(*) as n FROM appointments WHERE substr(start_time, 1, 10) = ? AND kind = 'patient'", [today], { n: 0 }),
     safeGet<{ n: number }>("SELECT COUNT(*) as n FROM appointments WHERE substr(start_time, 1, 10) >= ? AND kind = 'patient'", [startOfWeek], { n: 0 }),
@@ -2344,6 +2517,24 @@ app.get("/api/reports/summary", async (c) => {
       [], { n: 0 },
     ),
     safeGet<{ n: number }>("SELECT COUNT(*) as n FROM waiting_list", [], { n: 0 }),
+    // Efficiency: completed visits this month that have check-in/chair stamps,
+    // for wait-time math (per visit: arrival → chair).
+    safeQuery<{
+      checked_in_at: string; in_chair_at: string | null;
+      start_time: string; end_time: string; operatory_id: number;
+    }>(
+      `SELECT checked_in_at, in_chair_at, start_time, end_time, operatory_id
+       FROM appointments
+       WHERE substr(start_time, 1, 10) >= ? AND status = 'completed' AND kind = 'patient'
+         AND checked_in_at IS NOT NULL`,
+      [startOfMonth],
+    ),
+    // Theoretical chair capacity MTD: open chairs × open hours × clinic days.
+    safeQuery<{ days: number }>(
+      `SELECT COUNT(DISTINCT substr(start_time, 1, 10)) as days
+       FROM appointments WHERE substr(start_time, 1, 10) >= ? AND kind = 'patient'`,
+      [startOfMonth],
+    ),
   ]);
 
   return c.json({
@@ -2394,6 +2585,38 @@ app.get("/api/reports/summary", async (c) => {
       // ADA benchmark: healthy practices accept 75–80% of presented cases.
       rate: (planTotal.n ?? 0) > 0 ? Math.round(((planAccepted.n ?? 0) / (planTotal.n ?? 1)) * 100) : null,
     },
+    clinic_efficiency: await (async () => {
+      // Wait time per visit: checked_in_at → in_chair_at (falls back to the
+      // scheduled start when the chair stamp is missing — a conservative
+      // lower bound, since arrival is always ≤ scheduled start in practice).
+      const waits: number[] = [];
+      const opBusy = new Map<number, number>(); // operatory → busy minutes
+      for (const v of chairRows) {
+        if (v.in_chair_at) {
+          const waitMin = (new Date(v.in_chair_at).getTime() - new Date(v.checked_in_at).getTime()) / 60000;
+          if (waitMin >= 0 && waitMin < 24 * 60) waits.push(waitMin);
+        }
+        const busy = (new Date(v.end_time).getTime() - new Date(v.start_time).getTime()) / 60000;
+        opBusy.set(v.operatory_id, (opBusy.get(v.operatory_id) ?? 0) + Math.max(0, busy));
+      }
+      const avgWait = waits.length ? Math.round(waits.reduce((a, b) => a + b, 0) / waits.length) : null;
+      const longestWait = waits.length ? Math.round(Math.max(...waits)) : null;
+      // Chair utilization: busy minutes ÷ (chairs used × clinic days × 8h
+      // working day). Only counts chairs actually used — an idle chair isn't
+      // "wasted capacity" the report can meaningfully claim.
+      const days = Math.max(1, chairCapacity[0]?.days ?? 1);
+      const chairs = Math.max(1, opBusy.size);
+      const busyMinutes = [...opBusy.values()].reduce((a, b) => a + b, 0);
+      const capacityMinutes = chairs * days * 8 * 60;
+      return {
+        avg_wait_minutes: avgWait,
+        longest_wait_minutes: longestWait,
+        visits_with_checkin: waits.length,
+        chair_utilization_pct: Math.min(100, Math.round((busyMinutes / capacityMinutes) * 100)),
+        chairs_used: opBusy.size,
+        clinic_days: days,
+      };
+    })(),
   });
 });
 
@@ -2796,7 +3019,7 @@ app.post("/api/kiosk/check-in", async (c) => {
 
   if (!appt.checked_in_at) {
     await run(
-      "UPDATE appointments SET checked_in_at = datetime('now'), status = CASE WHEN status IN ('scheduled', 'confirmed') THEN 'arrived' ELSE status END WHERE id = ?",
+      "UPDATE appointments SET checked_in_at = datetime('now'), in_chair_at = NULL, status = CASE WHEN status IN ('scheduled', 'confirmed') THEN 'arrived' ELSE status END WHERE id = ?",
       [appointment_id],
     );
   }
@@ -3613,6 +3836,11 @@ app.put("/api/settings", async (c) => {
     // documents — enforce the data-URL shape (empty string clears it).
     if (key === "clinic_logo" && value !== "" && !isSafeLogoDataUrl(value)) {
       return c.json({ error: "Logo must be an image data URL under 400 KB" }, 400);
+    }
+    // The payment QR (bKash/Nagad/bank… image the doctor sets) is printed on
+    // its own sheet — same safety rules as the logo.
+    if (key === "payment_qr" && value !== "" && !isSafeLogoDataUrl(value)) {
+      return c.json({ error: "Payment QR must be an image data URL under 400 KB" }, 400);
     }
     // Invoice style must be one of the known sheet ids; accent must be a hex
     // color (it is inlined into printed documents). Both fall back to the

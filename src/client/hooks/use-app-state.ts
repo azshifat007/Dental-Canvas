@@ -41,6 +41,10 @@ export interface ProfileSettings {
   clinic_address: string;
   /** Data URL of the clinic logo, printed on prescription/invoice letterheads. Empty = none. */
   clinic_logo: string;
+  /** Data URL of the payment QR image (bKash/Nagad/bank…). Empty = none. */
+  payment_qr: string;
+  /** Caption printed under the payment QR (e.g. "bKash — Personal"). */
+  payment_qr_label: string;
   /** Fixed practice instructions printed in the Chamber template's footer. Newline = new line on the sheet. Empty = none. */
   chamber_footer_instructions: string;
   /** Google review link included in post-visit review-request messages. Empty = no link. */
@@ -62,6 +66,8 @@ export const DEFAULT_PROFILE: ProfileSettings = {
   doctor_license: "",
   clinic_address: "",
   clinic_logo: "",
+  payment_qr: "",
+  payment_qr_label: "",
   chamber_footer_instructions: "",
   google_review_url: "",
 };

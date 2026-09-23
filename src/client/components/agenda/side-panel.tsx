@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
-import { Plus, Trash2, ChevronRight, ChevronLeft, ListChecks, CalendarPlus, BellRing, MessageCircle, Phone, Copy, CheckCheck, PhoneCall, Star, CalendarClock, BadgeCheck } from "lucide-react";
+import { Plus, Trash2, ChevronRight, ChevronLeft, ListChecks, CalendarPlus, BellRing, MessageCircle, Phone, Copy, CheckCheck, PhoneCall, Star, CalendarClock, BadgeCheck, Banknote } from "lucide-react";
 import { useApp } from "@/context";
 import { api } from "@/api";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn, colorClasses, formatDate } from "@/lib/utils";
-import type { AppointmentToMake, FollowUpsResponse, Patient, PaymentReminderRow, ReminderRow, ReviewRequestRow, ToMakeSource, WaitingListEntry } from "@/types";
+import type { AppointmentToMake, FollowUpsResponse, Invoice, Patient, PaymentReminderRow, ReminderRow, ReviewRequestRow, ToMakeSource, WaitingListEntry } from "@/types";
+import { PaymentDialog } from "@/components/patients/billing";
 
 const TO_MAKE_SOURCES: ToMakeSource[] = ["reception", "patient", "system"];
 
@@ -557,6 +559,8 @@ function FollowUpsPanel() {
   const [list, setList] = useState<"unscheduled" | "dormant" | "payments">("unscheduled");
   const [contacted, setContacted] = useState<Set<string>>(new Set());
   const [payReminders, setPayReminders] = useState<PaymentReminderRow[] | null>(null);
+  // Installment row the user wants to record a payment against (dialog open).
+  const [recording, setRecording] = useState<PaymentReminderRow | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -587,6 +591,13 @@ function FollowUpsPanel() {
       cancelled = true;
     };
   }, [list, payReminders]);
+
+  /** After a payment is recorded, reload so paid installments drop out. */
+  function refreshPayments() {
+    api<{ reminders: PaymentReminderRow[] }>("GET", "/api/payment-reminders?days=3")
+      .then((res) => setPayReminders(res.reminders))
+      .catch(() => setPayReminders([]));
+  }
 
   function markContacted(key: string) {
     setContacted((s) => new Set(s).add(key));
@@ -669,6 +680,14 @@ function FollowUpsPanel() {
                       <Phone className="h-3 w-3" />
                     </a>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => setRecording(r)}
+                    className="inline-flex h-6 w-8 items-center justify-center rounded border bg-background hover:bg-accent"
+                    title="Record this installment as a payment"
+                  >
+                    <Banknote className={cn("h-3 w-3", contacted.has(key) ? "text-emerald-600" : "")} />
+                  </button>
                   <button
                     type="button"
                     onClick={() => void markPlanReminded(r.plan_id, key)}
@@ -783,7 +802,82 @@ function FollowUpsPanel() {
           );
         })
       )}
+
+      {/* Record-payment dialog for an installment row. The invoice is fetched
+          on open so the shared PaymentDialog gets real totals; the amount is
+          pre-seeded with the installment amount. */}
+      {recording && <InstallmentPayDialog reminder={recording} onClose={() => setRecording(null)} onPaid={refreshPayments} />}
     </div>
+  );
+}
+
+/**
+ * Fetches the reminder's invoice and opens the shared payment dialog with the
+ * installment amount pre-filled. Saving reloads the worklist so paid
+ * installments drop out immediately.
+ */
+function InstallmentPayDialog({
+  reminder,
+  onClose,
+  onPaid,
+}: {
+  reminder: PaymentReminderRow;
+  onClose: () => void;
+  onPaid: () => void;
+}) {
+  const [invoice, setInvoice] = useState<Invoice | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api<{ invoice: Invoice }>("GET", `/api/invoices/${reminder.invoice_id}`)
+      .then((res) => {
+        if (!cancelled) setInvoice(res.invoice);
+      })
+      .catch(() => {
+        if (!cancelled) setError("Could not load this invoice.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reminder.invoice_id]);
+
+  if (error) {
+    return (
+      <Dialog open onOpenChange={(o) => !o && onClose()}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Payment — invoice #{reminder.invoice_id}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">{error}</p>
+          <DialogFooter>
+            <Button variant="outline" onClick={onClose}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  if (!invoice) {
+    return (
+      <Dialog open onOpenChange={(o) => !o && onClose()}>
+        <DialogContent className="sm:max-w-sm">
+          <div className="py-8 text-center text-sm text-muted-foreground">Loading invoice…</div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  return (
+    <PaymentDialog
+      invoice={invoice}
+      prefillAmount={Math.min(reminder.amount, reminder.balance)}
+      onClose={onClose}
+      onSaved={() => {
+        onPaid();
+        onClose();
+      }}
+    />
   );
 }
 
