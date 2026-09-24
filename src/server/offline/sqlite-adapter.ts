@@ -184,6 +184,8 @@ export interface OfflineAdapterOptions {
   schemaSql: string;
   /** Called after every persisted save (UI badge, last-saved display). */
   onSaved?: () => void;
+  /** Epoch ms of the last successful persistence — surfaced to the UI. */
+  lastSavedAt?: () => number;
   /**
    * Persistence override for tests / non-UI contexts. Default: IndexedDB.
    * `load` returns the previous image (or undefined for a fresh install);
@@ -225,6 +227,8 @@ export async function createOfflineD1(opts: OfflineAdapterOptions): Promise<D1Li
   // ── Persistence ──────────────────────────────────────────────
   let persistTimer: ReturnType<typeof setTimeout> | null = null;
   let persistChain: Promise<void> = Promise.resolve();
+  /** Epoch ms of the last successful persistence (0 = nothing written yet). */
+  let lastSavedAt = 0;
 
   if (!saved) {
     // Fresh install: apply the translated schema.
@@ -242,6 +246,7 @@ export async function createOfflineD1(opts: OfflineAdapterOptions): Promise<D1Li
         try {
           const image = db.export();
           await store.save(image);
+          lastSavedAt = Date.now();
           opts.onSaved?.();
         } catch {
           // Persistence failure must not break the request path; the next
@@ -259,6 +264,7 @@ export async function createOfflineD1(opts: OfflineAdapterOptions): Promise<D1Li
       persistChain = persistChain.then(async () => {
         try {
           await store.save(db.export());
+          lastSavedAt = Date.now();
           opts.onSaved?.();
         } catch {
           /* best-effort — see schedulePersist */
@@ -378,6 +384,7 @@ export async function createOfflineD1(opts: OfflineAdapterOptions): Promise<D1Li
       throw new Error("Sessions are not supported in offline mode");
     },
     flush,
+    lastSavedAt: () => lastSavedAt,
   } as unknown as D1LikeDatabase;
 
   return d1;

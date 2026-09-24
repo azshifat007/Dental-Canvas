@@ -34,6 +34,37 @@ export function flushDatabase(): void {
   navigator.serviceWorker?.controller?.postMessage("dental-canvas:flush-db");
 }
 
+export interface OfflineDbStatus {
+  /** Epoch ms of the last successful DB-image persistence (0 = never). */
+  lastSavedAt: number;
+  /** Whether the in-worker server has initialized. */
+  serverReady: boolean;
+}
+
+/**
+ * Ask the service worker when the offline database last persisted. Resolves
+ * null when there's no SW (browser mode) or it doesn't answer in time.
+ */
+export function getOfflineDbStatus(timeoutMs = 2000): Promise<OfflineDbStatus | null> {
+  const controller = navigator.serviceWorker?.controller;
+  if (!controller) return Promise.resolve(null);
+  const sw = navigator.serviceWorker;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      sw.removeEventListener("message", onMsg);
+      resolve(null);
+    }, timeoutMs);
+    const onMsg = (e: MessageEvent) => {
+      if (e.data?.type !== "dental-canvas:status") return;
+      clearTimeout(timer);
+      sw.removeEventListener("message", onMsg);
+      resolve({ lastSavedAt: e.data.lastSavedAt ?? 0, serverReady: !!e.data.serverReady });
+    };
+    sw.addEventListener("message", onMsg);
+    controller.postMessage("dental-canvas:get-status");
+  });
+}
+
 export async function activateOfflineMode(): Promise<void> {
   if (!isTauriDesktop() || !("serviceWorker" in navigator)) return;
 

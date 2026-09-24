@@ -313,6 +313,30 @@ async function ensureColumnMigrations(): Promise<void> {
       resolved_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`);
+    // Databases created before online booking existed.
+    await run(`CREATE TABLE IF NOT EXISTS booking_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      token TEXT NOT NULL UNIQUE,
+      label TEXT NOT NULL DEFAULT 'Online booking',
+      practitioner_id INTEGER REFERENCES practitioners(id) ON DELETE CASCADE,
+      treatment_type_id INTEGER REFERENCES treatment_types(id) ON DELETE SET NULL,
+      days_ahead INTEGER NOT NULL DEFAULT 14,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    await run(`CREATE TABLE IF NOT EXISTS booking_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      link_id INTEGER NOT NULL REFERENCES booking_links(id) ON DELETE CASCADE,
+      appointment_id INTEGER REFERENCES appointments(id) ON DELETE SET NULL,
+      first_name TEXT NOT NULL,
+      last_name TEXT NOT NULL,
+      phone TEXT,
+      email TEXT,
+      start_time TEXT NOT NULL,
+      treatment_type_id INTEGER REFERENCES treatment_types(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'booked',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
     // Databases created before the recall / confirmation features existed.
     const recallCols = await query<{ name: string }>("PRAGMA table_info(appointments_to_make)");
     if (!recallCols.some((c) => c.name === "confirmed_at")) {
@@ -4593,8 +4617,296 @@ app.post("/api/search/reindex", async (c) => {
   return c.json({ ok: true, counts });
 });
 
-// ── Health ─────────────────────────────────────────────────────────
+// ── Health ─────────────────────────────────────────────────
 
 app.get("/api/health", (c) => c.json({ ok: true }));
+
+// ── Online booking (public self-scheduling) ─────────────────
+//
+// The practice issues booking links (with a random token); patients open
+// the public page /book/<token>, pick a free slot from real availability,
+// and the appointment lands on the agenda as 'scheduled' + a booking_request
+// audit row. The token grants access ONLY to availability + booking — no
+// patient list, no settings, nothing else.
+
+function newBookingToken(): string {
+  const bytes = new Uint8Array(18);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+const BookingLinkInput = z.object({
+  label: z.string().min(1).max(80).optional(),
+  practitioner_id: z.number().int().positive().nullable().optional(),
+  treatment_type_id: z.number().int().positive().nullable().optional(),
+  days_ahead: z.number().int().min(1).max(60).optional(),
+  active: z.boolean().optional(),
+});
+
+app.get("/api/booking/links", async (c) => {
+  await ensureMigrated();
+  const rows = await query<{
+    id: number; token: string; label: string; practitioner_id: number | null;
+    practitioner_name: string | null; treatment_type_id: number | null;
+    treatment_name: string | null; days_ahead: number; active: number; created_at: string;
+  }>(
+    `SELECT b.*, pr.name AS practitioner_name, tt.name AS treatment_name
+     FROM booking_links b
+     LEFT JOIN practitioners pr ON pr.id = b.practitioner_id
+     LEFT JOIN treatment_types tt ON tt.id = b.treatment_type_id
+     ORDER BY b.created_at DESC`,
+  );
+  return c.json({ links: rows });
+});
+
+app.post("/api/booking/links", async (c) => {
+  await ensureMigrated();
+  const parsed = await parseJson(c, BookingLinkInput);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const d = parsed.data;
+  const token = newBookingToken();
+  const result = await run(
+    `INSERT INTO booking_links (token, label, practitioner_id, treatment_type_id, days_ahead, active)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [token, d.label ?? "Online booking", d.practitioner_id ?? null, d.treatment_type_id ?? null, d.days_ahead ?? 14, d.active === false ? 0 : 1],
+  );
+  const row = await get("SELECT * FROM booking_links WHERE id = ?", [result.lastInsertRowid]);
+  return c.json({ link: row }, 201);
+});
+
+app.put("/api/booking/links/:id", async (c) => {
+  await ensureMigrated();
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const parsed = await parseJson(c, BookingLinkInput.partial());
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const d = parsed.data;
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  for (const [k, v] of Object.entries(d)) {
+    if (v !== undefined) { sets.push(`${k} = ?`); params.push(typeof v === "boolean" ? (v ? 1 : 0) : v); }
+  }
+  if (!sets.length) return c.json({ error: "Nothing to update" }, 400);
+  params.push(id);
+  const res = await run(`UPDATE booking_links SET ${sets.join(", ")} WHERE id = ?`, params);
+  if (res.changes === 0) return c.json({ error: "Not found" }, 404);
+  const row = await get("SELECT * FROM booking_links WHERE id = ?", [id]);
+  return c.json({ link: row });
+});
+
+app.delete("/api/booking/links/:id", async (c) => {
+  await ensureMigrated();
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  await run("DELETE FROM booking_links WHERE id = ?", [id]);
+  return c.json({ ok: true });
+});
+
+// ── Public booking API (token-authed, no patient data exposure) ──
+
+interface BookingLinkRow {
+  id: number; token: string; label: string; practitioner_id: number | null;
+  treatment_type_id: number | null; days_ahead: number; active: number;
+}
+
+async function loadActiveBookingLink(token: string): Promise<BookingLinkRow | null> {
+  return (await get<BookingLinkRow>("SELECT * FROM booking_links WHERE token = ? AND active = 1", [token])) ?? null;
+}
+
+app.get("/api/public/booking/:token", async (c) => {
+  await ensureSeeded();
+  const link = await loadActiveBookingLink(c.req.param("token"));
+  if (!link) return c.json({ error: "This booking link is not available" }, 404);
+  // Public page payload: clinic identity + bookable treatment menu only.
+  const clinic = await get<{ clinic_name: string; clinic_address: string; doctor_name: string }>(
+    `SELECT MAX(CASE WHEN key='clinic_name' THEN value END) AS clinic_name,
+            MAX(CASE WHEN key='clinic_address' THEN value END) AS clinic_address,
+            MAX(CASE WHEN key='doctor_name' THEN value END) AS doctor_name
+     FROM settings`,
+  );
+  const treatments = await query<{ id: number; name: string; duration_minutes: number; default_fee: number }>(
+    link.treatment_type_id
+      ? "SELECT id, name, duration_minutes, default_fee FROM treatment_types WHERE id = ?"
+      : "SELECT id, name, duration_minutes, default_fee FROM treatment_types ORDER BY name",
+    link.treatment_type_id ? [link.treatment_type_id] : [],
+  );
+  return c.json({
+    label: link.label,
+    clinic_name: clinic?.clinic_name || "Dental Canvas",
+    clinic_address: clinic?.clinic_address || "",
+    doctor_name: clinic?.doctor_name || "",
+    practitioner_name: link.practitioner_id
+      ? (await get<{ name: string }>("SELECT name FROM practitioners WHERE id = ?", [link.practitioner_id]))?.name ?? null
+      : null,
+    treatments,
+    days_ahead: link.days_ahead,
+  });
+});
+
+/**
+ * Free slots for a date: the practice's configured day window sliced into
+ * slot steps, minus booked/blocked time in the target operatory. Operatory
+ * choice: the link's practitioner's usual room, else the first operatory.
+ */
+app.get("/api/public/booking/:token/slots", async (c) => {
+  await ensureSeeded();
+  const link = await loadActiveBookingLink(c.req.param("token"));
+  if (!link) return c.json({ error: "This booking link is not available" }, 404);
+  const date = c.req.query("date") ?? "";
+  const treatmentId = intParam(c.req.query("treatment_id") ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return c.json({ error: "Invalid date" }, 400);
+
+  const dayStart = new Date(Date.now()).toISOString().slice(0, 10);
+  if (date < dayStart) return c.json({ slots: [] });
+  const maxDate = new Date(Date.now() + link.days_ahead * 86_400_000).toISOString().slice(0, 10);
+  if (date > maxDate) return c.json({ slots: [], past_window: true });
+
+  const settingsRows = await query<{ key: string; value: string }>(
+    "SELECT key, value FROM settings WHERE key IN ('day_start_minute','day_end_minute','slot_minutes')",
+  );
+  const setting = (k: string, dflt: number) => {
+    const n = parseInt(settingsRows.find((r) => r.key === k)?.value ?? "", 10);
+    return Number.isFinite(n) ? n : dflt;
+  };
+  const dayStartMin = setting("day_start_minute", 420);
+  const dayEndMin = setting("day_end_minute", 1140);
+  const slotMin = Math.max(5, setting("slot_minutes", 15));
+
+  const treatment = treatmentId
+    ? await get<{ duration_minutes: number }>("SELECT duration_minutes FROM treatment_types WHERE id = ?", [treatmentId])
+    : null;
+  const duration = Math.max(slotMin, treatment?.duration_minutes ?? 30);
+
+  // Sunday = closed (0); Saturday uses the standard window.
+  if (new Date(`${date}T12:00:00Z`).getUTCDay() === 0) return c.json({ slots: [] });
+
+  const operatory = link.practitioner_id
+    ? (await get<{ id: number }>(
+        "SELECT o.id FROM operatories o LEFT JOIN practitioners p ON p.id = ? ORDER BY o.sort_order LIMIT 1",
+        [link.practitioner_id],
+      ) ?? (await get<{ id: number }>("SELECT id FROM operatories ORDER BY sort_order LIMIT 1")))
+    : await get<{ id: number }>("SELECT id FROM operatories ORDER BY sort_order LIMIT 1");
+  if (!operatory) return c.json({ error: "No operatory configured" }, 400);
+
+  const busy = await query<{ start_time: string; end_time: string }>(
+    `SELECT start_time, end_time FROM appointments
+     WHERE operatory_id = ? AND substr(start_time, 1, 10) = ?
+       AND status NOT IN ('cancelled', 'no_show')
+     ORDER BY start_time`,
+    [operatory.id, date],
+  );
+
+  const slots: { time: string; label: string }[] = [];
+  for (let m = dayStartMin; m + duration <= dayEndMin; m += slotMin) {
+    const start = `${date}T${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}:00`;
+    const end = `${date}T${String(Math.floor((m + duration) / 60)).padStart(2, "0")}:${String((m + duration) % 60).padStart(2, "0")}:00`;
+    const clash = busy.some((b) => start < b.end_time && end > b.start_time);
+    if (!clash) {
+      const h12 = ((Math.floor(m / 60) + 11) % 12) + 1;
+      const ampm = Math.floor(m / 60) < 12 ? "am" : "pm";
+      slots.push({ time: start, label: `${h12}:${String(m % 60).padStart(2, "0")} ${ampm}` });
+    }
+  }
+  return c.json({ slots, operatory_id: operatory.id, duration });
+});
+
+const PublicBookingInput = z.object({
+  first_name: z.string().min(1).max(60),
+  last_name: z.string().min(1).max(60),
+  phone: z.string().max(30).optional(),
+  email: z.string().max(120).optional(),
+  start_time: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/),
+  treatment_type_id: z.number().int().positive().nullable().optional(),
+  notes: z.string().max(500).optional(),
+});
+
+app.post("/api/public/booking/:token", async (c) => {
+  await ensureSeeded();
+  const link = await loadActiveBookingLink(c.req.param("token"));
+  if (!link) return c.json({ error: "This booking link is not available" }, 404);
+  const parsed = await parseJson(c, PublicBookingInput);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const d = parsed.data;
+
+  // Slot re-validation happens against live conflicts below; opening-hours
+  // checks run first so a bad submit fails fast.
+  const settingsRows = await query<{ key: string; value: string }>(
+    "SELECT key, value FROM settings WHERE key IN ('day_start_minute','day_end_minute')",
+  );
+  const dayStartMin = parseInt(settingsRows.find((r) => r.key === "day_start_minute")?.value ?? "420", 10) || 420;
+  const dayEndMin = parseInt(settingsRows.find((r) => r.key === "day_end_minute")?.value ?? "1140", 10) || 1140;
+
+  const treatment = d.treatment_type_id
+    ? await get<{ duration_minutes: number }>("SELECT duration_minutes FROM treatment_types WHERE id = ?", [d.treatment_type_id])
+    : null;
+  const duration = treatment?.duration_minutes ?? 30;
+
+  const startDate = d.start_time.slice(0, 10);
+  const minutesOfDay = parseInt(d.start_time.slice(11, 13), 10) * 60 + parseInt(d.start_time.slice(14, 16), 10);
+  if (d.start_time.slice(19) !== "" || minutesOfDay < dayStartMin || minutesOfDay + duration > dayEndMin) {
+    return c.json({ error: "That time is outside opening hours" }, 400);
+  }
+  const endDate = `${startDate}T${String(Math.floor((minutesOfDay + duration) / 60)).padStart(2, "0")}:${String((minutesOfDay + duration) % 60).padStart(2, "0")}:00`;
+
+  const operatory = link.practitioner_id
+    ? ((await get<{ id: number }>(
+        "SELECT o.id FROM operatories o ORDER BY o.sort_order LIMIT 1",
+      )) ?? null)
+    : (await get<{ id: number }>("SELECT id FROM operatories ORDER BY sort_order LIMIT 1")) ?? null;
+  if (!operatory) return c.json({ error: "No operatory configured" }, 400);
+
+  const conflict = await findAppointmentConflict(operatory.id, d.start_time, endDate, {
+    practitionerId: link.practitioner_id,
+    patientKind: true,
+  });
+  if (conflict) return c.json({ error: "Sorry, that slot was just taken — please pick another." }, 409);
+
+  // Find or create the patient (match on phone, then email, then name).
+  let patientId: number | null = null;
+  if (d.phone) {
+    const existing = await get<{ id: number }>("SELECT id FROM patients WHERE phone = ? LIMIT 1", [d.phone]);
+    patientId = existing?.id ?? null;
+  }
+  if (!patientId && d.email) {
+    const existing = await get<{ id: number }>("SELECT id FROM patients WHERE email = ? LIMIT 1", [d.email]);
+    patientId = existing?.id ?? null;
+  }
+  if (!patientId) {
+    const result = await run(
+      "INSERT INTO patients (first_name, last_name, phone, email) VALUES (?, ?, ?, ?)",
+      [d.first_name, d.last_name, d.phone ?? null, d.email ?? null],
+    );
+    patientId = Number(result.lastInsertRowid);
+  }
+
+  const appt = await run(
+    `INSERT INTO appointments (patient_id, practitioner_id, operatory_id, treatment_type_id, start_time, end_time, status, kind, notes)
+     VALUES (?, ?, ?, ?, ?, ?, 'scheduled', 'patient', ?)`,
+    [patientId, link.practitioner_id, operatory.id, d.treatment_type_id ?? link.treatment_type_id ?? null, d.start_time, endDate, d.notes ?? null],
+  );
+  await run(
+    `INSERT INTO booking_requests (link_id, appointment_id, first_name, last_name, phone, email, start_time, treatment_type_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [link.id, appt.lastInsertRowid, d.first_name, d.last_name, d.phone ?? null, d.email ?? null, d.start_time, d.treatment_type_id ?? null],
+  );
+  return c.json({ ok: true, appointment_id: appt.lastInsertRowid }, 201);
+});
+
+/** Booking requests feed (for the front desk) — newest first. */
+app.get("/api/booking/requests", async (c) => {
+  await ensureMigrated();
+  const rows = await query<{
+    id: number; first_name: string; last_name: string; phone: string | null; email: string | null;
+    start_time: string; status: string; created_at: string; appointment_id: number | null;
+    treatment_name: string | null; link_label: string;
+  }>(
+    `SELECT br.*, tt.name AS treatment_name, bl.label AS link_label
+     FROM booking_requests br
+     LEFT JOIN treatment_types tt ON tt.id = br.treatment_type_id
+     LEFT JOIN booking_links bl ON bl.id = br.link_id
+     ORDER BY br.created_at DESC LIMIT 100`,
+  );
+  return c.json({ requests: rows });
+});
 
 export default app;

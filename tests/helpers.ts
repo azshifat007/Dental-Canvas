@@ -94,6 +94,8 @@ export async function createTestContext(): Promise<TestContext> {
       // Drop in dependency order (children first) — D1's FK enforcement can
       // not be toggled reliably per-session, and PRAGMA has no effect here.
       const order = [
+        "booking_requests",
+        "booking_links",
         "invoice_payments",
         "consent_signatures",
         "consent_templates",

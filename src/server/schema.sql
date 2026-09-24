@@ -690,6 +690,35 @@ CREATE TRIGGER IF NOT EXISTS search_inventory_items_au AFTER UPDATE ON inventory
     TRIM(COALESCE(NEW.category,'') || ' ' || COALESCE(NEW.sku,'') || ' ' || COALESCE(NEW.supplier_name,'') || ' ' || COALESCE(NEW.batch_number,'')));
 END;
 
+-- ── Online booking links (public self-scheduling) ───────────────
+-- A practice can issue booking links (per practitioner or practice-wide).
+-- Each link is a random token; the public booking page uses it to read
+-- availability and create appointments WITHOUT any other API access.
+CREATE TABLE IF NOT EXISTS booking_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  token TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL DEFAULT 'Online booking',
+  practitioner_id INTEGER REFERENCES practitioners(id) ON DELETE CASCADE,
+  treatment_type_id INTEGER REFERENCES treatment_types(id) ON DELETE SET NULL,
+  days_ahead INTEGER NOT NULL DEFAULT 14,      -- how far out patients can book
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS booking_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  link_id INTEGER NOT NULL REFERENCES booking_links(id) ON DELETE CASCADE,
+  appointment_id INTEGER REFERENCES appointments(id) ON DELETE SET NULL,
+  first_name TEXT NOT NULL,
+  last_name TEXT NOT NULL,
+  phone TEXT,
+  email TEXT,
+  start_time TEXT NOT NULL,
+  treatment_type_id INTEGER REFERENCES treatment_types(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'booked',   -- 'booked' | 'cancelled'
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- ── Seed data ──────────────────────────────────────────────────
 -- The sample operatories, practitioners and treatment types moved into the app
 -- (src/server/seed.ts, applied by `ensureSeeded` in src/server/index.ts).

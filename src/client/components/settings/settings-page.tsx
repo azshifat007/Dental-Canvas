@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Plus, Trash2, Pencil, Check, X, Clock, UserRound, DatabaseBackup, Palette, Monitor, Sun, Moon, ImageUp, Mail, ReceiptText, MailCheck, QrCode, Printer } from "lucide-react";
+import { Plus, Trash2, Pencil, Check, X, Clock, UserRound, DatabaseBackup, Palette, Monitor, Sun, Moon, ImageUp, Mail, ReceiptText, MailCheck, QrCode, Printer, Link2 } from "lucide-react";
 import { useApp } from "@/context";
 import { api } from "@/api";
 import { toast } from "@/components/ui/toast";
 import { BackupTab } from "./backup-tab";
+import { BookingTab } from "./booking-tab";
 import { StorageTab } from "./storage-tab";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
 import { useAccessibility, type A11yPreference } from "@/hooks/use-accessibility";
@@ -44,6 +45,9 @@ export function SettingsPage() {
             <TabsTrigger value="membership">Membership</TabsTrigger>
             <TabsTrigger value="consents">Consent forms</TabsTrigger>
             <TabsTrigger value="hours">Hours</TabsTrigger>
+            <TabsTrigger value="booking" className="gap-1.5">
+              <Link2 className="h-3.5 w-3.5" /> Online booking
+            </TabsTrigger>
             <TabsTrigger value="email" className="gap-1.5">
               <Mail className="h-3.5 w-3.5" /> Email
             </TabsTrigger>
@@ -82,6 +86,9 @@ export function SettingsPage() {
           </TabsContent>
           <TabsContent value="hours" className="mt-4">
             <HoursTab />
+          </TabsContent>
+          <TabsContent value="booking" className="mt-4">
+            <BookingTab />
           </TabsContent>
           <TabsContent value="email" className="mt-4 space-y-4">
             <EmailTab />

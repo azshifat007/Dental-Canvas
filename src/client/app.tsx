@@ -22,6 +22,7 @@ import { PrescriptionPrintView } from "./components/prescriptions/prescription-p
 import { InvoicePrintView } from "./components/patients/invoice-print-view";
 import { OPEN_REGISTER_PATIENT } from "./lib/quick-register";
 import { KioskPage } from "./components/kiosk/kiosk-page";
+import { PublicBookingPage } from "./components/booking/public-booking-page";
 import type { Patient } from "./types";
 import { AgendaPage } from "./components/agenda/agenda-page";
 import { DashboardPage } from "./components/dashboard/dashboard-page";
@@ -143,6 +144,11 @@ export function App() {
         <ErrorBanner />
       </AppContext.Provider>
     );
+  }
+  // Public booking page — for patients clicking the practice's booking link.
+  // No app chrome; the token scopes what it can see.
+  if (route.name === "public-booking") {
+    return <PublicBookingPage token={route.token} />;
   }
 
   return (

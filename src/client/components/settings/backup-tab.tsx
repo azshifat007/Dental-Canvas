@@ -16,7 +16,7 @@ import {
 import { api } from "@/api";
 import { useApp } from "@/context";
 import { cn } from "@/lib/utils";
-import { isTauriDesktop } from "@/offline/activate";
+import { getOfflineDbStatus, isTauriDesktop } from "@/offline/activate";
 import {
   chooseDesktopBackupFolder,
   clearDesktopBackupFolder,
@@ -111,6 +111,95 @@ function formatCountdown(ms: number | null): string {
   if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
   if (m > 0) return `${m}m ${String(s).padStart(2, "0")}s`;
   return `${s}s`;
+}
+
+// ── Data-safety status (desktop): DB flush + folder backup recency ──
+
+function DataSafetyRow() {
+  const [dbSavedAt, setDbSavedAt] = useState<number | null>(null);
+  const [serverReady, setServerReady] = useState(false);
+  const [backupState, setBackupState] = useState<DesktopBackupState | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  // Mirror for the poll loop (avoids effect churn when readiness flips).
+  const serverReadyRef = useRef(false);
+
+  const reload = useCallback(async () => {
+    const status = isTauriDesktop() ? await getOfflineDbStatus() : null;
+    serverReadyRef.current = status ? status.serverReady : false;
+    setDbSavedAt(status ? status.lastSavedAt : null);
+    setServerReady(status ? status.serverReady : false);
+    if (isTauriDesktop()) setBackupState(await getDesktopBackupState());
+  }, []);
+
+  useEffect(() => {
+    if (!isTauriDesktop()) return;
+    let stop = false;
+    // The service worker cold-starts lazily (it's killed after ~30s idle), so
+    // the first probe can arrive before the in-worker server finishes init.
+    // Poll until healthy instead of freezing on "starting…".
+    const tick = async () => {
+      await reload();
+      if (stop) return;
+      if (!serverReadyRef.current) setTimeout(() => !stop && void tick(), 1500);
+    };
+    void tick();
+    // Ticker so the "x min ago" labels stay honest.
+    const t = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => {
+      stop = true;
+      window.clearInterval(t);
+    };
+  }, [reload]);
+
+  if (!isTauriDesktop()) return null;
+
+  const ago = (ms: number) => {
+    if (ms <= 0) return "never";
+    const s = Math.floor((now - ms) / 1000);
+    if (s < 60) return "just now";
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m} min ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h} h ago`;
+    return `${Math.floor(h / 24)} d ago`;
+  };
+
+  // Healthy = backend up and the DB has been persisted at least once (a fresh
+  // install persists the seeded schema immediately, so 0 here means trouble).
+  const dbOk = serverReady && (dbSavedAt ?? 0) > 0;
+  const folderOk = (backupState?.active ?? false) && (backupState?.lastRunAt ?? 0) > 0;
+
+  const dot = (ok: boolean) => (
+    <span
+      className={cn(
+        "inline-block h-2.5 w-2.5 shrink-0 rounded-full",
+        ok ? "bg-emerald-500" : (dbSavedAt !== null || backupState !== null) ? "bg-amber-500" : "bg-muted-foreground/40",
+      )}
+    />
+  );
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-lg border bg-muted/30 px-4 py-3 text-sm">
+      <span className="flex items-center gap-2">
+        {dot(dbOk)}
+        <span className="text-muted-foreground">Data saved to this computer:</span>
+        <span className="font-medium" title={dbSavedAt ? new Date(dbSavedAt).toLocaleString() : undefined}>
+          {dbOk ? ago(dbSavedAt!) : serverReady ? "pending…" : "starting…"}
+        </span>
+      </span>
+      <span className="flex items-center gap-2">
+        {dot(folderOk)}
+        <span className="text-muted-foreground">Folder backup:</span>
+        <span className="font-medium">
+          {backupState === null
+            ? "…"
+            : backupState.active
+              ? `${ago(backupState.lastRunAt)}${backupState.nextRunAt ? ` · next ${new Date(backupState.nextRunAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}`
+              : "not set up"}
+        </span>
+      </span>
+    </div>
+  );
 }
 
 // ── Tab root ───────────────────────────────────────────────────────
@@ -220,6 +309,8 @@ export function BackupTab() {
           <Download className="h-3.5 w-3.5" /> Treatments CSV
         </a>
       </div>
+
+      <DataSafetyRow />
 
       {message && (
         <div

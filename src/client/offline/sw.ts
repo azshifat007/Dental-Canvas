@@ -32,7 +32,7 @@ let serverFetch: ((req: Request) => Promise<Response> | Response) | null = null;
 let serverReady: Promise<void> | null = null;
 
 /** The live adapter, kept so the shutdown flush can reach `flush()`. */
-let liveDb: { flush(): Promise<void> } | null = null;
+let liveDb: { flush(): Promise<void>; lastSavedAt?(): number } | null = null;
 
 async function initServer(): Promise<void> {
   const d1 = await createOfflineD1({
@@ -97,6 +97,14 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
         await liveDb?.flush().catch(() => undefined);
       })(),
     );
+  }
+  // Health probe from Settings → Backup: when the DB image last hit IndexedDB.
+  if (event.data === "dental-canvas:get-status" && event.source && typeof (event.source as Client).postMessage === "function") {
+    (event.source as Client).postMessage({
+      type: "dental-canvas:status",
+      lastSavedAt: liveDb?.lastSavedAt?.() ?? 0,
+      serverReady: !!liveDb,
+    });
   }
 });
 

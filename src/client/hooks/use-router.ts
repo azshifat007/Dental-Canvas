@@ -4,6 +4,7 @@ export type Route =
   | { name: "dashboard" }
   | { name: "agenda" }
   | { name: "kiosk" }
+  | { name: "public-booking"; token: string }
   | { name: "patients" }
   | { name: "patient"; id: number }
   | { name: "patient-prescription"; id: number; prescriptionId: number }
@@ -22,6 +23,10 @@ function parse(path: string): Route {
   if (path === "/" || path === "/dashboard") return { name: "dashboard" };
   if (path === "/agenda") return { name: "agenda" };
   if (path === "/kiosk") return { name: "kiosk" };
+  {
+    const m = path.match(/^\/book\/([a-f0-9]+)\/?$/);
+    if (m) return { name: "public-booking", token: m[1] };
+  }
   if (path === "/patients") return { name: "patients" };
   const m = path.match(/^\/patients\/(\d+)$/);
   if (m) return { name: "patient", id: parseInt(m[1], 10) };
