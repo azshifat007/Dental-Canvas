@@ -3,5 +3,16 @@
   "identifier": "default",
   "description": "Default capability for the Dental Canvas main window",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "opener:default",
+      "allow": [
+        { "url": "https://*/*" },
+        { "url": "http://*/*" },
+        { "url": "mailto:*" },
+        { "url": "tel:*" }
+      ]
+    }
+  ]
 }

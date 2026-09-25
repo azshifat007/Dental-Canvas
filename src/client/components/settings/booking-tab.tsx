@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
+import { openExternalUrl } from "@/lib/open-external";
 import type { Practitioner, TreatmentType } from "@/types";
 
 /**
@@ -111,7 +112,9 @@ export function BookingTab() {
       await navigator.clipboard.writeText(bookingUrl(link.token));
       toast.success("Link copied — share it on your website, Google profile, or WhatsApp");
     } catch {
-      toast.error("Copy failed — select the link text manually");
+      // Clipboard can be blocked (WebView2 permission, window not focused);
+      // point at the working manual route instead of a silent failure.
+      toast.error("Copy failed — use Preview and copy the link from the browser", 8000);
     }
   }
 
@@ -200,7 +203,7 @@ export function BookingTab() {
                     <Button size="sm" variant="outline" onClick={() => copy(link)}>
                       <Copy className="h-3.5 w-3.5" /> Copy
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => window.open(bookingUrl(link.token), "_blank")} title="Preview the patient view">
+                    <Button size="sm" variant="ghost" onClick={() => void openExternalUrl(bookingUrl(link.token))} title="Preview the patient view in your browser">
                       <QrCode className="h-3.5 w-3.5" /> Preview
                     </Button>
                     <Button size="sm" variant="ghost" onClick={() => toggle(link)} disabled={busy !== null}>

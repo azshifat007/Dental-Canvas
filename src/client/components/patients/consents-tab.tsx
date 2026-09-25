@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn, formatDate } from "@/lib/utils";
+import { printHtmlDocument } from "@/lib/print";
 import { toast } from "@/components/ui/toast";
 import type { ConsentSignature, ConsentTemplate } from "@/types";
 
@@ -185,10 +186,9 @@ export function ConsentsTab({ patientId }: { patientId: number }) {
     } catch {
       /* print without the body rather than failing */
     }
-    const win = window.open("", "_blank", "width=800,height=1000");
-    if (!win) return;
     const esc = (s: string) => s.replace(/[&<>]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[ch]!));
-    win.document.write(`<!doctype html><html><head><title>Consent — ${esc(c.template_title ?? "")}</title>
+    printHtmlDocument(
+      `<!doctype html><html><head><title>Consent — ${esc(c.template_title ?? "")}</title>
       <style>
         body { font-family: Georgia, serif; max-width: 700px; margin: 40px auto; color: #1e293b; line-height: 1.6; }
         h1 { font-size: 20px; border-bottom: 2px solid #1e293b; padding-bottom: 8px; }
@@ -202,9 +202,8 @@ export function ConsentsTab({ patientId }: { patientId: number }) {
       <div class="meta">Signed by ${esc(c.signer_name)} (${ROLE_LABEL[c.signer_role] ?? c.signer_role}) · ${formatDate(c.signed_at)}</div>
       <div class="body">${esc(body)}</div>
       <div class="sig"><img src="${c.signature_data}" alt="signature" /></div>
-      <script>window.onload = function() { window.print(); };</script>
-      </body></html>`);
-    win.document.close();
+      </body></html>`,
+    );
   };
 
   return (

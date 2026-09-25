@@ -67,7 +67,9 @@ jobs:
           releaseBody: |
             Download the Dental Canvas Windows .exe installer below.
 
-            This release packages the desktop UI shell only; the Cloudflare Worker/D1 backend is not bundled. See README.md for setup and limitations. The installer is not code-signed.
+            This release packages the full offline desktop app — UI and the local SQLite backend are both bundled, so the clinic can run entirely without internet. The installer is not code-signed.
+
+            See README.md for setup and limitations.
           releaseDraft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           args: --target x86_64-pc-windows-msvc --bundles nsis

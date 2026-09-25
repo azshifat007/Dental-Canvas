@@ -19,6 +19,7 @@ import { PrescriptionSheet, isPrescriptionTemplate } from "./prescription-sheet"
 import { PrescriptionPreviewModal } from "./prescription-preview-modal";
 import { TemplateDropdown } from "./template-picker";
 import { printSheetHtml, downloadSheetPdf, shareSheetPdf, sheetPdfBase64 } from "@/lib/print";
+import { openExternalUrl } from "@/lib/open-external";
 import { ageFromDob } from "@/lib/utils";
 import { useMaterializedImages } from "@/lib/images";
 
@@ -400,7 +401,7 @@ function WhatsAppButton({
     const text = encodeURIComponent(
       `Hello ${firstName}, here is your prescription from ${practiceLabel} (${rx.issued_date}).`,
     );
-    window.open(`https://wa.me/${digits}?text=${text}`, "_blank", "noopener");
+    void openExternalUrl(`https://wa.me/${digits}?text=${text}`);
 
     setBusy(true);
     try {

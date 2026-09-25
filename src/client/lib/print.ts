@@ -5,6 +5,28 @@
  * keeps the app's dark theme and layout out of the paper output.
  */
 
+/**
+ * Print a full HTML document without any host element. Writes the markup into
+ * a hidden iframe and calls print() — the only technique that works inside the
+ * Tauri WebView, where `window.open("", "_blank")` cannot spawn a window
+ * (the consent-print flow used to silently do nothing on Windows).
+ */
+export function printHtmlDocument(html: string): void {
+  const frame = document.createElement("iframe");
+  frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
+  document.body.appendChild(frame);
+  const doc = frame.contentDocument;
+  if (!doc) return;
+  doc.open();
+  doc.write(html);
+  doc.close();
+  frame.addEventListener("load", () => {
+    frame.contentWindow?.focus();
+    frame.contentWindow?.print();
+    window.setTimeout(() => frame.remove(), 500);
+  });
+}
+
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
 }

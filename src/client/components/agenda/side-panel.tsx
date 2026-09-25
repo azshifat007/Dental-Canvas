@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn, colorClasses, formatDate } from "@/lib/utils";
+import { openExternalUrl } from "@/lib/open-external";
 import type { AppointmentToMake, FollowUpsResponse, Invoice, Patient, PaymentReminderRow, ReminderRow, ReviewRequestRow, ToMakeSource, WaitingListEntry } from "@/types";
 import { PaymentDialog } from "@/components/patients/billing";
 
@@ -150,7 +151,7 @@ function WaitingListRow({ entry }: { entry: WaitingListEntry }) {
         `/api/waiting-list/${entry.id}/offer?slot=${slot.toISOString().slice(0, 19)}`,
       );
       setOfferUrl(res.wa_url);
-      window.open(res.wa_url, "_blank", "noopener");
+      void openExternalUrl(res.wa_url);
       await app.refreshSidePanels();
     } catch (err) {
       app.setError((err as Error).message);
