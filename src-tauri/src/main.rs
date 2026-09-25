@@ -19,6 +19,17 @@ fn main() {
         // Opens https:// (WhatsApp links, booking previews) in the system's
         // default browser; the WebView itself cannot spawn windows.
         .plugin(tauri_plugin_opener::init())
+        // In-app updates: the updater verifies signed update bundles against
+        // the pubkey in tauri.conf.json; the process plugin provides relaunch
+        // after an update installs. Both are desktop-only.
+        .setup(|app| {
+            #[cfg(desktop)]
+            {
+                app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+                app.handle().plugin(tauri_plugin_process::init())?;
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running Dental Canvas");
 }

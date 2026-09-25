@@ -22,9 +22,16 @@ interface BookingLinkRow {
   link: { id: number; token: string; label: string; days_ahead: number; active: number };
 }
 
-function tomorrowIso(): string {
+/**
+ * The next bookable date, UTC-based like the server: slot generation works on
+ * UTC calendar dates and Sundays are closed (getUTCDay() === 0), so a naive
+ * "local tomorrow" could land on a Sunday (e.g. running late Saturday night
+ * in a timezone behind UTC) and see an empty slot list. Skip to Monday.
+ */
+function nextOpenDateIso(): string {
   const d = new Date(Date.now() + 86_400_000);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  while (d.getUTCDay() === 0) d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
 }
 
 async function createLink(overrides: Record<string, unknown> = {}): Promise<BookingLinkRow["link"]> {
@@ -72,7 +79,7 @@ describe("online booking", () => {
 
   it("returns free slots inside opening hours and marks booked ones", async () => {
     const link = await createLink();
-    const date = tomorrowIso();
+    const date = nextOpenDateIso();
     const res = await app.request(`/api/public/booking/${link.token}/slots?date=${date}`, undefined, { DB: ctx.db });
     expect(res.status).toBe(200);
     const { slots } = (await res.json()) as { slots: { time: string }[] };
@@ -83,7 +90,7 @@ describe("online booking", () => {
 
   it("books a real appointment end-to-end and registers the patient", async () => {
     const link = await createLink();
-    const date = tomorrowIso();
+    const date = nextOpenDateIso();
     const slotsRes = await app.request(`/api/public/booking/${link.token}/slots?date=${date}`, undefined, { DB: ctx.db });
     const { slots } = (await slotsRes.json()) as { slots: { time: string }[] };
     const slot = slots[0];
@@ -125,7 +132,7 @@ describe("online booking", () => {
 
   it("rejects a double-booking of the same slot with 409", async () => {
     const link = await createLink();
-    const date = tomorrowIso();
+    const date = nextOpenDateIso();
     const slotsRes = await app.request(`/api/public/booking/${link.token}/slots?date=${date}`, undefined, { DB: ctx.db });
     const { slots } = (await slotsRes.json()) as { slots: { time: string }[] };
     const slot = slots[0];
@@ -139,7 +146,7 @@ describe("online booking", () => {
 
   it("rejects bookings outside opening hours", async () => {
     const link = await createLink();
-    const date = tomorrowIso();
+    const date = nextOpenDateIso();
     const req = jsonRequest("POST", `/api/public/booking/${link.token}`, {
       first_name: "Late",
       last_name: "Night",

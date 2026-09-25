@@ -10,6 +10,7 @@ import { Toaster } from "./components/ui/toast";
 import { useAutoBackup } from "./hooks/use-auto-backup";
 import { isTauriDesktop } from "./offline/activate";
 import { startDesktopBackupScheduler } from "./offline/desktop-backup";
+import { startUpdatePoller } from "./lib/updater";
 import { useDailyInventoryScan } from "./hooks/use-daily-inventory-scan";
 import { useDailyDigest } from "./hooks/use-daily-digest";
 import { useTheme } from "./hooks/use-theme";
@@ -75,6 +76,14 @@ export function App() {
   useEffect(() => {
     if (!isTauriDesktop()) return;
     return startDesktopBackupScheduler();
+  }, []);
+
+  // Desktop only: hourly check of the signed update feed so clinic installs
+  // pick up new versions without re-downloading the installer. No-op in the
+  // browser.
+  useEffect(() => {
+    if (!isTauriDesktop()) return;
+    return startUpdatePoller();
   }, []);
 
   // Once-per-day stock scan — refreshes low-stock/expiry alerts and the

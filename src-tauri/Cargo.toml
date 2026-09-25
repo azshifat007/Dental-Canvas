@@ -1,6 +1,6 @@
 [package]
 name = "dental-canvas"
-version = "1.4.2"
+version = "1.4.3"
 description = "Dental Canvas - Chamber Management System"
 edition = "2021"
 rust-version = "1.77.2"
@@ -14,3 +14,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
+
+[target."cfg(any(target_os = \"macos\", target_os = \"windows\", target_os = \"linux\"))".dependencies]
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"

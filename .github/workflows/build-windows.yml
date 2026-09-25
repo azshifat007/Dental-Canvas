@@ -61,6 +61,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the update bundle (.sig) for the in-app updater. The public
+          # half is embedded in the app (tauri.conf.json plugins.updater.pubkey).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Dental Canvas ${{ github.ref_name }}
@@ -72,4 +76,8 @@ jobs:
             See README.md for setup and limitations.
           releaseDraft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
+          # Generate latest.json for the in-app updater (endpoints in
+          # tauri.conf.json point at releases/latest/download/latest.json) and
+          # prefer the NSIS setup.exe (the only bundle we ship) as the payload.
+          updaterJsonPreferNsis: true
           args: --target x86_64-pc-windows-msvc --bundles nsis

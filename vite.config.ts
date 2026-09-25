@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import pkg from "./package.json";
 
 /**
  * Offline service worker build.
@@ -64,11 +65,18 @@ function offlineSwPlugin(): Plugin {
 }
 
 export default defineConfig(({ mode }) => {
+  const common = {
+    define: {
+      // Injected at build time so the UI can show the running app version.
+      __APP_VERSION__: JSON.stringify(pkg.version),
+    },
+  };
   // The service worker is built as its own pass with inlineDynamicImports: the
   // SW must be one self-contained file (code-split chunks share the app's
   // preload helper, which touches `document` and cannot run in a worker).
   if (mode === "sw") {
     return {
+      ...common,
       plugins: [offlineSwPlugin()],
       build: {
         outDir: "dist",
@@ -92,6 +100,7 @@ export default defineConfig(({ mode }) => {
     };
   }
   return {
+  ...common,
   plugins: [react(), tailwindcss(), offlineSwPlugin()],
   build: {
     outDir: "dist",
