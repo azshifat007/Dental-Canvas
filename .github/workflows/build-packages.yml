@@ -265,12 +265,13 @@ jobs:
           apk=$(ls src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk | head -1)
           "$ANDROID_HOME"/build-tools/*/*/apksigner verify --print-certs "$apk" | head -5
 
+      # Plain asset upload to the release the Windows job created — avoids
+      # action-gh-release's update-release flow, which the GITHUB_TOKEN may
+      # not be allowed to perform on existing releases.
       - name: Upload APK to release
-        uses: softprops/action-gh-release@v2
         env:
-          # The action does NOT read the automatic GITHUB_TOKEN unless it is
-          # passed explicitly — without it every API call is unauthenticated.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          files: src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
-          tag_name: ${{ github.ref_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk \
+            --clobber --repo "${GITHUB_REPOSITORY}"
