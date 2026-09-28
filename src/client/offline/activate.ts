@@ -73,6 +73,25 @@ export async function activateOfflineMode(): Promise<void> {
     // Module worker: the Vite bundle is ESM (it code-splits shared helpers).
     const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/", type: "module" });
 
+    // An in-app update replaces the exe between runs. The freshly booted page
+    // may still be controlled by the OLD worker (or an old cached shell), so
+    // probe for a newer registration on every boot: if one installs, its
+    // activate wipes the version-stamped shell cache and claims the page;
+    // the controllerchange reload below then loads the new UI.
+    try {
+      await reg.update();
+      if (reg.waiting || reg.installing) {
+        reg.waiting?.postMessage("skip-waiting");
+        // Wait briefly for the new worker to take over before continuing.
+        await Promise.race([
+          navigator.serviceWorker.ready.then(() => undefined),
+          new Promise((r) => setTimeout(r, 5_000)),
+        ]);
+      }
+    } catch {
+      // A failed update probe must not block boot — the old shell still runs.
+    }
+
     // If the worker is already active, wait for it to control this page.
     // Otherwise the activate handler finishes initializing the server.
     await navigator.serviceWorker.ready;
@@ -105,18 +124,27 @@ export async function activateOfflineMode(): Promise<void> {
 
 /**
  * Watch for a newer service worker taking over (an app update installed
- * while this window is open) and reload once so the UI matches the worker.
- * `skipWaiting` + `clients.claim` in the SW make the takeover instant; the
- * reload here just replaces the old shell assets with the new ones.
+ * while this window is open, or the first boot after an in-place update)
+ * and reload once so the UI matches the worker. `skipWaiting` +
+ * `clients.claim` in the SW make the takeover instant; the reload here
+ * replaces the old shell assets with the new ones.
  */
 export function watchForUpdates(): void {
   if (!("serviceWorker" in navigator)) return;
   navigator.serviceWorker.addEventListener("controllerchange", () => {
-    // Only reload if this page was already controlled — the first claim on a
-    // fresh boot is our own worker, and reloading would loop.
+    // Reload when a DIFFERENT worker takes control than the one this page
+    // booted with. The sessionStorage flag persists per app run, so the very
+    // first boot after an update (new exe, old SW from the previous version
+    // still controlling) also reloads into the new shell.
     if (sessionStorage.getItem("dental-canvas:had-controller") === "1") {
       window.location.reload();
     }
     sessionStorage.setItem("dental-canvas:had-controller", "1");
+  });
+  // A waiting worker may ask to skip waiting (see activateOfflineMode).
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if (e.data === "dental-canvas:sw-skip-waiting") {
+      navigator.serviceWorker.controller?.postMessage("skip-waiting");
+    }
   });
 }

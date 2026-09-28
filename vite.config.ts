@@ -59,6 +59,12 @@ function offlineSwPlugin(): Plugin {
         /(\w+)=\["\/index\.html"\]/,
         (_m, id: string) => `${id}=${JSON.stringify(manifest)}`,
       );
+      // Inline the app version so the SW's cache name is version-stamped —
+      // an updated app must never read the previous release's shell cache.
+      swCode = swCode.replace(
+        /__APP_VERSION__/g,
+        JSON.stringify(pkg.version),
+      );
       writeFileSync(swPath, swCode);
     },
   };

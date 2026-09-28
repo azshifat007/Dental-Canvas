@@ -26,7 +26,13 @@ declare const self: ServiceWorkerGlobalScope & {
   __OFFLINE_READY__?: boolean;
 };
 
-const SHELL_CACHE = "dental-canvas-shell-v1";
+// Version-stamped cache name: a new app release must never serve the
+// previous release's cached shell. The constant is rewritten at build time
+// by the offline-sw plugin (vite.config.ts) to include the package version —
+// after an in-app update the new worker's activate handler deletes the old
+// cache and repopulates it with the new assets.
+declare const __APP_VERSION__: string;
+const SHELL_CACHE = `dental-canvas-shell-v1-${__APP_VERSION__}`;
 
 let serverFetch: ((req: Request) => Promise<Response> | Response) | null = null;
 let serverReady: Promise<void> | null = null;
@@ -89,6 +95,11 @@ self.addEventListener("activate", (event: ExtendableEvent) => {
 // Shutdown flush: the page asks us to persist pending writes when it's being
 // hidden/closed (see activate.ts). Must complete before the worker dies.
 self.addEventListener("message", (event: ExtendableMessageEvent) => {
+  // A newly-installing worker is told to take over immediately (update boot).
+  if (event.data === "skip-waiting") {
+    self.skipWaiting();
+    return;
+  }
   if (event.data === "dental-canvas:flush-db") {
     event.waitUntil(
       (async () => {

@@ -145,10 +145,12 @@ jobs:
           args: --bundles deb,rpm,appimage
 
   # ── Android APK ─────────────────────────────────────────────────────
-  # Produces a signed universal APK for sideloading on tablets/phones.
+  # Produces a SIGNED universal APK for sideloading on tablets/phones.
   # GitHub runners ship the Android SDK + NDK preinstalled; tauri android
-  # init generates the Gradle project (idempotent || true), and the build
-  # signs with the debug keystore that the SDK generates on demand.
+  # init generates the Gradle project. Signing uses TAURI_ANDROID_KEYSTORE
+  # (base64 .jks) + TAURI_ANDROID_KEYSTORE_PASSWORD + TAURI_ANDROID_KEY_ALIAS
+  # secrets when present; otherwise a throwaway release keystore is generated
+  # in-workflow (fine for sideloading — just not for Play Store updates).
   build-android:
     runs-on: ubuntu-latest
     steps:
@@ -194,8 +196,86 @@ jobs:
       - name: Initialize Android project
         run: pnpm tauri android init || true
 
-      - name: Build Android APK (debug signing)
+      - name: Configure signing
+        env:
+          KS_B64: ${{ secrets.TAURI_ANDROID_KEYSTORE }}
+          KS_PASS: ${{ secrets.TAURI_ANDROID_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.TAURI_ANDROID_KEY_ALIAS }}
+        run: |
+          gradle=src-tauri/gen/android/app/keystore.properties
+          mkdir -p src-tauri/gen/android/app
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > keystore.jks
+            {
+              echo "storeFile=$GITHUB_WORKSPACE/keystore.jks"
+              echo "storePassword=$KS_PASS"
+              echo "keyAlias=$KS_ALIAS"
+              echo "keyPassword=$KS_PASS"
+            } > "$gradle"
+            echo "signing=secret-keystore" >> "$GITHUB_ENV"
+          else
+            # Throwaway keystore so the APK is at least installable. Regenerated
+            # every release — devices see it as a NEW app on each major update.
+            keytool -genkeypair -v -keystore keystore.jks -alias dental-canvas \
+              -keyalg RSA -keysize 2048 -validity 10950 \
+              -storepass dental-canvas-ci -keypass dental-canvas-ci \
+              -dname "CN=Dental Canvas, OU=CI, O=Dental Canvas, C=BD"
+            {
+              echo "storeFile=$GITHUB_WORKSPACE/keystore.jks"
+              echo "storePassword=dental-canvas-ci"
+              echo "keyAlias=dental-canvas"
+              echo "keyPassword=dental-canvas-ci"
+            } > "$gradle"
+            echo "signing=ephemeral-keystore" >> "$GITHUB_ENV"
+          fi
+
+      - name: Wire signing into the Gradle project
+        run: |
+          python3 - <<'PY'
+          import re
+          p = "src-tauri/gen/android/app/build.gradle.kts"
+          s = open(p).read()
+          if "keystore.properties" not in s:
+            s = s.replace(
+              "android {",
+              """val keystoreProps = java.util.Properties().apply {
+            val f = rootProject.file("app/keystore.properties")
+            if (f.exists()) f.inputStream().use { load(it) }
+          }
+
+          android {
+            signingConfigs {
+              create("release") {
+                keystoreProps["storeFile"]?.let {
+                  storeFile = file(it as String)
+                  storePassword = keystoreProps["storePassword"] as String
+                  keyAlias = keystoreProps["keyAlias"] as String
+                  keyPassword = keystoreProps["keyPassword"] as String
+                }
+              }
+            }
+          """,
+              1,
+            )
+            s = re.sub(
+              r"(buildTypes \{\s*getByName\(\"release\"\) \{)",
+              r'\1\n            signingConfig = signingConfigs.getByName("release")',
+              s,
+              count=1,
+            )
+            open(p, "w").write(s)
+            print("signing wired")
+          else:
+            print("already wired")
+          PY
+
+      - name: Build Android APK (signed)
         run: pnpm tauri android build --apk
+
+      - name: Verify the APK is signed
+        run: |
+          apk=$(ls src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk | head -1)
+          "$ANDROID_HOME"/build-tools/*/*/apksigner verify --print-certs "$apk" | head -5
 
       - name: Upload APK to release
         uses: softprops/action-gh-release@v2
