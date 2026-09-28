@@ -460,6 +460,8 @@ export function buildSheetData(
     plan_treatment_name: rx.plan_treatment_name ?? null,
     images: (rx.images ?? []).map((im) => ({ id: im.id, label: im.label, src: im.url ?? null })),
     diagnosis: rx.diagnosis,
+    on_examination: rx.on_examination ?? null,
+    history: rx.history ?? null,
     advice: rx.advice,
     follow_up: rx.follow_up,
     items: rx.items ?? [],

@@ -39,6 +39,10 @@ export interface PrescriptionSheetData {
   /** Attached X-ray / intraoral images — rendered as a thumbnail strip. */
   images?: { id: number; label?: string | null; src: string | null }[];
   diagnosis?: string | null;
+  /** O/E — findings on examination (Chamber sidebar). */
+  on_examination?: string | null;
+  /** H/O — history of presenting illness (Chamber sidebar). */
+  history?: string | null;
   advice?: string | null;
   follow_up?: string | null;
   items: { drug_name: string; dosage?: string | null; frequency?: string | null; duration?: string | null; instructions?: string | null }[];
@@ -451,6 +455,7 @@ function ChamberSheet({ data }: { data: PrescriptionSheetData }) {
           </div>
           <div>
             <div style={sideLabel}>O/E : <span style={bnSub}>পরীক্ষায় প্রাপ্ত</span></div>
+            {data.on_examination && <div style={sideValue}>{data.on_examination}</div>}
             {data.tooth && <div style={sideValue}>Tooth {data.tooth}</div>}
             {data.practitioner_name && data.practitioner_name !== data.doctor_name && (
               <div style={{ ...sideValue, color: "#6b7280" }}>Seen by {data.practitioner_name}</div>
@@ -458,6 +463,7 @@ function ChamberSheet({ data }: { data: PrescriptionSheetData }) {
           </div>
           <div>
             <div style={sideLabel}>H/O: <span style={bnSub}>রোগের ইতিহাস</span></div>
+            {data.history && <div style={sideValue}>{data.history}</div>}
             {data.patient_medical_alerts && <div style={sideValue}>{data.patient_medical_alerts}</div>}
           </div>
           <div>

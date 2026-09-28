@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Plus, Trash2, Pencil, Check, X, Clock, UserRound, DatabaseBackup, Palette, Monitor, Sun, Moon, ImageUp, Mail, ReceiptText, MailCheck, QrCode, Printer, Link2 } from "lucide-react";
+import { Plus, Trash2, Pencil, Check, X, Clock, UserRound, DatabaseBackup, Palette, Monitor, Sun, Moon, ImageUp, Mail, ReceiptText, MailCheck, QrCode, Printer, Link2, CircleDollarSign, Info, Download, Loader2, RefreshCw, Search } from "lucide-react";
 import { useApp } from "@/context";
 import { api } from "@/api";
 import { toast } from "@/components/ui/toast";
 import { BackupTab } from "./backup-tab";
+import { UpdateCard } from "./app-update-card";
 import { BookingTab } from "./booking-tab";
 import { StorageTab } from "./storage-tab";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
@@ -11,7 +12,7 @@ import { useAccessibility, type A11yPreference } from "@/hooks/use-accessibility
 import { useBrandAccent } from "@/hooks/use-brand-accent";
 import { brandAccentFromHex } from "@/lib/color";
 import { Contrast } from "lucide-react";
-import { cn, colorClasses } from "@/lib/utils";
+import { cn, colorClasses, formatMoney } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -19,7 +20,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import type { ConsentTemplate, MembershipPlan } from "@/types";
+import type { ConsentTemplate } from "@/types";
 import type { Operatory, Practitioner, PractitionerRole, TreatmentType } from "@/types";
 import { fileToLogoDataUrl } from "@/lib/logo";
 import { printQrPoster } from "@/lib/print";
@@ -36,13 +37,15 @@ export function SettingsPage() {
       </div>
       <div className="flex-1 overflow-auto p-4">
         <Tabs defaultValue="profile">
-          <TabsList>
+          {/* Scrollable tab bar: 13+ tabs overflow on narrow windows, so the
+              list wraps instead of clipping (and scrolls horizontally as a
+              last resort on very small screens). */}
+          <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 overflow-x-auto">
             <TabsTrigger value="profile">Profile</TabsTrigger>
             <TabsTrigger value="appearance">Appearance</TabsTrigger>
             <TabsTrigger value="operatories">Operatories</TabsTrigger>
             <TabsTrigger value="practitioners">Practitioners</TabsTrigger>
             <TabsTrigger value="treatments">Treatment types</TabsTrigger>
-            <TabsTrigger value="membership">Membership</TabsTrigger>
             <TabsTrigger value="consents">Consent forms</TabsTrigger>
             <TabsTrigger value="hours">Hours</TabsTrigger>
             <TabsTrigger value="booking" className="gap-1.5">
@@ -60,12 +63,16 @@ export function SettingsPage() {
             <TabsTrigger value="backup" className="gap-1.5">
               <DatabaseBackup className="h-3.5 w-3.5" /> Backup
             </TabsTrigger>
+            <TabsTrigger value="about" className="gap-1.5">
+              <Info className="h-3.5 w-3.5" /> About
+            </TabsTrigger>
           </TabsList>
           <TabsContent value="profile" className="mt-4">
             <ProfileTab />
           </TabsContent>
           <TabsContent value="appearance" className="mt-4 space-y-4">
             <AppearanceTab />
+            <CurrencyCard />
             <AccentColorCard />
             <AccessibilityCard />
           </TabsContent>
@@ -77,9 +84,6 @@ export function SettingsPage() {
           </TabsContent>
           <TabsContent value="treatments" className="mt-4">
             <TreatmentTypesTab />
-          </TabsContent>
-          <TabsContent value="membership" className="mt-4">
-            <MembershipPlansTab />
           </TabsContent>
           <TabsContent value="consents" className="mt-4">
             <ConsentTemplatesTab />
@@ -102,6 +106,9 @@ export function SettingsPage() {
           </TabsContent>
           <TabsContent value="backup" className="mt-4">
             <BackupTab />
+          </TabsContent>
+          <TabsContent value="about" className="mt-4">
+            <AboutTab />
           </TabsContent>
         </Tabs>
       </div>
@@ -437,6 +444,90 @@ function AppearanceTab() {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// ── Currency (appearance) ──────────────────────────────────────
+
+function CurrencyCard() {
+  const app = useApp();
+  const { currency } = app.settings;
+  const options: { value: "USD" | "BDT"; label: string; example: string }[] = [
+    { value: "USD", label: "US Dollar ($)", example: "$1,500.00" },
+    { value: "BDT", label: "Bangladeshi Taka (৳)", example: "৳1,500" },
+  ];
+
+  async function pick(next: "USD" | "BDT") {
+    if (next === currency) return;
+    try {
+      await app.updateSettings({ currency: next });
+      toast.success(`Currency set to ${next === "BDT" ? "taka (৳)" : "US dollar ($)"}`);
+    } catch (err) {
+      app.setError((err as Error).message);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <CircleDollarSign className="h-4 w-4" />
+          Currency
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Applies everywhere money is shown — billing, invoices, treatment plans, reports and printed sheets.
+        </p>
+      </CardHeader>
+      <CardContent>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {options.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              onClick={() => pick(o.value)}
+              aria-pressed={currency === o.value}
+              className={cn(
+                "flex flex-col gap-1 rounded-lg border p-3 text-left transition-colors",
+                currency === o.value
+                  ? "border-primary bg-accent/50 ring-1 ring-primary"
+                  : "hover:bg-accent/30",
+              )}
+            >
+              <span className="text-sm font-medium">{o.label}</span>
+              <span className="text-xs text-muted-foreground">Example: {o.example}</span>
+            </button>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── About (version + in-app updates) ───────────────────────────
+
+function AboutTab() {
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Info className="h-4 w-4" />
+            About Dental Canvas
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm text-muted-foreground">
+          <p>
+            <span className="font-medium text-foreground">Dental Canvas</span> — chamber management system for
+            dental practices. Version <span className="font-medium text-foreground">{__APP_VERSION__}</span>.
+          </p>
+          <p>
+            The app runs fully offline: the interface and the local database both live on this computer, so the
+            clinic keeps working without internet. When online, it checks for updates automatically once an hour.
+          </p>
+        </CardContent>
+      </Card>
+      <UpdateCard />
+    </div>
   );
 }
 
@@ -818,13 +909,13 @@ function OperatoriesTab() {
                     <td className="px-3 py-2 text-right">
                       {editing ? (
                         <div className="flex justify-end gap-1">
-                          <Button size="icon" variant="ghost" onClick={() => save(o.id)}><Check className="h-4 w-4 text-emerald-600" /></Button>
-                          <Button size="icon" variant="ghost" onClick={() => setEditingId(null)}><X className="h-4 w-4" /></Button>
+                          <Button size="icon" variant="ghost" aria-label="Save operatory" onClick={() => save(o.id)}><Check className="h-4 w-4 text-emerald-600" /></Button>
+                          <Button size="icon" variant="ghost" aria-label="Cancel editing" onClick={() => setEditingId(null)}><X className="h-4 w-4" /></Button>
                         </div>
                       ) : (
                         <div className="flex justify-end gap-1">
-                          <Button size="icon" variant="ghost" onClick={() => { setEditingId(o.id); setEditName(o.name); setEditColor(o.color); }}><Pencil className="h-4 w-4" /></Button>
-                          <Button size="icon" variant="ghost" onClick={() => remove(o.id)}><Trash2 className="h-4 w-4 text-muted-foreground" /></Button>
+                          <Button size="icon" variant="ghost" aria-label={`Edit ${o.name}`} onClick={() => { setEditingId(o.id); setEditName(o.name); setEditColor(o.color); }}><Pencil className="h-4 w-4" /></Button>
+                          <Button size="icon" variant="ghost" aria-label={`Delete ${o.name}`} onClick={() => remove(o.id)}><Trash2 className="h-4 w-4 text-muted-foreground" /></Button>
                         </div>
                       )}
                     </td>
@@ -957,13 +1048,13 @@ function PractitionersTab() {
                     <td className="px-3 py-2 text-right">
                       {editing ? (
                         <div className="flex justify-end gap-1">
-                          <Button size="icon" variant="ghost" onClick={() => save(p.id)}><Check className="h-4 w-4 text-emerald-600" /></Button>
-                          <Button size="icon" variant="ghost" onClick={() => setEditingId(null)}><X className="h-4 w-4" /></Button>
+                          <Button size="icon" variant="ghost" aria-label="Save practitioner" onClick={() => save(p.id)}><Check className="h-4 w-4 text-emerald-600" /></Button>
+                          <Button size="icon" variant="ghost" aria-label="Cancel editing" onClick={() => setEditingId(null)}><X className="h-4 w-4" /></Button>
                         </div>
                       ) : (
                         <div className="flex justify-end gap-1">
-                          <Button size="icon" variant="ghost" onClick={() => { setEditingId(p.id); setEdit({ name: p.name, role: p.role, color: p.color }); }}><Pencil className="h-4 w-4" /></Button>
-                          <Button size="icon" variant="ghost" onClick={() => remove(p.id)}><Trash2 className="h-4 w-4 text-muted-foreground" /></Button>
+                          <Button size="icon" variant="ghost" aria-label={`Edit ${p.name}`} onClick={() => { setEditingId(p.id); setEdit({ name: p.name, role: p.role, color: p.color }); }}><Pencil className="h-4 w-4" /></Button>
+                          <Button size="icon" variant="ghost" aria-label={`Delete ${p.name}`} onClick={() => remove(p.id)}><Trash2 className="h-4 w-4 text-muted-foreground" /></Button>
                         </div>
                       )}
                     </td>
@@ -1061,7 +1152,7 @@ function TreatmentTypesTab() {
                     <td className="px-3 py-2 font-mono text-xs">{t.code}</td>
                     <td className="px-3 py-2 font-medium">{t.name}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{t.duration_minutes} min</td>
-                    <td className="px-3 py-2 text-right tabular-nums">${t.default_fee.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatMoney(t.default_fee)}</td>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-2">
                         <span className={cn("inline-block h-2 w-2 rounded-full", palette.dot)} />
@@ -1069,7 +1160,7 @@ function TreatmentTypesTab() {
                       </div>
                     </td>
                     <td className="px-3 py-2 text-right">
-                      <Button size="icon" variant="ghost" onClick={() => remove(t.id)}><Trash2 className="h-4 w-4 text-muted-foreground" /></Button>
+                      <Button size="icon" variant="ghost" aria-label={`Delete ${t.name}`} onClick={() => remove(t.id)}><Trash2 className="h-4 w-4 text-muted-foreground" /></Button>
                     </td>
                   </tr>
                 );
@@ -1612,143 +1703,6 @@ function InvoiceStyleTab() {
   );
 }
 
-// ── Membership plans (Settings) ───────────────────────────────────
-
-function MembershipPlansTab() {
-  const app = useApp();
-  const [plans, setPlans] = useState<MembershipPlan[]>([]);
-  const [editing, setEditing] = useState<MembershipPlan | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ name: "", monthly_fee: "", discount_percent: "", benefits: "" });
-
-  const load = async () => {
-    try {
-      const data = await api<{ plans: MembershipPlan[] }>("GET", "/api/membership-plans");
-      setPlans(data.plans);
-    } catch (err) {
-      app.setError((err as Error).message);
-    }
-  };
-
-  useEffect(() => {
-    void load();
-  }, []);
-
-  const openNew = () => {
-    setForm({ name: "", monthly_fee: "", discount_percent: "", benefits: "" });
-    setCreating(true);
-    setEditing(null);
-  };
-
-  const openEdit = (p: MembershipPlan) => {
-    setForm({
-      name: p.name,
-      monthly_fee: String(p.monthly_fee),
-      discount_percent: String(p.discount_percent),
-      benefits: p.benefits ?? "",
-    });
-    setEditing(p);
-    setCreating(false);
-  };
-
-  const save = async () => {
-    const body = {
-      name: form.name.trim(),
-      monthly_fee: Number(form.monthly_fee) || 0,
-      discount_percent: Math.min(100, Math.max(0, Number(form.discount_percent) || 0)),
-      benefits: form.benefits.trim() || null,
-    };
-    if (!body.name) return;
-    try {
-      if (editing) {
-        await api("PUT", `/api/membership-plans/${editing.id}`, body);
-        toast.success("Plan updated");
-      } else {
-        await api("POST", "/api/membership-plans", body);
-        toast.success("Plan created");
-      }
-      setEditing(null);
-      setCreating(false);
-      await load();
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
-  };
-
-  const remove = async (p: MembershipPlan) => {
-    if (!confirm(`Delete plan "${p.name}"? Enrolled patients keep their history but the plan disappears from enrollment.`)) return;
-    try {
-      await api("DELETE", `/api/membership-plans/${p.id}`);
-      toast.info("Plan deleted");
-      await load();
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
-  };
-
-  return (
-    <Card>
-      <CardHeader className="flex-row items-center justify-between space-y-0">
-        <CardTitle className="text-base">Membership plans</CardTitle>
-        <Button size="sm" onClick={openNew}><Plus className="mr-1 h-3.5 w-3.5" /> New plan</Button>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {!plans.length ? (
-          <p className="text-sm text-muted-foreground">
-            No plans yet. An in-house membership plan gives enrolled patients a standing discount (e.g. "Wellness Plan — $25/mo, 15% off all treatment").
-          </p>
-        ) : (
-          plans.map((p) => (
-            <div key={p.id} className="flex items-start justify-between gap-3 rounded-lg border p-3">
-              <div className="min-w-0">
-                <div className="font-medium">
-                  {p.name}
-                  {!p.active && <span className="ml-2 text-xs text-muted-foreground">(inactive)</span>}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  ${p.monthly_fee}/month · {p.discount_percent}% off · {p.member_count ?? 0} active member{(p.member_count ?? 0) === 1 ? "" : "s"}
-                </div>
-                {p.benefits && <p className="mt-1 text-xs text-muted-foreground">{p.benefits}</p>}
-              </div>
-              <div className="flex shrink-0 gap-1">
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(p)}><Pencil className="h-3.5 w-3.5" /></Button>
-                <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => remove(p)}><Trash2 className="h-3.5 w-3.5" /></Button>
-              </div>
-            </div>
-          ))
-        )}
-
-        {(creating || editing) && (
-          <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
-            <div className="grid gap-3 sm:grid-cols-3">
-              <div className="space-y-1.5 sm:col-span-3">
-                <Label>Plan name</Label>
-                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Wellness Plan" />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Monthly fee ($)</Label>
-                <Input type="number" min="0" step="0.01" value={form.monthly_fee} onChange={(e) => setForm({ ...form, monthly_fee: e.target.value })} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Discount (%)</Label>
-                <Input type="number" min="0" max="100" value={form.discount_percent} onChange={(e) => setForm({ ...form, discount_percent: e.target.value })} />
-              </div>
-              <div className="space-y-1.5 sm:col-span-3">
-                <Label>Benefits shown to patients (optional)</Label>
-                <Textarea rows={2} value={form.benefits} onChange={(e) => setForm({ ...form, benefits: e.target.value })} placeholder="2 free cleanings per year, all x-rays included, 15% off other treatment" />
-              </div>
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => { setCreating(false); setEditing(null); }}>Cancel</Button>
-              <Button size="sm" onClick={save} disabled={!form.name.trim()}>{editing ? "Save changes" : "Create plan"}</Button>
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 // ── Consent form templates (Settings) ─────────────────────────────
 
 function ConsentTemplatesTab() {
@@ -1836,8 +1790,8 @@ function ConsentTemplatesTab() {
                 <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{t.body}</p>
               </div>
               <div className="flex shrink-0 gap-1">
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(t)}><Pencil className="h-3.5 w-3.5" /></Button>
-                <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => remove(t)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                <Button variant="ghost" size="icon" className="h-7 w-7" aria-label={`Edit ${t.title}`} onClick={() => openEdit(t)}><Pencil className="h-3.5 w-3.5" /></Button>
+                <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" aria-label={`Delete ${t.title}`} onClick={() => remove(t)}><Trash2 className="h-3.5 w-3.5" /></Button>
               </div>
             </div>
           ))

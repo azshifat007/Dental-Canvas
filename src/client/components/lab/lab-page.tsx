@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { cn, formatDate } from "@/lib/utils";
+import { cn, formatDate, formatMoney } from "@/lib/utils";
 import type { LabCase, LabStatus, Patient } from "@/types";
 
 const STATUSES: LabStatus[] = ["sent", "in_lab", "received", "seated", "cancelled"];
@@ -156,7 +156,7 @@ export function LabPage({ navigate }: { navigate: (to: string) => void }) {
                         <td className={cn("px-3 py-2", overdue ? "font-semibold text-rose-700" : "text-muted-foreground")}>
                           {c.due_at ? formatDate(c.due_at) : "—"}
                         </td>
-                        <td className="px-3 py-2 text-right tabular-nums">${c.fee.toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{formatMoney(c.fee)}</td>
                         <td className="px-3 py-2">
                           <Select value={c.status} onValueChange={(v) => setStatus(c.id, v as LabStatus)}>
                             <SelectTrigger className={cn("h-7 w-[120px] text-xs", STATUS_STYLE[c.status])}>

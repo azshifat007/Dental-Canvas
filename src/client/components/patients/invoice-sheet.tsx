@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactElement } from "react";
+import { formatMoney } from "@/lib/utils";
 
 /**
  * The printable A4 invoice document — an inline-styled sheet rendered in one
@@ -90,8 +91,7 @@ function formatDate(iso: string): string {
 }
 
 export function InvoiceSheet({ data }: { data: InvoiceSheetData }) {
-  const money = (n: number) =>
-    n.toLocaleString(undefined, { style: "currency", currency: "USD" });
+  const money = (n: number) => formatMoney(n);
 
   const accent = data.accent || "#0e7490";
   const accentDark = shade(accent, -30);

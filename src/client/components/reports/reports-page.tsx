@@ -6,7 +6,7 @@ import {
 import { api } from "@/api";
 import { useApp } from "@/context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
+import { cn, formatMoney } from "@/lib/utils";
 import type { ReportsSummary } from "@/types";
 
 export function ReportsPage() {
@@ -58,8 +58,8 @@ export function ReportsPage() {
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <KpiCard icon={CalendarDays}  label="Today's appointments" value={data.today_appointments.toString()} tone="sky" />
           <KpiCard icon={CalendarRange} label="This week"             value={data.week_appointments.toString()}  tone="emerald" />
-          <KpiCard icon={TrendingUp}    label="MTD production"        value={`$${data.month_production.toFixed(0)}`} sub={`${data.month_appointments} appts`} tone="violet" />
-          <KpiCard icon={Wallet}        label="MTD collections"       value={`$${data.month_collections.toFixed(0)}`} sub={`${collectionRate}% of production`} tone="amber" />
+          <KpiCard icon={TrendingUp}    label="MTD production"        value={formatMoney(data.month_production)} sub={`${data.month_appointments} appts`} tone="violet" />
+          <KpiCard icon={Wallet}        label="MTD collections"       value={formatMoney(data.month_collections)} sub={`${collectionRate}% of production`} tone="amber" />
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
@@ -133,7 +133,7 @@ export function ReportsPage() {
                 return (
                   <Bar
                     key={p.name}
-                    label={`${p.name} · $${p.production.toFixed(0)} prod / $${p.collections.toFixed(0)} collected`}
+                    label={`${p.name} · ${formatMoney(p.production)} prod / ${formatMoney(p.collections)} collected`}
                     count={p.visits}
                     total={max}
                     pct={Math.round((p.production / max) * 100)}
@@ -333,7 +333,7 @@ function ARBucket({ label, amount, tone }: { label: string; amount: number; tone
   return (
     <div className={cn("rounded-lg border p-3", t.bg, t.border)}>
       <div className={cn("text-xs font-semibold uppercase tracking-wider opacity-80", t.text)}>{label}</div>
-      <div className={cn("mt-1 text-xl font-bold tabular-nums", t.text)}>${amount.toFixed(0)}</div>
+      <div className={cn("mt-1 text-xl font-bold tabular-nums", t.text)}>{formatMoney(amount)}</div>
     </div>
   );
 }

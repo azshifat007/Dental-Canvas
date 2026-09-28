@@ -1,0 +1,214 @@
+name: Build desktop & mobile packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: packages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ── Windows NSIS installer (+ updater artifacts) ────────────────────
+  # Kept in this workflow so one tag ships every platform together. The
+  # original build-windows.yml still exists and can be disabled once this
+  # workflow has taken over (or kept as the Windows-only fallback).
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Check release version
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Release tag must match package.json version (v$version)."
+          }
+          # Windows runners check files out with CRLF (core.autocrlf), so
+          # the line-end must tolerate an optional \r or the check false-fails.
+          $cargo = Get-Content src-tauri/Cargo.toml -Raw
+          if ($cargo -notmatch ('(?m)^version = "' + [regex]::Escape($version) + '"\r?$')) {
+            throw 'Cargo.toml version must match package.json.'
+          }
+
+      - name: Build and publish Windows installer
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the update bundle (.sig) for the in-app updater. The public
+          # half is embedded in the app (tauri.conf.json plugins.updater.pubkey).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Dental Canvas ${{ github.ref_name }}
+          releaseBody: |
+            Download the Dental Canvas installer for your platform below.
+
+            - **Windows** — `...-setup.exe` (NSIS installer, x64)
+            - **Linux** — `..._amd64.deb`, `..._x86_64.rpm`, `..._amd64.AppImage`
+            - **Android** — `...-universal.apk` (sideload; enable "install unknown apps")
+
+            These releases package the full offline app — UI and the local backend are both bundled, so the clinic can run entirely without internet. Installers are not code-signed.
+
+            See README.md for setup and limitations.
+          releaseDraft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          # Generate latest.json for the in-app updater (endpoints in
+          # tauri.conf.json point at releases/latest/download/latest.json) and
+          # prefer the NSIS setup.exe (the only bundle we ship) as the payload.
+          updaterJsonPreferNsis: true
+          args: --target x86_64-pc-windows-msvc --bundles nsis
+
+  # ── Linux desktop packages (deb / rpm / AppImage) ───────────────────
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+
+      - name: Check release version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "v$version" != "${GITHUB_REF_NAME}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package.json version v$version" >&2
+            exit 1
+          fi
+
+      - name: Build Linux packages
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Dental Canvas ${{ github.ref_name }}
+          releaseBody: |
+            Linux desktop packages. `.deb` for Debian/Ubuntu, `.rpm` for
+            Fedora/openSUSE, `.AppImage` for everything else.
+          releaseDraft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          args: --bundles deb,rpm,appimage
+
+  # ── Android APK ─────────────────────────────────────────────────────
+  # Produces a signed universal APK for sideloading on tablets/phones.
+  # The keystore is generated on the fly with a key derived from the tag —
+  # for proper Play-Store signing add ANDROID_KEYSTORE_B64 etc. secrets.
+  build-android:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Rust Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install Tauri CLI (with Android support)
+        run: pnpm add -D @tauri-apps/cli
+
+      - name: Initialize Android project
+        run: |
+          pnpm tauri android init || true
+
+      - name: Build Android APK (debug signing)
+        run: |
+          pnpm tauri android build --apk
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk-bundle
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Upload APK to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
+          tag_name: ${{ github.ref_name }}

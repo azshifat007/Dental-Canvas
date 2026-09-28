@@ -16,7 +16,9 @@ export function MedicinesPage() {
           The drugs your practice prescribes — they power the prescription editor&apos;s suggestions.
         </p>
       </div>
-      <MedicinesTab />
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <MedicinesTab />
+      </div>
     </div>
   );
 }

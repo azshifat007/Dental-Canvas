@@ -118,7 +118,9 @@ export function MedicinesTab() {
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-3 overflow-auto p-4">
+    // min-h-0 matters: without it the flex child grows to its content height
+    // instead of scrolling, so long medicine lists clip instead of scrolling.
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-4">
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative w-64">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -136,8 +138,8 @@ export function MedicinesTab() {
         regimen that fills the prescription row when picked — everything stays editable there.
       </p>
 
-      <Card className="overflow-hidden">
-        <CardContent className="p-0">
+      <Card className="flex min-h-0 flex-col overflow-hidden">
+        <CardContent className="min-h-0 flex-1 overflow-y-auto p-0">
           {filtered.length === 0 ? (
             <div className="flex flex-col items-center gap-2 p-10 text-center text-muted-foreground">
               <Pill className="h-6 w-6" />

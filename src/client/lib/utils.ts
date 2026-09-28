@@ -5,6 +5,40 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+// ── Currency (Settings → Profile) ──────────────────────────────────
+
+export type CurrencyCode = "USD" | "BDT";
+
+let activeCurrency: CurrencyCode = "USD";
+
+/**
+ * Set the practice-wide currency used by every money formatter. Called from
+ * the app shell once settings load; defaults to USD until then.
+ */
+export function setActiveCurrency(value: string | null | undefined) {
+  if (value === "USD" || value === "BDT") activeCurrency = value;
+}
+
+export function getActiveCurrency(): CurrencyCode {
+  return activeCurrency;
+}
+
+/**
+ * Format an amount with the practice currency. USD shows a fixed two decimals
+ * ("$1,234.56"); BDT shows whole taka and only the poisha when needed
+ * ("৳500" / "৳1,234.56"), matching how amounts are written on chamber pads.
+ */
+export function formatMoney(n: number, currency: CurrencyCode = activeCurrency): string {
+  if (currency === "BDT") {
+    const hasCents = Math.round(n * 100) % 100 !== 0;
+    return `৳${n.toLocaleString("en-US", {
+      minimumFractionDigits: hasCents ? 2 : 0,
+      maximumFractionDigits: 2,
+    })}`;
+  }
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 /** Map a color token (e.g. "sky") to a set of Tailwind classes for a card surface.
  *  Each color carries dark: variants so appointment cards stay readable with
  *  the dark theme (emitted via the @source inline block in styles.css). */

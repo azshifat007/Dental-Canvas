@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { cn, colorClasses, formatDate } from "@/lib/utils";
+import { cn, colorClasses, formatDate, formatMoney } from "@/lib/utils";
 import { openExternalUrl } from "@/lib/open-external";
 import type { AppointmentToMake, FollowUpsResponse, Invoice, Patient, PaymentReminderRow, ReminderRow, ReviewRequestRow, ToMakeSource, WaitingListEntry } from "@/types";
 import { PaymentDialog } from "@/components/patients/billing";
@@ -647,7 +647,7 @@ function FollowUpsPanel() {
               : r.days_until_due === 0
                 ? "due today"
                 : `due in ${r.days_until_due}d`;
-            const msg = `Hello ${r.patient_name.split(" ")[0]}! A friendly reminder that installment ${r.installment_n} of your payment plan (${r.amount.toLocaleString(undefined, { style: "currency", currency: "USD" })}) was due ${formatDate(r.due_date)}. You can pay at the clinic or reply here to arrange it. Thank you!`;
+            const msg = `Hello ${r.patient_name.split(" ")[0]}! A friendly reminder that installment ${r.installment_n} of your payment plan (${formatMoney(r.amount)}) was due ${formatDate(r.due_date)}. You can pay at the clinic or reply here to arrange it. Thank you!`;
             return (
               <div key={key} className={cn(
                 "rounded-md border p-2 text-xs",
@@ -662,7 +662,7 @@ function FollowUpsPanel() {
                   </span>
                 </div>
                 <div className="mt-0.5 text-muted-foreground">
-                  Installment {r.installment_n} · {r.amount.toLocaleString(undefined, { style: "currency", currency: "USD" })} · invoice #{r.invoice_id} balance {r.balance.toLocaleString(undefined, { style: "currency", currency: "USD" })}
+                  Installment {r.installment_n} · {formatMoney(r.amount)} · invoice #{r.invoice_id} balance {formatMoney(r.balance)}
                 </div>
                 <div className="mt-1.5 flex gap-1">
                   {digits && (
@@ -722,7 +722,7 @@ function FollowUpsPanel() {
                   </span>
                 </div>
                 <div className="mt-0.5 text-muted-foreground">
-                  Planned {formatDate(r.created_at)} · est. {r.fee.toLocaleString(undefined, { style: "currency", currency: "USD" })}
+                  Planned {formatDate(r.created_at)} · est. {formatMoney(r.fee)}
                 </div>
                 <div className="mt-1.5 flex gap-1">
                   {digits && (

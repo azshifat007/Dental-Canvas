@@ -76,6 +76,10 @@ export interface Prescription {
   image_ids?: number[] | null;
   images?: PatientImage[];
   diagnosis: string | null;
+  /** O/E — findings on examination (Chamber sidebar). */
+  on_examination?: string | null;
+  /** H/O — history of presenting illness (Chamber sidebar). */
+  history?: string | null;
   advice: string | null;
   follow_up: string | null;
   created_at: string;

@@ -8,7 +8,6 @@ import {
   Loader2,
   MapPin,
   Search,
-  Shield,
   Stethoscope,
   Syringe,
   FileText,
@@ -30,7 +29,6 @@ const GROUPS: { type: SearchEntityType; label: string; icon: typeof Users }[] = 
   { type: "treatment_plan_items", label: "Treatment plan", icon: ListChecks },
   { type: "invoices", label: "Invoices", icon: CircleDollarSign },
   { type: "invoice_items", label: "Invoice items", icon: CreditCard },
-  { type: "insurance_plans", label: "Insurance", icon: Shield },
   { type: "lab_cases", label: "Lab cases", icon: FlaskConical },
   { type: "waiting_list", label: "Waiting list", icon: Clock },
   { type: "appointments_to_make", label: "To make", icon: CalendarPlus },
@@ -230,7 +228,7 @@ export function SearchPalette({
           {!query.trim() ? (
             <div className="px-3 py-10 text-center text-sm text-muted-foreground">
               Type to search across every record — patients, appointments, notes,
-              treatment plans, billing, insurance, and lab cases.
+              treatment plans, billing, and lab cases.
             </div>
           ) : flat.length === 0 && !loading ? (
             <div className="px-3 py-10 text-center text-sm text-muted-foreground">

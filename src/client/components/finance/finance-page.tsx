@@ -13,7 +13,7 @@ import {
 import { api } from "@/api";
 import { useApp } from "@/context";
 import type { Route } from "@/hooks/use-router";
-import { cn, formatDate, formatTime } from "@/lib/utils";
+import { cn, formatDate, formatMoney as money, formatTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -70,9 +70,6 @@ interface FinanceAppointment {
   operatory_name: string | null;
 }
 
-function money(n: number): string {
-  return n.toLocaleString(undefined, { style: "currency", currency: "USD" });
-}
 
 const STATUS_BADGE: Record<FinanceRow["status"], string> = {
   open: "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:border-amber-800",

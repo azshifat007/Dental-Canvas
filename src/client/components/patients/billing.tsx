@@ -5,7 +5,7 @@ import { useApp } from "@/context";
 import { toast } from "@/components/ui/toast";
 import type { Invoice, InvoiceItem, InvoicePayment, PaymentMethod, TreatmentType } from "@/types";
 import { PaymentPlanDialog } from "./payment-plan-dialog";
-import { cn, formatDate, formatTime } from "@/lib/utils";
+import { cn, formatDate, formatMoney as money, formatTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -39,10 +39,6 @@ const METHOD_LABELS: Record<PaymentMethod, string> = {
   insurance: "Insurance",
   other: "Other",
 };
-
-function money(n: number): string {
-  return n.toLocaleString(undefined, { style: "currency", currency: "USD" });
-}
 
 export function Billing({
   patientId,

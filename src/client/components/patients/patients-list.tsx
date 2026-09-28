@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatDate } from "@/lib/utils";
+import { formatDate, formatMoney } from "@/lib/utils";
 import type { Patient } from "@/types";
 import { PatientDialog } from "./patient-dialog";
 
@@ -145,7 +145,7 @@ export function PatientsList({ navigate }: { navigate: (to: string) => void }) {
                             className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-800 dark:bg-rose-950 dark:text-rose-200"
                             title="Outstanding balance"
                           >
-                            owes {balances[p.id].toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 })}
+                            owes {formatMoney(balances[p.id])}
                           </span>
                         )}
                         <div className="flex items-center justify-between gap-2">

@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { useApp } from "@/context";
-import { cn, formatDate } from "@/lib/utils";
+import { cn, formatDate, formatMoney } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -773,7 +773,7 @@ function MovementsDialog({
                   Balance after · <span className="tabular-nums font-medium text-foreground">{m.balance_after}</span>
                   {m.reason ? <> · {m.reason}</> : ""}
                   {m.reference ? <> · ref {m.reference}</> : ""}
-                  {m.unit_cost != null && m.type === "in" ? <> · ${Number(m.unit_cost).toFixed(2)}</> : ""}
+                  {m.unit_cost != null && m.type === "in" ? <> · {formatMoney(Number(m.unit_cost))}</> : ""}
                 </div>
                 {m.notes && <div className="mt-0.5 text-xs text-muted-foreground">{m.notes}</div>}
               </li>

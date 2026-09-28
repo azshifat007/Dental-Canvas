@@ -216,6 +216,14 @@ async function ensureColumnMigrations(): Promise<void> {
         "ALTER TABLE prescriptions ADD COLUMN plan_item_id INTEGER REFERENCES treatment_plan_items(id) ON DELETE SET NULL",
       );
     }
+    // Clinical sidebar fields on the Chamber pad: O/E (on examination) and
+    // H/O (history of presenting illness) — databases predating them.
+    if (!names.has("on_examination")) {
+      await run("ALTER TABLE prescriptions ADD COLUMN on_examination TEXT");
+    }
+    if (!names.has("history")) {
+      await run("ALTER TABLE prescriptions ADD COLUMN history TEXT");
+    }
     // Databases created before the chamber template kept the old column
     // default; new rows should default to the chamber pad.
     const dflt = await query<{ dflt_value: string | null }>(
@@ -374,6 +382,14 @@ async function ensureColumnMigrations(): Promise<void> {
     const planCols = await query<{ name: string }>("PRAGMA table_info(invoice_payment_plans)");
     if (!planCols.some((c) => c.name === "payment_plan_reminded_at")) {
       await run("ALTER TABLE invoice_payment_plans ADD COLUMN payment_plan_reminded_at TEXT");
+    }
+    // Links auto-billed invoice line items back to their treatment-plan item
+    // (databases created before treatment-plan → billing sync existed).
+    const invItemCols = await query<{ name: string }>("PRAGMA table_info(invoice_items)");
+    if (!invItemCols.some((c) => c.name === "treatment_plan_item_id")) {
+      await run(
+        "ALTER TABLE invoice_items ADD COLUMN treatment_plan_item_id INTEGER REFERENCES treatment_plan_items(id) ON DELETE SET NULL",
+      );
     }
     // Databases created before membership plans existed need the tables.
     await run(`CREATE TABLE IF NOT EXISTS membership_plans (
@@ -790,6 +806,8 @@ const PrescriptionInput = z.object({
   tooth: z.string().max(32).optional().nullable(),
   plan_item_id: z.number().int().nullable().optional(),
   diagnosis: z.string().optional().nullable(),
+  on_examination: z.string().optional().nullable(),
+  history: z.string().optional().nullable(),
   advice: z.string().optional().nullable(),
   follow_up: z.string().optional().nullable(),
   items: z
@@ -1028,7 +1046,15 @@ async function buildDigestHtml(sections: DigestSection[]): Promise<{ subject: st
   const { clinicName, doctorName } = await loadEmailSettings();
   const practiceLabel = clinicName || doctorName || "Dental Canvas";
   const esc = escapeEmailHtml;
-  const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+  // The digest email is formatted with the practice's currency setting.
+  const settingsRows = await query<{ key: string; value: string }>(
+    "SELECT key, value FROM settings WHERE key = 'currency'",
+  ).catch(() => [] as Array<{ key: string; value: string }>);
+  const currency = settingsRows[0]?.value === "BDT" ? "BDT" : "USD";
+  const money = (n: number) =>
+    currency === "BDT"
+      ? `৳${n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
+      : n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 
   const wantReminders = sections.includes("reminders");
   const wantRecalls = sections.includes("recalls");
@@ -1180,8 +1206,8 @@ app.post("/api/prescriptions", async (c) => {
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   const d = parsed.data;
   const result = await run(
-    `INSERT INTO prescriptions (patient_id, practitioner_id, issued_date, template, large_print, tooth, plan_item_id, diagnosis, advice, follow_up)
-     VALUES (?, ?, COALESCE(?, date('now')), ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO prescriptions (patient_id, practitioner_id, issued_date, template, large_print, tooth, plan_item_id, diagnosis, on_examination, history, advice, follow_up)
+     VALUES (?, ?, COALESCE(?, date('now')), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       d.patient_id,
       d.practitioner_id ?? null,
@@ -1191,6 +1217,8 @@ app.post("/api/prescriptions", async (c) => {
       d.tooth ?? null,
       d.plan_item_id ?? null,
       d.diagnosis ?? null,
+      d.on_examination ?? null,
+      d.history ?? null,
       d.advice ?? null,
       d.follow_up ?? null,
     ],
@@ -1218,7 +1246,7 @@ app.put("/api/prescriptions/:id", async (c) => {
 
   const sets: string[] = [];
   const params: unknown[] = [];
-  for (const key of ["practitioner_id", "issued_date", "template", "large_print", "tooth", "plan_item_id", "diagnosis", "advice", "follow_up"] as const) {
+  for (const key of ["practitioner_id", "issued_date", "template", "large_print", "tooth", "plan_item_id", "diagnosis", "on_examination", "history", "advice", "follow_up"] as const) {
     const v = d[key];
     if (v !== undefined) {
       sets.push(`${key} = ?`);
@@ -1553,6 +1581,75 @@ app.delete("/api/treatment-plan-items/:id", async (c) => {
   const r = await run("DELETE FROM treatment_plan_items WHERE id = ?", [id]);
   if (!r.changes) return c.json({ error: "Not found" }, 404);
   return c.json({ ok: true });
+});
+
+// Add a treatment-plan item to the patient's billing as a line item on an
+// open invoice (creating the invoice when none exists). Idempotent: a plan
+// item already on a non-void invoice is returned instead of duplicated.
+app.post("/api/treatment-plan-items/:id/invoice", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const item = await get<{ id: number; patient_id: number; fee: number; treatment_type_id: number | null; tooth: string | null }>(
+    "SELECT id, patient_id, fee, treatment_type_id, tooth FROM treatment_plan_items WHERE id = ?",
+    [id],
+  );
+  if (!item) return c.json({ error: "Not found" }, 404);
+
+  const tt = item.treatment_type_id
+    ? await get<{ name: string; code: string }>("SELECT name, code FROM treatment_types WHERE id = ?", [item.treatment_type_id])
+    : null;
+  const description = [tt?.name ?? "Treatment", item.tooth ? `(tooth ${item.tooth})` : null].filter(Boolean).join(" ");
+
+  // Reuse an existing open invoice that already carries this plan item.
+  const existing = await get<{ invoice_id: number }>(
+    `SELECT ii.invoice_id AS invoice_id
+     FROM invoice_items ii
+     JOIN invoices i ON i.id = ii.invoice_id
+     WHERE i.patient_id = ? AND i.status != 'void' AND ii.treatment_plan_item_id = ?
+     LIMIT 1`,
+    [item.patient_id, id],
+  );
+  if (existing) {
+    const inv = await get(
+      "SELECT *, total - amount_paid AS balance FROM invoices WHERE id = ?",
+      [existing.invoice_id],
+    );
+    return c.json({ invoice: inv });
+  }
+
+  // Prefer the patient's most recent open invoice; otherwise create one.
+  let invoiceId: number | null = null;
+  const open = await get<{ id: number }>(
+    "SELECT id FROM invoices WHERE patient_id = ? AND status = 'open' ORDER BY issued_at DESC, id DESC LIMIT 1",
+    [item.patient_id],
+  );
+  if (open) {
+    invoiceId = open.id;
+  } else {
+    const res = await run(
+      "INSERT INTO invoices (patient_id, status, total, amount_paid) VALUES (?, 'open', 0, 0)",
+      [item.patient_id],
+    );
+    invoiceId = Number(res.lastInsertRowid);
+  }
+
+  const maxOrder = await get<{ m: number | null }>(
+    "SELECT MAX(sort_order) AS m FROM invoice_items WHERE invoice_id = ?",
+    [invoiceId],
+  );
+  await run(
+    "INSERT INTO invoice_items (invoice_id, treatment_type_id, treatment_plan_item_id, description, quantity, unit_price, sort_order) VALUES (?, ?, ?, ?, 1, ?, ?)",
+    [invoiceId, item.treatment_type_id, id, description || "Treatment", item.fee, (maxOrder?.m ?? -1) + 1],
+  );
+  await run(
+    "UPDATE invoices SET total = (SELECT COALESCE(SUM(quantity * unit_price), 0) FROM invoice_items WHERE invoice_id = ?) WHERE id = ?",
+    [invoiceId, invoiceId],
+  );
+  const inv = await get(
+    "SELECT *, total - amount_paid AS balance FROM invoices WHERE id = ?",
+    [invoiceId],
+  );
+  return c.json({ invoice: inv }, 201);
 });
 
 // ── Clinical notes ─────────────────────────────────────────────────

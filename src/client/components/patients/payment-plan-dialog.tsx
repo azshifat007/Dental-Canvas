@@ -7,9 +7,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { cn, formatDate } from "@/lib/utils";
+import { cn, formatDate, formatMoney as money } from "@/lib/utils";
 
-const money = (n: number): string => n.toLocaleString(undefined, { style: "currency", currency: "USD" });
 import type { Invoice } from "@/types";
 
 /**

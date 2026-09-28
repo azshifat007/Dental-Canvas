@@ -39,6 +39,9 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   day_start_minute: "420",
   day_end_minute: "1140",
   slot_minutes: "15",
+  // Practice currency shown everywhere money is formatted. "USD" ($) or
+  // "BDT" (Bangladeshi taka, ৳). Changeable in Settings → Profile.
+  currency: "USD",
   // Daily worklist digest (Settings → Email): "1" sends a morning email of
   // the reminder/recall/installment call lists to digest_recipient.
   digest_enabled: "",

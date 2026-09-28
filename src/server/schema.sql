@@ -138,6 +138,8 @@ CREATE TABLE IF NOT EXISTS invoice_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
   treatment_type_id INTEGER REFERENCES treatment_types(id) ON DELETE SET NULL,
+  -- The treatment-plan item this line came from (auto-billing); null when typed manually.
+  treatment_plan_item_id INTEGER REFERENCES treatment_plan_items(id) ON DELETE SET NULL,
   description TEXT NOT NULL,
   quantity INTEGER NOT NULL DEFAULT 1,
   unit_price REAL NOT NULL DEFAULT 0,
@@ -338,7 +340,9 @@ CREATE TABLE IF NOT EXISTS prescriptions (
   large_print INTEGER NOT NULL DEFAULT 0, -- 1 = enlarged type for visually impaired patients
   tooth TEXT,                           -- tooth the prescription relates to, e.g. '14'
   plan_item_id INTEGER REFERENCES treatment_plan_items(id) ON DELETE SET NULL, -- linked planned procedure
-  diagnosis TEXT,
+  diagnosis TEXT,                       -- C/C (chief complaint / diagnosis) on the Chamber sidebar
+  on_examination TEXT,                  -- O/E (findings on examination) on the Chamber sidebar
+  history TEXT,                         -- H/O (history of presenting illness) on the Chamber sidebar
   advice TEXT,                          -- general instructions to the patient
   follow_up TEXT,                       -- e.g. 'Recheck in 2 weeks'
   share_token TEXT UNIQUE,              -- null = not shared

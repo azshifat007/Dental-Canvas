@@ -262,6 +262,8 @@ export function PrescriptionDialog({
   const [planItems, setPlanItems] = useState<TreatmentPlanItem[]>([]);
   const [practitionerId, setPractitionerId] = useState<string>("none");
   const [diagnosis, setDiagnosis] = useState("");
+  const [onExamination, setOnExamination] = useState("");
+  const [history, setHistory] = useState("");
   const [advice, setAdvice] = useState("");
   const [followUp, setFollowUp] = useState("");
   const [items, setItems] = useState<DraftItem[]>([{ ...EMPTY_ITEM }]);
@@ -298,6 +300,8 @@ export function PrescriptionDialog({
     setPlanItemId(source?.plan_item_id ? String(source.plan_item_id) : "none");
     setPractitionerId(source?.practitioner_id ? String(source.practitioner_id) : "none");
     setDiagnosis(source?.diagnosis ?? "");
+    setOnExamination(source?.on_examination ?? "");
+    setHistory(source?.history ?? "");
     setAdvice(source?.advice ?? "");
     setFollowUp(source?.follow_up ?? "");
     const existing = source?.items ?? [];
@@ -422,6 +426,8 @@ export function PrescriptionDialog({
         .filter((o) => imageIds.includes(o.id))
         .map((o) => ({ id: o.id, label: o.label, src: o.url })),
       diagnosis: diagnosis.trim() || null,
+      on_examination: onExamination.trim() || null,
+      history: history.trim() || null,
       advice: advice.trim() || null,
       follow_up: followUp.trim() || null,
       items: valid.map((i) => ({
@@ -456,6 +462,8 @@ export function PrescriptionDialog({
         tooth: tooth.trim() || null,
         plan_item_id: planItemId === "none" ? null : Number(planItemId),
         diagnosis: diagnosis.trim() || null,
+        on_examination: onExamination.trim() || null,
+        history: history.trim() || null,
         advice: advice.trim() || null,
         follow_up: followUp.trim() || null,
         image_ids: imageIds,
@@ -571,11 +579,32 @@ export function PrescriptionDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">Diagnosis</Label>
+              <Label className="text-xs">Diagnosis (C/C)</Label>
               <Input
                 value={diagnosis}
                 onChange={(e) => setDiagnosis(e.target.value)}
                 placeholder="e.g. Acute periapical abscess, tooth 36"
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs">On examination (O/E)</Label>
+              <Textarea
+                value={onExamination}
+                onChange={(e) => setOnExamination(e.target.value)}
+                rows={2}
+                placeholder="e.g. Tenderness on percussion, deep caries with 36"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">History (H/O)</Label>
+              <Textarea
+                value={history}
+                onChange={(e) => setHistory(e.target.value)}
+                rows={2}
+                placeholder="e.g. Pain for 3 days, worse at night; swelling since yesterday"
               />
             </div>
           </div>

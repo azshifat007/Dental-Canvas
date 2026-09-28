@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "@/components/ui/toast";
 import { api } from "../api";
+import { setActiveCurrency } from "../lib/utils";
 import type {
   Appointment,
   AppointmentToMake,
@@ -22,6 +23,8 @@ export interface PracticeSettings {
   day_start_minute: number;
   day_end_minute: number;
   slot_minutes: number;
+  /** Practice currency for every money display: "USD" ($) or "BDT" (৳). */
+  currency: "USD" | "BDT";
 }
 
 /** Auto-backup schedule (see src/client/hooks/use-auto-backup.ts). */
@@ -55,6 +58,7 @@ const DEFAULT_SETTINGS: PracticeSettings = {
   day_start_minute: 7 * 60,
   day_end_minute: 19 * 60,
   slot_minutes: 15,
+  currency: "USD",
 };
 
 export const DEFAULT_PROFILE: ProfileSettings = {
@@ -84,7 +88,7 @@ function parseBackupSchedule(raw: Record<string, string>): BackupSchedule {
 }
 
 function parseSettings(raw: Record<string, string>): PracticeSettings {
-  const num = (key: keyof PracticeSettings) => {
+  const num = (key: "day_start_minute" | "day_end_minute" | "slot_minutes") => {
     const v = parseInt(raw[key], 10);
     return Number.isFinite(v) ? v : DEFAULT_SETTINGS[key];
   };
@@ -92,6 +96,7 @@ function parseSettings(raw: Record<string, string>): PracticeSettings {
     day_start_minute: num("day_start_minute"),
     day_end_minute: num("day_end_minute"),
     slot_minutes: num("slot_minutes"),
+    currency: raw.currency === "BDT" ? "BDT" : "USD",
   };
 }
 
@@ -133,6 +138,7 @@ export function useAppState() {
     setTreatmentTypes(tts.treatment_types);
     setMedicines(meds.medicines);
     setSettings(parseSettings(st.settings));
+    setActiveCurrency(parseSettings(st.settings).currency);
     setProfile(parseProfile(st.settings));
     setBackupSchedule(parseBackupSchedule(st.settings));
   }, []);
@@ -167,6 +173,7 @@ export function useAppState() {
     }
     const res = await api<{ settings: Record<string, string> }>("PUT", "/api/settings", body);
     setSettings(parseSettings(res.settings));
+    setActiveCurrency(parseSettings(res.settings).currency);
   }, []);
 
   const refreshDay = useCallback(async (date: string) => {
