@@ -1,13 +1,11 @@
 {
-  "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
-  "description": "Default capability for the Dental Canvas main window (desktop)",
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "mobile",
+  "description": "Capability for the Dental Canvas Android/iOS apps — only plugins that ship on mobile",
   "windows": ["main"],
-  "platforms": ["linux", "macOS", "windows"],
+  "platforms": ["android", "iOS"],
   "permissions": [
     "core:default",
-    "updater:default",
-    "process:allow-restart",
     {
       "identifier": "opener:default",
       "allow": [
