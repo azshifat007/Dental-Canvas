@@ -236,14 +236,13 @@ jobs:
           p = "src-tauri/gen/android/app/build.gradle.kts"
           s = open(p).read()
           if "keystore.properties" not in s:
+            # Fully-qualified java.util/java.io names — imports are only legal
+            # at the very top of a .kts file, and `android {` sits mid-file.
             s = s.replace(
               "android {",
-              """import java.util.Properties
-          import java.io.FileInputStream
-
-          val keystoreProps = Properties()
+              """val keystoreProps = java.util.Properties()
           val keystoreFile = rootProject.file("app/keystore.properties")
-          if (keystoreFile.exists()) keystoreProps.load(FileInputStream(keystoreFile))
+          if (keystoreFile.exists()) keystoreProps.load(java.io.FileInputStream(keystoreFile))
 
           android {
             signingConfigs {
