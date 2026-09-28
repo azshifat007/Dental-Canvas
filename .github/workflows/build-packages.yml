@@ -264,13 +264,15 @@ jobs:
           s2 = s.replace("buildTypes {", block + "buildTypes {", 1)
           assert s2 != s, "buildTypes block not found in build.gradle.kts"
           s = s2
-          s2 = re.sub(
-            r'(buildTypes \{\s*getByName\("release"\) \{)',
+          # Whitespace-agnostic: matches buildTypes { getByName("release") {
+          # however the template formats it (same line, newlines, spaces).
+          s2, n = re.subn(
+            r'(buildTypes\s*\{[^}]*?getByName\("release"\)\s*\{)',
             r'\1\n            signingConfig = signingConfigs.getByName("release")',
             s,
             count=1,
           )
-          assert s2 != s, "buildTypes.release block not found in build.gradle.kts"
+          assert n == 1, "buildTypes.release block not found in build.gradle.kts"
           open(p, "w").write(s2)
           print("signing wired with assertions")
           PY
