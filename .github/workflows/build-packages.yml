@@ -197,21 +197,16 @@ jobs:
         run: pnpm tauri android init || true
 
       - name: Configure signing
+        id: signing
         env:
           KS_B64: ${{ secrets.TAURI_ANDROID_KEYSTORE }}
           KS_PASS: ${{ secrets.TAURI_ANDROID_KEYSTORE_PASSWORD }}
           KS_ALIAS: ${{ secrets.TAURI_ANDROID_KEY_ALIAS }}
         run: |
-          gradle=src-tauri/gen/android/app/keystore.properties
-          mkdir -p src-tauri/gen/android/app
           if [ -n "$KS_B64" ]; then
             echo "$KS_B64" | base64 -d > keystore.jks
-            {
-              echo "storeFile=$GITHUB_WORKSPACE/keystore.jks"
-              echo "storePassword=$KS_PASS"
-              echo "keyAlias=$KS_ALIAS"
-              echo "keyPassword=$KS_PASS"
-            } > "$gradle"
+            echo "pass=$KS_PASS" >> "$GITHUB_OUTPUT"
+            echo "alias=$KS_ALIAS" >> "$GITHUB_OUTPUT"
             echo "signing=secret-keystore" >> "$GITHUB_ENV"
           else
             # Throwaway keystore so the APK is at least installable. Regenerated
@@ -220,48 +215,39 @@ jobs:
               -keyalg RSA -keysize 2048 -validity 10950 \
               -storepass dental-canvas-ci -keypass dental-canvas-ci \
               -dname "CN=Dental Canvas, OU=CI, O=Dental Canvas, C=BD"
-            {
-              echo "storeFile=$GITHUB_WORKSPACE/keystore.jks"
-              echo "storePassword=dental-canvas-ci"
-              echo "keyAlias=dental-canvas"
-              echo "keyPassword=dental-canvas-ci"
-            } > "$gradle"
+            echo "pass=dental-canvas-ci" >> "$GITHUB_OUTPUT"
+            echo "alias=dental-canvas" >> "$GITHUB_OUTPUT"
             echo "signing=ephemeral-keystore" >> "$GITHUB_ENV"
           fi
 
+      # Inject the signing values straight into build.gradle.kts — no
+      # properties indirection (java.util is shadowed by the `java` extension
+      # inside .kts and imports are only legal at the top of the file).
       - name: Wire signing into the Gradle project
+        env:
+          KS_PATH: ${{ github.workspace }}/keystore.jks
+          KS_PASS: ${{ steps.signing.outputs.pass }}
+          KS_ALIAS: ${{ steps.signing.outputs.alias }}
         run: |
-          python3 - <<'PY'
+          python3 - <<PY
           import re
           p = "src-tauri/gen/android/app/build.gradle.kts"
           s = open(p).read()
-          if "keystore.properties" not in s:
-            # Fully-qualified java.util/java.io names — imports are only legal
-            # at the very top of a .kts file, and `android {` sits mid-file.
-            s = s.replace(
-              "android {",
-              """val keystoreProps = java.util.Properties()
-          val keystoreFile = rootProject.file("app/keystore.properties")
-          if (keystoreFile.exists()) keystoreProps.load(java.io.FileInputStream(keystoreFile))
-
-          android {
+          if "dentalCanvasSigning" not in s:
+            inject = '''android {
             signingConfigs {
-              create("release") {
-                val sf = keystoreProps.getProperty("storeFile")
-                if (sf != null) {
-                  storeFile = file(sf)
-                  storePassword = keystoreProps.getProperty("storePassword")
-                  keyAlias = keystoreProps.getProperty("keyAlias")
-                  keyPassword = keystoreProps.getProperty("keyPassword")
-                }
+              create("dentalCanvasSigning") {
+                storeFile = file("$KS_PATH")
+                storePassword = "$KS_PASS"
+                keyAlias = "$KS_ALIAS"
+                keyPassword = "$KS_PASS"
               }
             }
-          """,
-              1,
-            )
+          '''
+            s = s.replace("android {", inject, 1)
             s = re.sub(
               r"(buildTypes \{\s*getByName\(\"release\"\) \{)",
-              r'\1\n            signingConfig = signingConfigs.getByName("release")',
+              r'\1\n            signingConfig = signingConfigs.getByName("dentalCanvasSigning")',
               s,
               count=1,
             )
