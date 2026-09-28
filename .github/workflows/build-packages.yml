@@ -267,6 +267,10 @@ jobs:
 
       - name: Upload APK to release
         uses: softprops/action-gh-release@v2
+        env:
+          # The action does NOT read the automatic GITHUB_TOKEN unless it is
+          # passed explicitly — without it every API call is unauthenticated.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           files: src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
           tag_name: ${{ github.ref_name }}
