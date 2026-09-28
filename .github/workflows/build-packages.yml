@@ -243,8 +243,12 @@ jobs:
           if marker in s:
             print("already wired")
             sys.exit(0)
-          if not s.lstrip().startswith("import "):
-            s = "import java.util.Properties\nimport java.io.FileInputStream\n\n" + s
+          # The template already imports Properties but not FileInputStream —
+          # ensure each import individually (imports must sit above all
+          # declarations; prepending to the file top is always valid).
+          for imp in ("import java.util.Properties", "import java.io.FileInputStream"):
+            if imp not in s:
+              s = imp + "\n" + s
           block = '''// dental-canvas-ci-signing
           signingConfigs {
               create("release") {
