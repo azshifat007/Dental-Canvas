@@ -5,18 +5,12 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  contents: write
-
 concurrency:
   group: packages-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   # ── Windows NSIS installer (+ updater artifacts) ────────────────────
-  # Kept in this workflow so one tag ships every platform together. The
-  # original build-windows.yml still exists and can be disabled once this
-  # workflow has taken over (or kept as the Windows-only fallback).
   build-windows:
     runs-on: windows-latest
     steps:
@@ -92,7 +86,7 @@ jobs:
 
   # ── Linux desktop packages (deb / rpm / AppImage) ───────────────────
   build-linux:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -119,10 +113,12 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
+      # libayatana-appindicator3-dev conflicts with the legacy
+      # libappindicator3-dev — only the ayatana one may be installed.
       - name: Install Tauri Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev
 
       - name: Check release version
         run: |
@@ -150,10 +146,11 @@ jobs:
 
   # ── Android APK ─────────────────────────────────────────────────────
   # Produces a signed universal APK for sideloading on tablets/phones.
-  # The keystore is generated on the fly with a key derived from the tag —
-  # for proper Play-Store signing add ANDROID_KEYSTORE_B64 etc. secrets.
+  # GitHub runners ship the Android SDK + NDK preinstalled; tauri android
+  # init generates the Gradle project (idempotent || true), and the build
+  # signs with the debug keystore that the SDK generates on demand.
   build-android:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -178,9 +175,6 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Set up Rust Android targets
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -191,24 +185,20 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
-      - name: Install Tauri CLI (with Android support)
-        run: pnpm add -D @tauri-apps/cli
+      - name: Locate Android SDK / NDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          ndk=$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)
+          echo "NDK_HOME=$ndk" >> "$GITHUB_ENV"
 
       - name: Initialize Android project
-        run: |
-          pnpm tauri android init || true
+        run: pnpm tauri android init || true
 
       - name: Build Android APK (debug signing)
-        run: |
-          pnpm tauri android build --apk
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk-bundle
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri android build --apk
 
       - name: Upload APK to release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
+          files: src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
           tag_name: ${{ github.ref_name }}
