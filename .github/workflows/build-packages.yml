@@ -238,19 +238,22 @@ jobs:
           if "keystore.properties" not in s:
             s = s.replace(
               "android {",
-              """val keystoreProps = java.util.Properties().apply {
-            val f = rootProject.file("app/keystore.properties")
-            if (f.exists()) f.inputStream().use { load(it) }
-          }
+              """import java.util.Properties
+          import java.io.FileInputStream
+
+          val keystoreProps = Properties()
+          val keystoreFile = rootProject.file("app/keystore.properties")
+          if (keystoreFile.exists()) keystoreProps.load(FileInputStream(keystoreFile))
 
           android {
             signingConfigs {
               create("release") {
-                keystoreProps["storeFile"]?.let {
-                  storeFile = file(it as String)
-                  storePassword = keystoreProps["storePassword"] as String
-                  keyAlias = keystoreProps["keyAlias"] as String
-                  keyPassword = keystoreProps["keyPassword"] as String
+                val sf = keystoreProps.getProperty("storeFile")
+                if (sf != null) {
+                  storeFile = file(sf)
+                  storePassword = keystoreProps.getProperty("storePassword")
+                  keyAlias = keystoreProps.getProperty("keyAlias")
+                  keyPassword = keystoreProps.getProperty("keyPassword")
                 }
               }
             }
