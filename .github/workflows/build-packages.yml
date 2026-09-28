@@ -197,7 +197,6 @@ jobs:
         run: pnpm tauri android init || true
 
       - name: Configure signing
-        id: signing
         env:
           KS_B64: ${{ secrets.TAURI_ANDROID_KEYSTORE }}
           KS_PASS: ${{ secrets.TAURI_ANDROID_KEYSTORE_PASSWORD }}
@@ -205,65 +204,103 @@ jobs:
         run: |
           if [ -n "$KS_B64" ]; then
             echo "$KS_B64" | base64 -d > keystore.jks
-            echo "pass=$KS_PASS" >> "$GITHUB_OUTPUT"
-            echo "alias=$KS_ALIAS" >> "$GITHUB_OUTPUT"
+            alias="$KS_ALIAS"
+            pass="$KS_PASS"
             echo "signing=secret-keystore" >> "$GITHUB_ENV"
           else
             # Throwaway keystore so the APK is at least installable. Regenerated
-            # every release — devices see it as a NEW app on each major update.
+            # every release — devices treat each release as a NEW app, so this
+            # is for testing only; set the TAURI_ANDROID_KEYSTORE secrets for a
+            # stable signature across releases.
             keytool -genkeypair -v -keystore keystore.jks -alias dental-canvas \
               -keyalg RSA -keysize 2048 -validity 10950 \
               -storepass dental-canvas-ci -keypass dental-canvas-ci \
               -dname "CN=Dental Canvas, OU=CI, O=Dental Canvas, C=BD"
-            echo "pass=dental-canvas-ci" >> "$GITHUB_OUTPUT"
-            echo "alias=dental-canvas" >> "$GITHUB_OUTPUT"
+            alias="dental-canvas"
+            pass="dental-canvas-ci"
             echo "signing=ephemeral-keystore" >> "$GITHUB_ENV"
           fi
+          # keystore.properties at the ANDROID PROJECT ROOT, with the exact
+          # keys the official Tauri signing flow expects.
+          cat > src-tauri/gen/android/keystore.properties <<EOF
+          password=$pass
+          keyAlias=$alias
+          storeFile=${GITHUB_WORKSPACE}/keystore.jks
+          EOF
 
-      # Inject the signing values straight into build.gradle.kts — no
-      # properties indirection (java.util is shadowed by the `java` extension
-      # inside .kts and imports are only legal at the top of the file).
+      # Wire the signing config into build.gradle.kts per the official Tauri
+      # Android signing guide: imports at the very TOP of the file (the only
+      # legal position), a release signingConfigs block before buildTypes, and
+      # signingConfig set inside buildTypes.release. Every replacement asserts
+      # so a silent no-match can never produce an unsigned APK again.
       - name: Wire signing into the Gradle project
-        env:
-          KS_PATH: ${{ github.workspace }}/keystore.jks
-          KS_PASS: ${{ steps.signing.outputs.pass }}
-          KS_ALIAS: ${{ steps.signing.outputs.alias }}
         run: |
-          python3 - <<PY
-          import re
+          python3 - <<'PY'
+          import re, sys
           p = "src-tauri/gen/android/app/build.gradle.kts"
           s = open(p).read()
-          if "dentalCanvasSigning" not in s:
-            inject = '''android {
-            signingConfigs {
-              create("dentalCanvasSigning") {
-                storeFile = file("$KS_PATH")
-                storePassword = "$KS_PASS"
-                keyAlias = "$KS_ALIAS"
-                keyPassword = "$KS_PASS"
-              }
-            }
-          '''
-            s = s.replace("android {", inject, 1)
-            s = re.sub(
-              r"(buildTypes \{\s*getByName\(\"release\"\) \{)",
-              r'\1\n            signingConfig = signingConfigs.getByName("dentalCanvasSigning")',
-              s,
-              count=1,
-            )
-            open(p, "w").write(s)
-            print("signing wired")
-          else:
+          marker = "dental-canvas-ci-signing"
+          if marker in s:
             print("already wired")
+            sys.exit(0)
+          if not s.lstrip().startswith("import "):
+            s = "import java.util.Properties\nimport java.io.FileInputStream\n\n" + s
+          block = '''// dental-canvas-ci-signing
+          signingConfigs {
+              create("release") {
+                  val keystorePropertiesFile = rootProject.file("keystore.properties")
+                  val keystoreProperties = Properties()
+                  if (keystorePropertiesFile.exists()) {
+                      keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+                  }
+                  keyAlias = keystoreProperties["keyAlias"] as String
+                  keyPassword = keystoreProperties["password"] as String
+                  storeFile = file(keystoreProperties["storeFile"] as String)
+                  storePassword = keystoreProperties["password"] as String
+              }
+          }
+
+          '''
+          s2 = s.replace("buildTypes {", block + "buildTypes {", 1)
+          assert s2 != s, "buildTypes block not found in build.gradle.kts"
+          s = s2
+          s2 = re.sub(
+            r'(buildTypes \{\s*getByName\("release"\) \{)',
+            r'\1\n            signingConfig = signingConfigs.getByName("release")',
+            s,
+            count=1,
+          )
+          assert s2 != s, "buildTypes.release block not found in build.gradle.kts"
+          open(p, "w").write(s2)
+          print("signing wired with assertions")
           PY
 
       - name: Build Android APK (signed)
         run: pnpm tauri android build --apk
 
+      - name: Rename the signed APK
+        run: |
+          cd src-tauri/gen/android/app/build/outputs/apk/universal/release
+          for f in *-unsigned.apk; do
+            [ -e "$f" ] || continue
+            mv "$f" "${f/-unsigned/}"
+          done
+          ls -la
+
       - name: Verify the APK is signed
         run: |
           apk=$(ls src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk | head -1)
-          "$ANDROID_HOME"/build-tools/*/*/apksigner verify --print-certs "$apk" | head -5
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
+          if [ -z "$apksigner" ]; then echo "apksigner not found" >&2; exit 1; fi
+          "$apksigner" verify --print-certs "$apk"
+          # Belt and braces: an APK without the v2/v3 signing block cannot
+          # install on modern Android regardless of what apksigner says.
+          python3 -c "
+          import sys
+          data = open(sys.argv[1], 'rb').read()
+          sys.exit(0 if b'APK Sig Block 42' in data else 1)
+          " "$apk"
+          echo "signature block verified"
 
       # Plain asset upload to the release the Windows job created — avoids
       # action-gh-release's update-release flow, which the GITHUB_TOKEN may
