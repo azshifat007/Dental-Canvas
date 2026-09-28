@@ -264,11 +264,12 @@ jobs:
           s2 = s.replace("buildTypes {", block + "buildTypes {", 1)
           assert s2 != s, "buildTypes block not found in build.gradle.kts"
           s = s2
-          # Whitespace- and quote-agnostic: matches buildTypes { getByName(...)
-          # however the template formats/quotes it.
+          # Match `getByName("release") {` directly — the buildTypes-wide
+          # regex could not cross the debug block's closing brace. Asserts
+          # the one release build type exists and injects into it.
           s2, n = re.subn(
-            r"""(buildTypes\s*\{[^}]*?getByName\((?:'|\")release(?:'|\")\)\s*\{)""",
-            r'\1\n            signingConfig = signingConfigs.getByName("release")',
+            r"""getByName\((?:'|\")release(?:'|\")\)\s*\{""",
+            'getByName("release") {\\n            signingConfig = signingConfigs.getByName("release")',
             s,
             count=1,
           )
