@@ -466,6 +466,13 @@ jobs:
       - name: Build debug APK (with tests)
         run: pnpm tauri android build --debug --apk
 
+      # tauri android build only produces the app APK; the instrumented-test
+      # APK is a separate Gradle output that must be built (and installed)
+      # explicitly, or `am instrument` fails with INSTRUMENTATION_FAILED.
+      - name: Build the androidTest APK
+        working-directory: src-tauri/gen/android
+        run: ./gradlew assembleUniversalDebugAndroidTest
+
       # Without this the runner user cannot open /dev/kvm, and the emulator
       # falls back to pure software emulation: boot took 394 s and adb stayed
       # flaky ("device offline" / "Broken pipe") until the job timed out.
@@ -492,6 +499,8 @@ jobs:
           # single-line commands (or && chains) only.
           script: |
             adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+            adb install -r src-tauri/gen/android/app/build/outputs/apk/androidTest/universal/debug/app-universal-debug-androidTest.apk
+            adb shell pm list instrumentation | grep dentalcanvas || true
             adb shell am instrument -w -e class com.dentalcanvas.app.BootSmokeTest com.dentalcanvas.app.test/androidx.test.runner.AndroidJUnitRunner
 
       - name: Collect diagnostics on failure
