@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -45,6 +46,16 @@ def collect_expected(dist: pathlib.Path) -> set[str]:
     return names
 
 
+def fresh_dir(base: pathlib.Path, name: str) -> pathlib.Path:
+    """A clean extraction dir per package — stale leftovers would let cpio
+    skip files ("newer or same age version exists") and poison the scan."""
+    out = base / name
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True)
+    return out
+
+
 def binary_blobs(pkg: pathlib.Path) -> list[bytes]:
     """Return the raw binary blob(s) inside a package that can embed assets."""
     # All shellouts below run with cwd= extraction dirs, so the package path
@@ -53,11 +64,7 @@ def binary_blobs(pkg: pathlib.Path) -> list[bytes]:
     suffix = pkg.suffix.lower()
     if suffix == ".deb":
         blobs = []
-        for member in ("data.tar.xz", "data.tar.gz", "data.tar.zst", "data.tar"):
-            if (pkg.parent / member).exists():
-                (pkg.parent / member).unlink()
-        out = pkg.parent / f".{pkg.stem}-deb"
-        out.mkdir(exist_ok=True)
+        out = fresh_dir(pkg.parent, f".{pkg.stem}-deb")
         subprocess.run(["ar", "x", str(pkg)], cwd=out, check=True)
         tar = next(m for m in ("data.tar.xz", "data.tar.gz", "data.tar.zst", "data.tar")
                    if (out / m).exists())
@@ -67,21 +74,22 @@ def binary_blobs(pkg: pathlib.Path) -> list[bytes]:
                 blobs.append(binfile.read_bytes())
         return blobs
     if suffix == ".rpm":
-        out = pkg.parent / f".{pkg.stem}-rpm"
-        out.mkdir(exist_ok=True)
+        out = fresh_dir(pkg.parent, f".{pkg.stem}-rpm")
+        # rpm2cpio converts the payload to a cpio archive on stdout; extract
+        # it in one pipeline (re-running rpm2cpio on a stream it can't seek
+        # fails — hence no double invocation here).
         with open(pkg, "rb") as fh:
-            subprocess.run(["rpm2cpio"], stdin=fh, stdout=subprocess.PIPE, check=True)
-        with open(pkg, "rb") as fh:
-            cpio = subprocess.run(["rpm2cpio"], stdin=fh, stdout=subprocess.PIPE, check=True).stdout
+            cpio = subprocess.run(["rpm2cpio"], stdin=fh,
+                                  stdout=subprocess.PIPE, check=True).stdout
         subprocess.run(["cpio", "-idm", "--quiet"], input=cpio, cwd=out, check=True)
+        blobs = []
         for binfile in out.rglob("usr/bin/*"):
             if binfile.is_file() and binfile.stat().st_size > 1_000_000:
-                return [binfile.read_bytes()]
-        return []
+                blobs.append(binfile.read_bytes())
+        return blobs
     if suffix == ".appimage":
         pkg.chmod(pkg.stat().st_mode | 0o755)  # downloads often drop the exec bit
-        out = pkg.parent / f".{pkg.stem}-appimage"
-        out.mkdir(exist_ok=True)
+        out = fresh_dir(pkg.parent, f".{pkg.stem}-appimage")
         subprocess.run([str(pkg), "--appimage-extract"], cwd=out,
                        capture_output=True, check=True)
         blobs = []
