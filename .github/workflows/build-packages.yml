@@ -474,11 +474,12 @@ jobs:
           target: google_apis
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           disable-animations: true
+          # NOTE: this action executes EACH LINE of `script` via a separate
+          # `sh -c`, so shell variables do not survive across lines. Use
+          # single-line commands (or && chains) only.
           script: |
-            apk=$(ls src-tauri/gen/android/app/build/outputs/apk/universal/debug/*.apk | head -1)
-            adb install -r "$apk"
-            adb shell am instrument -w -e class com.dentalcanvas.app.BootSmokeTest \
-              com.dentalcanvas.app.test/androidx.test.runner.AndroidJUnitRunner
+            adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+            adb shell am instrument -w -e class com.dentalcanvas.app.BootSmokeTest com.dentalcanvas.app.test/androidx.test.runner.AndroidJUnitRunner
 
       - name: Collect diagnostics on failure
         if: failure()
