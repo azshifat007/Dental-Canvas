@@ -25,8 +25,8 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import zipfile
+import zlib
 
 # Tauri's embedded-asset table is length-prefixed binary: the path appears
 # verbatim (e.g. "/assets/index-C754DkWb.js") with no terminator byte after
@@ -109,13 +109,21 @@ def binary_blobs(pkg: pathlib.Path) -> list[bytes]:
                     blobs.append(f.read_bytes())
         return blobs
     if suffix == ".dmg":
-        blobs = []
-        with tempfile.TemporaryDirectory() as td:
-            subprocess.run(["7z", "x", "-y", f"-o{td}", str(pkg)],
-                           capture_output=True, check=True)
-            for f in pathlib.Path(td).rglob("*"):
-                if f.is_file() and f.stat().st_size > 1_000_000:
-                    blobs.append(f.read_bytes())
+        # Apple UDIF images store file data in blocks that are zlib
+        # compressed, raw, or otherwise, depending on format (UDZO/UDBZ/ULFO)
+        # — 7z can only open some of them. Robust approach: scan the raw
+        # image bytes AND every zlib stream found in it (UDZO blocks are
+        # independent zlib streams). The resource table is stored verbatim
+        # inside whichever blocks hold it, so the union always contains the
+        # embedded asset paths.
+        raw = pkg.read_bytes()
+        blobs = [raw]
+        for m in re.finditer(rb"\x78[\x01\x5e\x9c\xda]", raw):
+            try:
+                d = zlib.decompressobj()
+                blobs.append(d.decompress(raw[m.start():m.start() + 8_000_000]))
+            except Exception:
+                pass
         return blobs
     if suffix == ".apk":
         with zipfile.ZipFile(pkg) as z:
