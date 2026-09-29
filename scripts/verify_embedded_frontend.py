@@ -13,8 +13,8 @@ same file bytes were compiled in — no decompression of the asset bodies needed
 Usage:
   verify_embedded_frontend.py --dist ./dist --package foo.deb [--package bar.dmg ...]
 
-Supported packages: .deb, .rpm, .AppImage, .dmg (7z), .exe (NSIS, 7z), .apk
-(unzip; assets live under assets/ and are compared the same way).
+Supported packages: .deb, .rpm, .AppImage, .dmg (raw + zlib scan), .exe
+(NSIS via 7z), .apk (native libs in lib/<abi>/*.so).
 """
 
 from __future__ import annotations
@@ -127,10 +127,18 @@ def binary_blobs(pkg: pathlib.Path) -> list[bytes]:
                 pass
         return blobs
     if suffix == ".apk":
+        # On Android the frontend is embedded in the native libraries (the
+        # cdylib carries the same resource table as the desktop binaries) —
+        # the zip's assets/ dir only holds dexopt/profile/config files.
+        # Universal APKs contain one lib per ABI; they all embed the same
+        # frontend, and every one of them must match.
+        blobs = []
         with zipfile.ZipFile(pkg) as z:
-            big = [n for n in z.namelist()
-                   if n.startswith("assets/") and z.getinfo(n).file_size > 500_000]
-            return [z.read(n) for n in big]
+            for n in z.namelist():
+                if n.startswith("lib/") and n.endswith(".so") \
+                        and z.getinfo(n).file_size > 1_000_000:
+                    blobs.append(z.read(n))
+        return blobs
     raise SystemExit(f"error: don't know how to inspect {pkg}")
 
 

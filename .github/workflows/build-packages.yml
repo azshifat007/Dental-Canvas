@@ -430,7 +430,7 @@ jobs:
             --repo "${GITHUB_REPOSITORY}"
           ls -la verify
 
-      - name: Verify embedded frontend in every desktop package
+      - name: Verify embedded frontend in every published package
         run: |
           python3 scripts/verify_embedded_frontend.py \
             --dist dist \
@@ -438,7 +438,8 @@ jobs:
             --package verify/*.deb \
             --package verify/*.rpm \
             --package verify/*.AppImage \
-            --package verify/*.dmg
+            --package verify/*.dmg \
+            --package verify/*.apk
 
       - name: Verify updater feed
         env:
