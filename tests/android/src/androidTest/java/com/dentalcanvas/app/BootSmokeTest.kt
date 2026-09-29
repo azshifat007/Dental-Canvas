@@ -16,8 +16,10 @@ import org.junit.runner.RunWith
  * It launches the real app on a live emulator and asserts the WebView has
  * actually MOUNTED past boot: not the "Dental Canvas could not start"
  * fatal screen, not a blank window. Concretely, it waits for a DOM element
- * the React app renders (the sidebar navigation landmark) inside Tauri's
- * WebView view.
+ * the React app renders (the skip-to-content link in app.tsx) inside
+ * Tauri's WebView view. The link is an <a> with real text, so it is
+ * visible to uiautomator at any screen size — unlike the sidebar, which
+ * is display:none on phone widths.
  *
  * History this guards against: v1.4.11 shipped an APK where every boot died
  * in the service-worker activation path ("Failed to register a
@@ -46,17 +48,19 @@ class BootSmokeTest {
         context.startActivity(intent)
         device.waitForIdle(10_000)
 
-        // The app mounts only after the offline backend answers its first
-        // health probe (desktop) or the in-page server is ready (Android),
-        // so give the WebView time to render before judging.
+        // The skip-to-content link is rendered by app.tsx once React
+        // mounts — at every viewport size. "Skip to main content" is its
+        // visible text; uiautomator's By.text matches WebView content.
         val mounted = device.wait(
-            Until.hasObject(By.desc("Practice navigation")),
+            Until.hasObject(By.text("Skip to main content")),
             bootTimeoutMs,
         )
 
         // Diagnostics first (visible in logcat on failure), then assert.
-        val dumpPath = device.dumpWindowHierarchy("window_dump.xml")
-        val dumpText = java.io.File(dumpPath).readText()
+        // uiautomator dump via shell: dumpWindowHierarchy()'s return type
+        // varies across uiautomator versions (Path vs File).
+        device.executeShellCommand("uiautomator dump /sdcard/window_dump.xml")
+        val dumpText = device.executeShellCommand("cat /sdcard/window_dump.xml")
         val hasFatal = dumpText.contains("could not start")
         println("BOOT_SMOKE: mounted=$mounted fatalScreen=$hasFatal")
         println("BOOT_SMOKE: windowDumpHead=${dumpText.take(400)}")
