@@ -71,6 +71,7 @@ jobs:
 
             - **Windows** — `...-setup.exe` (NSIS installer, x64)
             - **Linux** — `..._amd64.deb`, `..._x86_64.rpm`, `..._amd64.AppImage`
+            - **macOS** — `..._aarch64.appdmg` (Apple Silicon) — unsigned: right-click → Open on first launch
             - **Android** — `...-universal.apk` (sideload; enable "install unknown apps")
 
             These releases package the full offline app — UI and the local backend are both bundled, so the clinic can run entirely without internet. Installers are not code-signed.
@@ -143,6 +144,64 @@ jobs:
           releaseDraft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           args: --bundles deb,rpm,appimage
+
+  # ── macOS DMG (Apple Silicon) ───────────────────────────────────────
+  # Unsigned DMG for now — macOS Gatekeeper requires right-click → Open
+  # (or xattr -cr) on first launch. Ad-hoc signing keeps the binary valid
+  # locally; a Developer ID certificate can be added later for notarization.
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Check release version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "v$version" != "${GITHUB_REF_NAME}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package.json version v$version" >&2
+            exit 1
+          fi
+
+      - name: Build and publish macOS DMG
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Dental Canvas ${{ github.ref_name }}
+          releaseBody: |
+            macOS DMG (Apple Silicon). Unsigned — on first launch right-click
+            the app and choose Open, or run `xattr -cr /Applications/Dental\ Canvas.app`.
+          releaseDraft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          args: --target aarch64-apple-darwin --bundles dmg
 
   # ── Android APK ─────────────────────────────────────────────────────
   # Produces a SIGNED universal APK for sideloading on tablets/phones.
