@@ -82,7 +82,20 @@ self.addEventListener("activate", (event: ExtendableEvent) => {
       for (const name of await caches.keys()) {
         if (name !== SHELL_CACHE) await caches.delete(name);
       }
+      // Take control of every open window, then navigate each one to its own
+      // URL — that forces a reload FROM THIS WORKER's cache, so the new shell
+      // replaces the old interface immediately. This must live in the SW (not
+      // the page): an app updating from an old release has an OLD page whose
+      // JS may not cooperate with a takeover, and the clinic machine would
+      // otherwise keep showing the previous version's UI until a manual
+      // restart. navigate() is the only reload the old page cannot veto.
+      const clientList = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       await self.clients.claim();
+      for (const client of clientList) {
+        if ("navigate" in client) {
+          await (client as WindowClient).navigate(client.url).catch(() => undefined);
+        }
+      }
       serverReady ??= initServer();
       // initServer failure must not brick the worker: leave serverReady
       // rejected-cached so /api returns the 503 diagnostic and the page can
