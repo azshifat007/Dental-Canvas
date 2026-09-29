@@ -464,7 +464,7 @@ jobs:
               print("smoke deps injected")
           else:
               print("already injected")
-          runner_line = 'testInstrumentationRunner("androidx.test.runner.AndroidJUnitRunner")'
+          runner_line = 'testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"'
           if runner_line not in s:
               anchor = "defaultConfig {"
               assert anchor in s, "defaultConfig block not found in build.gradle.kts"
