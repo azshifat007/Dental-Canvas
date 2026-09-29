@@ -478,7 +478,7 @@ jobs:
         run: |
           ./gradlew assembleUniversalDebugAndroidTest \
             -x rustBuildArm64Debug -x rustBuildArmDebug \
-            -x rustBuildI386Debug -x rustBuildX86_64Debug
+            -x rustBuildX86Debug -x rustBuildX86_64Debug
 
       # Without this the runner user cannot open /dev/kvm, and the emulator
       # falls back to pure software emulation: boot took 394 s and adb stayed
