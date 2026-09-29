@@ -1,6 +1,11 @@
 import { createRoot } from "react-dom/client";
 import { App } from "./app";
 import { activateOfflineMode, isTauriDesktop, flushDatabase, watchForUpdates } from "./offline/activate";
+import {
+  isInPageOfflineMode,
+  flushInPageDatabase,
+  startInPageOfflineMode,
+} from "./offline/in-page-server";
 import { installGlobalCrashGuards } from "./lib/crash-guards";
 import "./styles.css";
 
@@ -42,6 +47,7 @@ const mount = () => {
 };
 
 if (isTauriDesktop()) {
+  // ── Desktop: service worker IS the backend ─────────────────
   // Reload once when a newer service worker takes over (app update), so the
   // UI assets always match the running backend.
   watchForUpdates();
@@ -65,6 +71,27 @@ if (isTauriDesktop()) {
         "Dental Canvas could not start",
         `${err.message}\n\nIf this keeps happening: fully quit the app (check the taskbar tray) and reopen it, or reinstall. ` +
           `If the problem persists, use Settings → Backup on your previous install to export a backup file.`,
+        true,
+      );
+    });
+} else if (isInPageOfflineMode()) {
+  // ── Android (Tauri mobile): the WebView cannot host a service worker,
+  // so the same Hono server runs in-page behind a fetch shim. Boot fails
+  // visibly with the same diagnostic screen if the backend can't start.
+  installGlobalCrashGuards((title, detail) => showFatalScreen(title, detail, false));
+  const onFlush = () => void flushInPageDatabase();
+  window.addEventListener("pagehide", onFlush);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") onFlush();
+  });
+
+  startInPageOfflineMode()
+    .then(mount)
+    .catch((err: Error) => {
+      showFatalScreen(
+        "Dental Canvas could not start",
+        `${err.message}\n\nIf this keeps happening: fully close the app and reopen it, or reinstall. ` +
+          `Your data is stored safely on this device and is not lost.`,
         true,
       );
     });

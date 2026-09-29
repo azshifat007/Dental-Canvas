@@ -13,7 +13,15 @@
  */
 
 export function isTauriDesktop(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  // Android's WebView cannot register a service worker for the tauri.localhost
+  // virtual origin (no SW storage on custom-scheme origins), so mobile must
+  // NOT take the desktop offline path — it uses the in-page server instead
+  // (see in-page-server.ts). Desktop UAs never contain "Android".
+  return (
+    typeof window !== "undefined" &&
+    "__TAURI_INTERNALS__" in window &&
+    !/Android/i.test(navigator.userAgent)
+  );
 }
 
 /** True once the offline server has answered a health probe (SW active). */
