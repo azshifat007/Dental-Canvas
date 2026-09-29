@@ -469,9 +469,12 @@ jobs:
       # tauri android build only produces the app APK; the instrumented-test
       # APK is a separate Gradle output that must be built (and installed)
       # explicitly, or `am instrument` fails with INSTRUMENTATION_FAILED.
+      # rustBuildArm64Debug is excluded: it shells back out to the tauri CLI
+      # daemon, which has exited by then (WebSocket ConnectionRefused), and
+      # the native lib was already produced by the tauri build above.
       - name: Build the androidTest APK
         working-directory: src-tauri/gen/android
-        run: ./gradlew assembleUniversalDebugAndroidTest
+        run: ./gradlew assembleUniversalDebugAndroidTest -x rustBuildArm64Debug
 
       # Without this the runner user cannot open /dev/kvm, and the emulator
       # falls back to pure software emulation: boot took 394 s and adb stayed
