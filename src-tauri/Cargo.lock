@@ -547,7 +547,7 @@ dependencies = [
 
 [[package]]
 name = "dental-canvas"
-version = "1.4.12"
+version = "1.4.13"
 dependencies = [
  "tauri",
  "tauri-build",
