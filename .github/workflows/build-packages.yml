@@ -441,12 +441,14 @@ jobs:
             --package verify/*.dmg
 
       - name: Verify updater feed
+        env:
+          EXPECTED_VERSION: ${{ github.ref_name }}
         run: |
           python3 - <<'PY'
-          import json, sys
+          import json, os
           with open("verify/latest.json") as f:
               feed = json.load(f)
-          version = "${GITHUB_REF_NAME}".lstrip("v")
+          version = os.environ["EXPECTED_VERSION"].lstrip("v")
           assert feed["version"] == version, f"latest.json version {feed['version']} != {version}"
           for plat in ("windows-x86_64", "linux-x86_64"):
               assert plat in feed["platforms"], f"latest.json missing {plat}"
