@@ -77,7 +77,9 @@ jobs:
             These releases package the full offline app — UI and the local backend are both bundled, so the clinic can run entirely without internet. Installers are not code-signed.
 
             See README.md for setup and limitations.
-          releaseDraft: false
+          # Draft until the verify-and-publish job has checked every package's
+          # embedded frontend; it flips the release live on success.
+          releaseDraft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           # Generate latest.json for the in-app updater (endpoints in
           # tauri.conf.json point at releases/latest/download/latest.json) and
@@ -141,7 +143,7 @@ jobs:
           releaseBody: |
             Linux desktop packages. `.deb` for Debian/Ubuntu, `.rpm` for
             Fedora/openSUSE, `.AppImage` for everything else.
-          releaseDraft: false
+          releaseDraft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           args: --bundles deb,rpm,appimage
 
@@ -199,7 +201,7 @@ jobs:
           releaseBody: |
             macOS DMG (Apple Silicon). Unsigned — on first launch right-click
             the app and choose Open, or run `xattr -cr /Applications/Dental\ Canvas.app`.
-          releaseDraft: false
+          releaseDraft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           args: --target aarch64-apple-darwin --bundles dmg
 
@@ -378,3 +380,84 @@ jobs:
           gh release upload "${GITHUB_REF_NAME}" \
             src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk \
             --clobber --repo "${GITHUB_REPOSITORY}"
+
+  # ── Verify & publish ────────────────────────────────────────────────
+  # The stale-UI incident (v1.4.4: an installer that silently shipped an old
+  # frontend) is only catchable by opening the packages and comparing. Every
+  # build job above creates a DRAFT release; this job extracts each desktop
+  # package and asserts the embedded frontend hashes match a fresh build of
+  # the tagged commit, then flips the release live. A bad package can never
+  # reach users.
+  verify-and-publish:
+    runs-on: ubuntu-latest
+    needs: [build-windows, build-linux, build-macos, build-android]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # binutils provides ar, p7zip-full provides 7z — both are shellouts of
+      # scripts/verify_embedded_frontend.py. rpm2cpio and cpio come from
+      # packages of the same name.
+      - name: Install extraction tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full binutils cpio rpm2cpio
+
+      - name: Build the reference frontend
+        run: |
+          npm run build
+          echo "Reference build entry chunk: $(grep -o 'index-[A-Za-z0-9_-]*\.js' dist/index.html | head -1)"
+
+      - name: Download all release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p verify
+          gh release download "${GITHUB_REF_NAME}" --dir verify --clobber \
+            --repo "${GITHUB_REPOSITORY}"
+          ls -la verify
+
+      - name: Verify embedded frontend in every desktop package
+        run: |
+          python3 scripts/verify_embedded_frontend.py \
+            --dist dist \
+            --package verify/*-setup.exe \
+            --package verify/*.deb \
+            --package verify/*.rpm \
+            --package verify/*.AppImage \
+            --package verify/*.dmg
+
+      - name: Verify updater feed
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          with open("verify/latest.json") as f:
+              feed = json.load(f)
+          version = "${GITHUB_REF_NAME}".lstrip("v")
+          assert feed["version"] == version, f"latest.json version {feed['version']} != {version}"
+          for plat in ("windows-x86_64", "linux-x86_64"):
+              assert plat in feed["platforms"], f"latest.json missing {plat}"
+              assert "signature" in feed["platforms"][plat], f"{plat} missing updater signature"
+          print("latest.json OK:", feed["version"], sorted(feed["platforms"]))
+          PY
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "${GITHUB_REF_NAME}" --draft=false --repo "${GITHUB_REPOSITORY}"
+          echo "Release ${GITHUB_REF_NAME} published"
