@@ -466,12 +466,25 @@ jobs:
       - name: Build debug APK (with tests)
         run: pnpm tauri android build --debug --apk
 
+      # Without this the runner user cannot open /dev/kvm, and the emulator
+      # falls back to pure software emulation: boot took 394 s and adb stayed
+      # flaky ("device offline" / "Broken pipe") until the job timed out.
+      - name: Enable KVM access
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          [ -e /dev/kvm ] && echo "KVM available" || { echo "::error::/dev/kvm not present"; exit 1; }
+
       - name: Run boot smoke test on an emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
           arch: x86_64
           target: google_apis
+          # hw-accel must stay ON (KVM); software accel is what wedged the
+          # previous run.
+          disable-linux-hw-accel: false
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           disable-animations: true
           # NOTE: this action executes EACH LINE of `script` via a separate
