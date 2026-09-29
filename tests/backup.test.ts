@@ -410,6 +410,112 @@ describe("auto-backup", () => {
   });
 });
 
+// ── Patient image bytes (v3 base64 blob transport) ─────────────────
+
+/** Upload one real image through the live API (db storage is the default). */
+async function uploadImage(patientId: number, bytes: Uint8Array): Promise<{ key: string; id: number }> {
+  const upReq = jsonRequest("POST", `/api/patients/${patientId}/images/uploads`, {
+    files: [{ name: "xray.jpg", type: "image/jpeg", size: bytes.byteLength }],
+  });
+  const upRes = await app.request(upReq.path, upReq.init, { DB: ctx.db });
+  expect(upRes.status).toBe(200);
+  const { uploads } = (await upRes.json()) as { uploads: { key: string; upload_url: string }[] };
+  const key = uploads[0].key;
+
+  // db-mode upload_url is a relative /api/image-file URL on the same app.
+  const putUrl = new URL(uploads[0].upload_url, "http://localhost");
+  const put = await app.request(
+    `${putUrl.pathname}${putUrl.search}`,
+    { method: "PUT", headers: { "Content-Type": "image/jpeg" }, body: bytes.buffer as ArrayBuffer },
+    { DB: ctx.db },
+  );
+  expect(put.status).toBe(201);
+
+  const finReq = jsonRequest("POST", `/api/patients/${patientId}/images`, {
+    files: [{ key, mime_type: "image/jpeg", size_bytes: bytes.byteLength, kind: "xray", label: "PA 36" }],
+  });
+  const finRes = await app.request(finReq.path, finReq.init, { DB: ctx.db });
+  expect(finRes.status).toBe(201);
+  const { images } = (await finRes.json()) as { images: { id: number }[] };
+  return { key, id: images[0].id };
+}
+
+async function rawBlobRow(key: string): Promise<{ data: unknown; mime_type: string } | null> {
+  return await ctx.db
+    .prepare("SELECT data, mime_type FROM patient_image_blobs WHERE file_key = ?")
+    .bind(key)
+    .first<{ data: unknown; mime_type: string }>();
+}
+
+describe("backup includes patient image bytes", () => {
+  it("exports image blobs as decodable base64 and round-trips them through import", async () => {
+    const pid = await seedPracticeData();
+    const imageBytes = new Uint8Array(1024).map((_, i) => i % 251); // non-trivial binary
+    const img = await uploadImage(pid, imageBytes);
+
+    const payload = (await fetchExport()) as {
+      tables: { patient_image_blobs: { file_key: string; data_base64: string; data?: unknown }[] };
+    };
+
+    // The transport column is present and decodes to the exact bytes.
+    const rows = payload.tables.patient_image_blobs;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].file_key).toBe(img.key);
+    expect(typeof rows[0].data_base64).toBe("string");
+    const decoded = Uint8Array.from(atob(rows[0].data_base64), (ch) => ch.charCodeAt(0));
+    expect(decoded).toEqual(imageBytes);
+    // No binary field leaks into the JSON as a mangled object.
+    expect(rows[0].data).toBeUndefined();
+
+    // Simulate data loss and restore.
+    await ctx.db.prepare("DELETE FROM patient_image_blobs").run();
+    await ctx.db.prepare("DELETE FROM patient_images").run();
+    const imp = await app.request(
+      "/api/backup/import",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
+      { DB: ctx.db },
+    );
+    expect(imp.status).toBe(200);
+
+    // The blob bytes are back, byte for byte, under the same key.
+    const row = await rawBlobRow(img.key);
+    expect(row).not.toBeNull();
+    const restored = row!.data instanceof ArrayBuffer ? new Uint8Array(row!.data) : Uint8Array.from(row!.data as number[]);
+    expect(restored).toEqual(imageBytes);
+    expect(row!.mime_type).toBe("image/jpeg");
+
+    // And the image is served back intact through the normal endpoint.
+    const serve = await app.request(`/api/image-file?key=${encodeURIComponent(img.key)}`, undefined, { DB: ctx.db });
+    expect(serve.status).toBe(200);
+    expect(new Uint8Array(await serve.arrayBuffer())).toEqual(imageBytes);
+  });
+
+  it("includes image blobs in snapshots and their downloads", async () => {
+    const pid = await seedPracticeData();
+    const imageBytes = new Uint8Array([1, 2, 3, 250, 251, 252]);
+    await uploadImage(pid, imageBytes);
+
+    const created = await app.request("/api/backup/snapshots", { method: "POST" }, { DB: ctx.db });
+    const { snapshot } = (await created.json()) as { snapshot: { id: number; table_counts: Record<string, number> } };
+    expect(snapshot.table_counts.patient_image_blobs).toBe(1);
+
+    const dl = await app.request(`/api/backup/snapshots/${snapshot.id}`, undefined, { DB: ctx.db });
+    const payload = (await dl.json()) as { tables: { patient_image_blobs: { data_base64?: string }[] } };
+    expect(payload.tables.patient_image_blobs[0].data_base64).toBeTruthy();
+  });
+
+  it("skips corrupt blob rows instead of failing the export", async () => {
+    const pid = await seedPracticeData();
+    await uploadImage(pid, new Uint8Array([9, 8, 7]));
+    // Simulate a runtime that materialized the blob into something unusable:
+    // X'00' is a valid-but-empty BLOB, which dumpImageBlobs must skip.
+    await ctx.db.prepare("UPDATE patient_image_blobs SET data = X''").run();
+
+    const payload = (await fetchExport()) as { tables: { patient_image_blobs: unknown[] } };
+    expect(payload.tables.patient_image_blobs).toHaveLength(0);
+  });
+});
+
 describe("import restores searchability", () => {
   it("search finds imported patients after import", async () => {
     await seedPracticeData();

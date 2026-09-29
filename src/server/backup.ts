@@ -10,7 +10,7 @@ import { invalidateSearchIndex } from "./search";
  * the backups table itself (a snapshot must never include snapshots).
  */
 
-export const BACKUP_FORMAT_VERSION = 2;
+export const BACKUP_FORMAT_VERSION = 3;
 
 /**
  * Restore order matters: parents before children (FK constraints), and
@@ -67,6 +67,59 @@ export interface BackupSummary {
 
 // ── Dump ───────────────────────────────────────────────────────────
 
+/**
+ * BLOB columns need special handling: runtimes materialize them differently
+ * (D1 → ArrayBuffer, Miniflare → number[], the offline sql.js adapter →
+ * ArrayBuffer) and `JSON.stringify` destroys every one of those into `{}` —
+ * which silently dropped every patient image from exports, snapshots and
+ * Drive uploads before v1.4.14. Blobs are therefore transported as base64
+ * (`data_base64`) and decoded back to binary bytes on import.
+ */
+function blobValueToBytes(v: unknown): Uint8Array | null {
+  if (v instanceof Uint8Array) return v;
+  if (v instanceof ArrayBuffer) return new Uint8Array(v);
+  if (Array.isArray(v)) return Uint8Array.from(v as number[]);
+  return null;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = "";
+  const CHUNK = 0x8000; // avoid blowing the argument limit on big images
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/** Dump the image byte payloads with portable base64 columns. */
+async function dumpImageBlobs(): Promise<unknown[]> {
+  const rows = await query<{
+    file_key: string;
+    mime_type: string;
+    data: unknown;
+    created_at: string;
+  }>("SELECT file_key, mime_type, data, created_at FROM patient_image_blobs").catch(() => []);
+  return rows
+    .map((r) => {
+      const bytes = blobValueToBytes(r.data);
+      if (!bytes || bytes.byteLength === 0) return null; // corrupt row — skip, don't fail the export
+      return {
+        file_key: r.file_key,
+        mime_type: r.mime_type,
+        created_at: r.created_at,
+        data_base64: bytesToBase64(bytes),
+      };
+    })
+    .filter((r) => r !== null);
+}
+
 function tableRowCounts(payload: BackupPayload): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const t of BACKUP_TABLES) counts[t] = payload.tables[t]?.length ?? 0;
@@ -83,7 +136,7 @@ export async function dumpAllData(): Promise<BackupPayload> {
   await Promise.all(
     BACKUP_TABLES.map(async (t) => {
       try {
-        tables[t] = await query<unknown>(`SELECT * FROM ${t}`);
+        tables[t] = t === "patient_image_blobs" ? await dumpImageBlobs() : await query<unknown>(`SELECT * FROM ${t}`);
       } catch {
         tables[t] = [];
       }
@@ -107,7 +160,10 @@ export function countRows(payload: BackupPayload): Record<string, number> {
 
 // ── Restore ────────────────────────────────────────────────────────
 
-const MAX_IMPORT_BYTES = 64 * 1024 * 1024; // 64 MB — generous for a practice DB
+// Base64 inflates image bytes by ~4/3; a practice with many x-rays can
+// legitimately produce a multi-hundred-MB export. Images are capped at 5 MB
+// each (DB_STORAGE_MAX_MB), so 512 MB ≈ 100+ images — generous.
+const MAX_IMPORT_BYTES = 512 * 1024 * 1024;
 
 export function validateBackupPayload(raw: unknown): { ok: true; data: BackupPayload } | { ok: false; error: string } {
   if (!raw || typeof raw !== "object") return { ok: false, error: "Backup must be a JSON object" };
@@ -142,7 +198,23 @@ function insertRows(table: BackupTable, rows: unknown[]): Promise<number> {
     let n = 0;
     for (const row of rows) {
       if (!row || typeof row !== "object") continue;
-      const rec = row as Record<string, unknown>;
+      let rec = row as Record<string, unknown>;
+      if (table === "patient_image_blobs") {
+        // Decode the portable base64 transport back into real bytes.
+        let bytes: Uint8Array | null = null;
+        if (typeof rec.data_base64 === "string" && rec.data_base64.length > 0) {
+          try {
+            bytes = base64ToBytes(rec.data_base64);
+          } catch {
+            bytes = null;
+          }
+        } else if (Array.isArray(rec.data)) {
+          // Legacy numeric-array encoding (some runtimes stringified blobs this way).
+          bytes = Uint8Array.from(rec.data as number[]);
+        }
+        if (!bytes || bytes.byteLength === 0) continue; // bytes are lost in this backup — skip rather than insert a corrupt image
+        rec = { ...rec, data: bytes, data_base64: undefined };
+      }
       const cols = Object.keys(rec).filter((k) => rec[k] !== undefined);
       if (cols.length === 0) continue;
       const placeholders = cols.map(() => "?").join(", ");

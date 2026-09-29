@@ -485,7 +485,13 @@ function PortableCard({
       });
       const data = (await res.json()) as InspectResponse | { error: string };
       if (!res.ok || !("ok" in data)) {
-        setMessage({ tone: "err", text: (data as { error: string }).error ?? "Invalid backup file" });
+        const err = (data as { error: string }).error ?? "Invalid backup file";
+        setMessage({
+          tone: "err",
+          text: err.includes("too large")
+            ? "This backup is very large (many x-rays). Try the desktop folder backup or Google Drive transfer instead of the browser import."
+            : err,
+        });
         setPendingFile(null);
       } else {
         setInspect(data);
@@ -548,6 +554,11 @@ function PortableCard({
           className="hidden"
           onChange={onFileChosen}
         />
+        {/* Large imports (many x-rays) can exceed browser-memory limits; keep
+            the UI honest instead of hanging on a multi-GB file. */}
+        <p className="text-xs text-muted-foreground">
+          Backups include patient photos and x-rays; a file with many images can be large.
+        </p>
 
         {inspect && (
           <div className="mt-3 w-full rounded-md border bg-muted/30 p-3 text-sm">

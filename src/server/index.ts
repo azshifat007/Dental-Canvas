@@ -3672,7 +3672,7 @@ app.post("/api/backup/inspect", async (c) => {
   } catch {
     return c.json({ error: "Could not read request body" }, 400);
   }
-  if (isPayloadTooLarge(bodyText)) return c.json({ error: "Backup file too large (limit 64 MB)" }, 413);
+  if (isPayloadTooLarge(bodyText)) return c.json({ error: "Backup file too large (limit 512 MB)" }, 413);
   let raw: unknown;
   try {
     raw = JSON.parse(bodyText);
