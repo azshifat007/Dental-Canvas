@@ -170,10 +170,12 @@ export function App() {
     <AppContext.Provider value={state}>
       {showWizard && <SetupWizard onDone={completeWizard} />}
       <div className="flex h-screen min-h-0 flex-col md:flex-row overflow-hidden">
+        {/* Skip link: first focusable element on every page for keyboard users. */}
+        <a href="#main-content" className="skip-link">Skip to main content</a>
         {!isPrintRoute && <MobileTopBar onOpenSearch={openSearch} />}
         <div className="flex min-h-0 flex-1 overflow-hidden">
           <Sidebar route={route} navigate={navigate} onOpenSearch={openSearch} />
-          <main className="flex flex-1 flex-col overflow-hidden">
+          <main id="main-content" className="flex flex-1 flex-col overflow-hidden">
           {state.loading ? (
             <div className="flex flex-1 items-center justify-center text-muted-foreground">
               Loading…

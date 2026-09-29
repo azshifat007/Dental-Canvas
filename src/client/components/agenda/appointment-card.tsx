@@ -29,6 +29,7 @@ export function AppointmentCard({ appointment, onClick, topPx, heightPx }: Props
         type="button"
         onClick={onClick}
         style={{ top: topPx, height: heightPx }}
+        aria-label={`${appointment.title || appointment.kind} block${appointment.start_time ? `, ${timeLabel(appointment.start_time)}` : ""}`}
         className="absolute inset-x-1.5 flex items-center justify-center gap-2 rounded-lg bg-muted/40 text-[11px] font-medium uppercase tracking-wider text-muted-foreground transition-colors hover:bg-muted/70"
       >
         <Icon className="h-3.5 w-3.5" />
@@ -68,6 +69,7 @@ export function AppointmentCard({ appointment, onClick, topPx, heightPx }: Props
         appointment.status === "cancelled" && "opacity-50 line-through",
       )}
       title={`${patientName} · ${appointment.treatment_name ?? ""}`}
+      aria-label={`${patientName}${appointment.treatment_name ? ` — ${appointment.treatment_name}` : ""}, ${timeLabel(appointment.start_time)}, ${appointment.status}`}
     >
       {!isVeryCompact && (
         <span className={cn("flex w-full items-center justify-between text-[11px] font-medium tabular-nums opacity-80")}>

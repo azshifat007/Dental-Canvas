@@ -255,12 +255,12 @@ export function ConsentsTab({ patientId }: { patientId: number }) {
                   </div>
                   <div className="flex shrink-0 gap-1">
                     {c.signature_data && (
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setViewing(c)}>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" aria-label={`View signature — ${c.signer_name}`} onClick={() => setViewing(c)}>
                         <FileSignature className="h-3.5 w-3.5" />
                       </Button>
                     )}
                     {c.signature_data && (
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => void print(c)}>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" aria-label={`Print consent — ${c.signer_name}`} onClick={() => void print(c)}>
                         <Printer className="h-3.5 w-3.5" />
                       </Button>
                     )}

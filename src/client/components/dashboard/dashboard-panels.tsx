@@ -345,7 +345,7 @@ export function ConsultationPanel({ navigate }: { navigate: (to: string) => void
             </Button>
             <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full">
+              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" aria-label={`More actions for ${patient.first_name} ${patient.last_name}`}>
                 <MoreHorizontal className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
