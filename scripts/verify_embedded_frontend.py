@@ -75,13 +75,13 @@ def binary_blobs(pkg: pathlib.Path) -> list[bytes]:
         return blobs
     if suffix == ".rpm":
         out = fresh_dir(pkg.parent, f".{pkg.stem}-rpm")
-        # rpm2cpio converts the payload to a cpio archive on stdout; extract
-        # it in one pipeline (re-running rpm2cpio on a stream it can't seek
-        # fails — hence no double invocation here).
-        with open(pkg, "rb") as fh:
-            cpio = subprocess.run(["rpm2cpio"], stdin=fh,
-                                  stdout=subprocess.PIPE, check=True).stdout
-        subprocess.run(["cpio", "-idm", "--quiet"], input=cpio, cwd=out, check=True)
+        # 7-Zip handles rpms in two steps (rpm → cpio → files) and behaves
+        # identically across distros; rpm2cpio is flaky on some runners.
+        subprocess.run(["7z", "x", "-y", str(pkg)], cwd=out,
+                       capture_output=True, check=True)
+        cpio = next(out.glob("*.cpio"))
+        subprocess.run(["7z", "x", "-y", str(cpio)], cwd=out,
+                       capture_output=True, check=True)
         blobs = []
         for binfile in out.rglob("usr/bin/*"):
             if binfile.is_file() and binfile.stat().st_size > 1_000_000:

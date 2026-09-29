@@ -410,12 +410,11 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # binutils provides ar, p7zip-full provides 7z — both are shellouts of
-      # scripts/verify_embedded_frontend.py. rpm2cpio and cpio come from
-      # packages of the same name.
+      # scripts/verify_embedded_frontend.py.
       - name: Install extraction tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y p7zip-full binutils cpio rpm2cpio
+          sudo apt-get install -y p7zip-full binutils
 
       - name: Build the reference frontend
         run: |
