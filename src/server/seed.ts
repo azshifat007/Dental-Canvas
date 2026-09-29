@@ -50,6 +50,10 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   // Which worklists appear in the digest: comma list from
   // reminders,recalls,installments. Empty = all three (backward compatible).
   digest_sections: "",
+  // Appointment reminders: "1" enables the desktop/toast notification raised
+  // reminder_minutes before each of today's appointments (Settings → Notifications).
+  reminders_enabled: "1",
+  reminder_minutes: "15",
 };
 
 /**

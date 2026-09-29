@@ -25,6 +25,10 @@ export interface PracticeSettings {
   slot_minutes: number;
   /** Practice currency for every money display: "USD" ($) or "BDT" (৳). */
   currency: "USD" | "BDT";
+  /** Appointment reminders: native + toast notification before start. */
+  reminders_enabled: boolean;
+  /** Minutes before the appointment to raise the reminder. */
+  reminder_minutes: number;
 }
 
 /** Auto-backup schedule (see src/client/hooks/use-auto-backup.ts). */
@@ -59,6 +63,8 @@ const DEFAULT_SETTINGS: PracticeSettings = {
   day_end_minute: 19 * 60,
   slot_minutes: 15,
   currency: "USD",
+  reminders_enabled: true,
+  reminder_minutes: 15,
 };
 
 export const DEFAULT_PROFILE: ProfileSettings = {
@@ -88,7 +94,7 @@ function parseBackupSchedule(raw: Record<string, string>): BackupSchedule {
 }
 
 function parseSettings(raw: Record<string, string>): PracticeSettings {
-  const num = (key: "day_start_minute" | "day_end_minute" | "slot_minutes") => {
+  const num = (key: "day_start_minute" | "day_end_minute" | "slot_minutes" | "reminder_minutes") => {
     const v = parseInt(raw[key], 10);
     return Number.isFinite(v) ? v : DEFAULT_SETTINGS[key];
   };
@@ -97,6 +103,8 @@ function parseSettings(raw: Record<string, string>): PracticeSettings {
     day_end_minute: num("day_end_minute"),
     slot_minutes: num("slot_minutes"),
     currency: raw.currency === "BDT" ? "BDT" : "USD",
+    reminders_enabled: raw.reminders_enabled !== "0",
+    reminder_minutes: Math.min(Math.max(num("reminder_minutes"), 1), 240),
   };
 }
 

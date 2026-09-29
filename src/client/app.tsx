@@ -13,6 +13,7 @@ import { startDesktopBackupScheduler } from "./offline/desktop-backup";
 import { startUpdatePoller } from "./lib/updater";
 import { useDailyInventoryScan } from "./hooks/use-daily-inventory-scan";
 import { useDailyDigest } from "./hooks/use-daily-digest";
+import { useAppointmentReminders } from "./hooks/use-appointment-reminders";
 import { useTheme } from "./hooks/use-theme";
 import { useAccessibility } from "./hooks/use-accessibility";
 import { useBrandAccent } from "./hooks/use-brand-accent";
@@ -93,6 +94,11 @@ export function App() {
   // Once-per-day worklist digest email (reminders/recalls/installments) to
   // the clinic inbox — same serverless pattern, scheduled in Settings → Email.
   useDailyDigest(true);
+
+  // Appointment reminders: toast + native OS notification N minutes before
+  // each of today's appointments (Settings → Notifications). Timers re-arm
+  // whenever the reminder settings change.
+  useAppointmentReminders(state.settings.reminders_enabled, state.settings.reminder_minutes);
 
   // Theme: follows the OS dark mode by default, with a manual override.
   useTheme();

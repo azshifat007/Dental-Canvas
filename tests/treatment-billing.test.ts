@@ -126,3 +126,22 @@ describe("currency setting", () => {
     expect(settings.currency).toBe("BDT");
   });
 });
+
+describe("notification settings", () => {
+  it("default reminders on at 15 minutes and persist changes", async () => {
+    const initial = await app.request("/api/settings", undefined, { DB: ctx.db });
+    const before = (await initial.json()) as { settings: Record<string, string> };
+    expect(before.settings.reminders_enabled).toBe("1");
+    expect(before.settings.reminder_minutes).toBe("15");
+
+    const { path, init } = jsonRequest("PUT", "/api/settings", {
+      reminders_enabled: "0",
+      reminder_minutes: "30",
+    });
+    const res = await app.request(path, init, { DB: ctx.db });
+    expect(res.status).toBe(200);
+    const { settings } = (await res.json()) as { settings: Record<string, string> };
+    expect(settings.reminders_enabled).toBe("0");
+    expect(settings.reminder_minutes).toBe("30");
+  });
+});

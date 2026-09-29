@@ -6,6 +6,7 @@
   "platforms": ["android", "iOS"],
   "permissions": [
     "core:default",
+    "notification:default",
     {
       "identifier": "opener:default",
       "allow": [

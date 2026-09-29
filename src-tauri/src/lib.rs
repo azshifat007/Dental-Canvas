@@ -24,6 +24,10 @@ pub fn run() {
         // Opens https:// (WhatsApp links, booking previews) in the system's
         // default browser; the WebView itself cannot spawn windows.
         .plugin(tauri_plugin_opener::init())
+        // Native OS notifications (appointment reminders, backup alerts).
+        // Registered on all platforms; the WebView requests permission and
+        // shows notifications through the JS guest bindings.
+        .plugin(tauri_plugin_notification::init())
         // In-app updates (desktop only): the updater verifies signed update
         // bundles against the pubkey in tauri.conf.json; the process plugin
         // provides relaunch after an update installs.

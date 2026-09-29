@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Plus, Trash2, Pencil, Check, X, Clock, UserRound, DatabaseBackup, Palette, Monitor, Sun, Moon, ImageUp, Mail, ReceiptText, MailCheck, QrCode, Printer, Link2, CircleDollarSign, Info, Download, Loader2, RefreshCw, Search } from "lucide-react";
+import { Plus, Trash2, Pencil, Check, X, Clock, UserRound, DatabaseBackup, Palette, Monitor, Sun, Moon, ImageUp, Mail, ReceiptText, MailCheck, QrCode, Printer, Link2, CircleDollarSign, Info, Download, Loader2, RefreshCw, Search, BellRing } from "lucide-react";
 import { useApp } from "@/context";
 import { api } from "@/api";
 import { toast } from "@/components/ui/toast";
@@ -23,6 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import type { ConsentTemplate } from "@/types";
 import type { Operatory, Practitioner, PractitionerRole, TreatmentType } from "@/types";
 import { fileToLogoDataUrl } from "@/lib/logo";
+import { notify } from "@/lib/desktop-notify";
 import { printQrPoster } from "@/lib/print";
 import { INVOICE_STYLES, InvoiceSheet, type InvoiceStyle } from "@/components/patients/invoice-sheet";
 
@@ -48,6 +49,9 @@ export function SettingsPage() {
             <TabsTrigger value="treatments">Treatment types</TabsTrigger>
             <TabsTrigger value="consents">Consent forms</TabsTrigger>
             <TabsTrigger value="hours">Hours</TabsTrigger>
+            <TabsTrigger value="notifications" className="gap-1.5">
+              <BellRing className="h-3.5 w-3.5" /> Notifications
+            </TabsTrigger>
             <TabsTrigger value="booking" className="gap-1.5">
               <Link2 className="h-3.5 w-3.5" /> Online booking
             </TabsTrigger>
@@ -90,6 +94,9 @@ export function SettingsPage() {
           </TabsContent>
           <TabsContent value="hours" className="mt-4">
             <HoursTab />
+          </TabsContent>
+          <TabsContent value="notifications" className="mt-4">
+            <NotificationsTab />
           </TabsContent>
           <TabsContent value="booking" className="mt-4">
             <BookingTab />
@@ -444,6 +451,110 @@ function AppearanceTab() {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// ── Notifications (reminders & native alerts) ─────────────────
+
+const REMINDER_OPTIONS = [5, 10, 15, 20, 30, 45, 60];
+
+function NotificationsTab() {
+  const app = useApp();
+  const { reminders_enabled, reminder_minutes } = app.settings;
+  const [busy, setBusy] = useState(false);
+
+  async function save(patch: { reminders_enabled?: boolean; reminder_minutes?: number }) {
+    setBusy(true);
+    try {
+      await app.updateSettings(patch);
+    } catch (err) {
+      app.setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <BellRing className="h-4 w-4" />
+            Appointment reminders
+          </CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Get a notification before each of today's appointments — an in-app toast
+            always, and a native OS notification (Windows Action Center / macOS
+            Notification Center) in the desktop app, even when the window is
+            minimized or in the background.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <label className="flex items-center justify-between gap-4 rounded-lg border p-3">
+            <span>
+              <span className="block text-sm font-medium">Enable appointment reminders</span>
+              <span className="block text-xs text-muted-foreground">
+                Reminders re-arm automatically as appointments are added or changed.
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              className="h-5 w-5 accent-[var(--primary)]"
+              checked={reminders_enabled}
+              disabled={busy}
+              onChange={(e) => save({ reminders_enabled: e.target.checked })}
+            />
+          </label>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="reminder-minutes">Remind me before</Label>
+            <Select
+              value={String(reminder_minutes)}
+              onValueChange={(v) => save({ reminder_minutes: parseInt(v, 10) })}
+            >
+              <SelectTrigger id="reminder-minutes" className="w-56">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {REMINDER_OPTIONS.map((m) => (
+                  <SelectItem key={m} value={String(m)}>
+                    {m} minutes
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Applies to reminders armed from now on; already-scheduled ones keep their timing.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Test notification</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Checks that notifications can reach you. The first native notification asks
+            the operating system for permission — choose Allow.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={async () => {
+              toast.info("This is what an in-app reminder looks like", 6000);
+              await notify("Dental Canvas", { body: "Test notification — reminders are working. 🦷" });
+              toast.success("Test notification sent");
+            }}
+          >
+            <BellRing className="h-4 w-4" />
+            Send a test notification
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
