@@ -47,6 +47,9 @@ def collect_expected(dist: pathlib.Path) -> set[str]:
 
 def binary_blobs(pkg: pathlib.Path) -> list[bytes]:
     """Return the raw binary blob(s) inside a package that can embed assets."""
+    # All shellouts below run with cwd= extraction dirs, so the package path
+    # must be absolute or every relative invocation misses the file.
+    pkg = pkg.resolve()
     suffix = pkg.suffix.lower()
     if suffix == ".deb":
         blobs = []
