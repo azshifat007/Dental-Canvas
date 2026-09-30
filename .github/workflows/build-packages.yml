@@ -263,24 +263,21 @@ jobs:
           KS_PASS: ${{ secrets.TAURI_ANDROID_KEYSTORE_PASSWORD }}
           KS_ALIAS: ${{ secrets.TAURI_ANDROID_KEY_ALIAS }}
         run: |
-          if [ -n "$KS_B64" ]; then
-            echo "$KS_B64" | base64 -d > keystore.jks
-            alias="$KS_ALIAS"
-            pass="$KS_PASS"
-            echo "signing=secret-keystore" >> "$GITHUB_ENV"
-          else
-            # Throwaway keystore so the APK is at least installable. Regenerated
-            # every release — devices treat each release as a NEW app, so this
-            # is for testing only; set the TAURI_ANDROID_KEYSTORE secrets for a
-            # stable signature across releases.
-            keytool -genkeypair -v -keystore keystore.jks -alias dental-canvas \
-              -keyalg RSA -keysize 2048 -validity 10950 \
-              -storepass dental-canvas-ci -keypass dental-canvas-ci \
-              -dname "CN=Dental Canvas, OU=CI, O=Dental Canvas, C=BD"
-            alias="dental-canvas"
-            pass="dental-canvas-ci"
-            echo "signing=ephemeral-keystore" >> "$GITHUB_ENV"
+          # No ephemeral fallback: a release signed with a throwaway per-run
+          # key can never update over a previous one on devices (signature
+          # mismatch). Missing secrets must fail the build loudly.
+          if [ -z "$KS_B64" ] || [ -z "$KS_PASS" ] || [ -z "$KS_ALIAS" ]; then
+            echo "::error::Android signing secrets missing. Set TAURI_ANDROID_KEYSTORE (base64 .jks), TAURI_ANDROID_KEYSTORE_PASSWORD and TAURI_ANDROID_KEY_ALIAS — without them devices cannot install updates over an existing app."
+            exit 1
           fi
+          echo "$KS_B64" | base64 -d > keystore.jks
+          alias="$KS_ALIAS"
+          pass="$KS_PASS"
+          # Sanity-check the keystore actually decodes and opens with the
+          # given password before the build burns ten minutes on it.
+          keytool -list -keystore keystore.jks -storepass "$pass" -alias "$alias" >/dev/null \
+            || { echo "::error::TAURI_ANDROID_KEYSTORE did not open with TAURI_ANDROID_KEYSTORE_PASSWORD / alias not found"; exit 1; }
+          echo "signing=secret-keystore" >> "$GITHUB_ENV"
           # keystore.properties at the ANDROID PROJECT ROOT, with the exact
           # keys the official Tauri signing flow expects.
           cat > src-tauri/gen/android/keystore.properties <<EOF
