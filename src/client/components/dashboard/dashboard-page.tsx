@@ -123,7 +123,7 @@ export function DashboardPage({
       <div className="px-4 pb-4 pt-5 md:px-6">
         <h1 className="text-2xl font-bold tracking-tight">
           {greeting()}, <span className="text-sky-600">{doctorDisplayName(app.profile.doctor_name)}</span>{" "}
-          <span aria-hidden>👋</span>
+          <span aria-hidden>👋🦷</span>
         </h1>
       </div>
 
