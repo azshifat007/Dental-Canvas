@@ -68,6 +68,7 @@ export type BackupMessage = { tone: "ok" | "err"; text: string } | null;
 
 const TRIGGER_LABELS: Record<string, string> = {
   timer: "Auto (timer)",
+  data_change: "Auto (after changes)",
   user: "Manual",
   "pre-import": "Safety copy before import",
   "pre-restore": "Safety copy before restore",
@@ -636,8 +637,10 @@ function ScheduleCard() {
           Automatic backups
         </CardTitle>
         <p className="text-sm text-muted-foreground">
-          While the app is open, a snapshot is taken automatically on schedule. Snapshots beyond the limit are
-          pruned oldest-first. Snapshots are stored server-side in the database.
+          While the app is open, a snapshot is taken automatically on schedule — and shortly after meaningful
+          changes (appointments, patients, invoices, prescriptions) even if the timer hasn't elapsed. Rapid
+          edits are batched into one snapshot. Snapshots beyond the limit are pruned oldest-first and are
+          stored server-side in the database.
         </p>
       </CardHeader>
       <CardContent>
@@ -675,7 +678,8 @@ function ScheduleCard() {
         {saved && <p className="mt-3 text-xs text-emerald-700">Saved ✓</p>}
         {enabled && (
           <p className="mt-2 text-xs text-muted-foreground">
-            Timer runs while Dental Canvas is open in any tab of this device.
+            Timer runs while Dental Canvas is open in any tab of this device; change-triggered snapshots fire
+            within a few minutes of edits (never more often than one per 3 minutes).
           </p>
         )}
       </CardContent>

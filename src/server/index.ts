@@ -3465,7 +3465,15 @@ app.post("/api/backup/auto", async (c) => {
   if (backupSettings.auto_backup_interval_minutes === 0) {
     return c.json({ skipped: true, reason: "auto-backup disabled" }, 200);
   }
-  const { snapshot, payload } = await createSnapshot("auto", "timer", backupSettings.auto_backup_keep);
+  // Optional trigger reason: "timer" (the client countdown) or
+  // "data_change" (a meaningful mutation just happened). Recorded on the
+  // snapshot so the Settings list shows why it exists.
+  let trigger: "timer" | "data_change" = "timer";
+  const body = await c.req.json().catch(() => null);
+  if (body && typeof body === "object" && (body as { reason?: unknown }).reason === "data_change") {
+    trigger = "data_change";
+  }
+  const { snapshot, payload } = await createSnapshot("auto", trigger, backupSettings.auto_backup_keep);
   await pushBackupToDrive(payload, snapshot.created_at);
   return c.json({ snapshot }, 201);
 });

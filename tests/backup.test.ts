@@ -516,6 +516,67 @@ describe("backup includes patient image bytes", () => {
   });
 });
 
+describe("change-triggered auto-backup", () => {
+  async function enableAutoBackup() {
+    await app.request(
+      "/api/backup/settings",
+      { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ auto_backup_interval_minutes: 60 }) },
+      { DB: ctx.db },
+    );
+  }
+
+  it("records the data_change trigger on the snapshot when requested", async () => {
+    await seedPracticeData();
+    await enableAutoBackup();
+    const res = await app.request(
+      "/api/backup/auto",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: "data_change" }) },
+      { DB: ctx.db },
+    );
+    expect(res.status).toBe(201);
+    const { snapshot } = (await res.json()) as { snapshot: { kind: string; trigger: string } };
+    expect(snapshot.kind).toBe("auto");
+    expect(snapshot.trigger).toBe("data_change");
+  });
+
+  it("defaults to the timer trigger for bodyless calls", async () => {
+    await seedPracticeData();
+    await app.request(
+      "/api/backup/settings",
+      { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ auto_backup_interval_minutes: 60 }) },
+      { DB: ctx.db },
+    );
+    const res = await app.request("/api/backup/auto", { method: "POST" }, { DB: ctx.db });
+    expect(res.status).toBe(201);
+    const { snapshot } = (await res.json()) as { snapshot: { trigger: string } };
+    expect(snapshot.trigger).toBe("timer");
+  });
+
+  it("change-triggered snapshots count toward the keep limit", async () => {
+    await seedPracticeData();
+    await app.request(
+      "/api/backup/settings",
+      { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ auto_backup_interval_minutes: 60, auto_backup_keep: 2 }) },
+      { DB: ctx.db },
+    );
+    // One timer + three change snapshots — only the newest two survive.
+    await app.request("/api/backup/auto", { method: "POST" }, { DB: ctx.db });
+    for (let i = 0; i < 3; i++) {
+      const res = await app.request(
+        "/api/backup/auto",
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: "data_change" }) },
+        { DB: ctx.db },
+      );
+      expect(res.status).toBe(201);
+    }
+    const snaps = await app.request("/api/backup/snapshots", undefined, { DB: ctx.db });
+    const data = (await snaps.json()) as { snapshots: { kind: string; trigger: string }[] };
+    const autos = data.snapshots.filter((s) => s.kind === "auto");
+    expect(autos.length).toBeLessThanOrEqual(2);
+    expect(autos.every((s) => s.trigger === "data_change")).toBe(true);
+  });
+});
+
 describe("import restores searchability", () => {
   it("search finds imported patients after import", async () => {
     await seedPracticeData();

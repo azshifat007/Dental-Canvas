@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "@/components/ui/toast";
 import { api } from "../api";
+import { notifyDataChanged } from "../lib/data-change-signal";
 import { setActiveCurrency } from "../lib/utils";
 import type {
   Appointment,
@@ -216,6 +217,7 @@ export function useAppState() {
   const createAppointment = useCallback(async (data: NewAppointment) => {
     const res = await api<{ appointment: Appointment }>("POST", "/api/appointments", data);
     setAppointments((prev) => [...prev, res.appointment].sort((a, b) => a.start_time.localeCompare(b.start_time)));
+    notifyDataChanged("appointment");
     toast.success(`Appointment booked for ${new Date(res.appointment.start_time).toLocaleDateString()}`);
     return res.appointment;
   }, []);
@@ -223,6 +225,7 @@ export function useAppState() {
   const updateAppointment = useCallback(async (id: number, patch: Partial<NewAppointment>) => {
     const res = await api<{ appointment: Appointment }>("PUT", `/api/appointments/${id}`, patch);
     setAppointments((prev) => prev.map((a) => (a.id === id ? res.appointment : a)));
+    notifyDataChanged("appointment");
     if (patch.status === "cancelled") toast.info("Appointment cancelled");
     else if (patch.status === "no_show") toast.info("Marked as no-show");
     else if (patch.status === "completed") toast.success("Visit completed");
@@ -234,6 +237,7 @@ export function useAppState() {
   const deleteAppointment = useCallback(async (id: number) => {
     await api("DELETE", `/api/appointments/${id}`);
     setAppointments((prev) => prev.filter((a) => a.id !== id));
+    notifyDataChanged("appointment");
     toast.success("Appointment deleted");
   }, []);
 
@@ -247,6 +251,7 @@ export function useAppState() {
 
   const createPatient = useCallback(async (input: Partial<Patient> & { first_name: string; last_name: string }) => {
     const res = await api<{ patient: Patient }>("POST", "/api/patients", input);
+    notifyDataChanged("patient");
     return res.patient;
   }, []);
 

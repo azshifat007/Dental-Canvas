@@ -299,7 +299,7 @@ async function pruneSnapshots(keep: number): Promise<number> {
  */
 export async function createSnapshot(
   kind: "auto" | "manual",
-  trigger: "timer" | "user" | "pre-import" | "pre-restore",
+  trigger: "timer" | "data_change" | "user" | "pre-import" | "pre-restore",
   keep: number,
 ): Promise<{ snapshot: BackupSummary; pruned: number; payload: BackupPayload }> {
   const payload = await dumpAllData();
