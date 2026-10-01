@@ -17,6 +17,8 @@ export function isTauriDesktop(): boolean {
   // virtual origin (no SW storage on custom-scheme origins), so mobile must
   // NOT take the desktop offline path — it uses the in-page server instead
   // (see in-page-server.ts). Desktop UAs never contain "Android".
+  // (Kept for callers that gate desktop-only features; boot routing lives in
+  // main.tsx and treats every Tauri shell as offline-capable.)
   return (
     typeof window !== "undefined" &&
     "__TAURI_INTERNALS__" in window &&
@@ -73,10 +75,30 @@ export function getOfflineDbStatus(timeoutMs = 2000): Promise<OfflineDbStatus | 
   });
 }
 
+import {
+  isInPageOfflineMode,
+  flushInPageDatabase,
+  startInPageOfflineMode,
+  isInPageServerLive,
+} from "./in-page-server";
+
 export async function activateOfflineMode(): Promise<void> {
-  if (!isTauriDesktop() || !("serviceWorker" in navigator)) return;
+  // Every Tauri shell (desktop AND mobile) runs the offline backend. On
+  // desktop that's the service worker; on mobile the SW API exists but
+  // registration fails on the tauri.localhost origin, so we fall through to
+  // the in-page server instead of failing boot.
+  if (!("__TAURI_INTERNALS__" in window)) return;
 
   try {
+    if (!isTauriDesktop() || !("serviceWorker" in navigator)) {
+      // Mobile (or a desktop without SW support): run the backend in-page.
+      // Do NOT try register() first — on Android it throws the
+      // "Failed to register a ServiceWorker" error the fatal screen shows.
+      await startInPageOfflineMode();
+      offlineReady = true;
+      return;
+    }
+
     // The SW is registered at scope "/" so it owns both /api and the shell.
     // Module worker: the Vite bundle is ESM (it code-splits shared helpers).
     const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/", type: "module" });
@@ -122,8 +144,22 @@ export async function activateOfflineMode(): Promise<void> {
     }
     throw new Error("Offline server did not become ready within 30s");
   } catch (err) {
-    // Surface a clear failure rather than a blank screen: main.tsx renders
-    // the diagnostic screen with a Retry button from this message.
+    // Last-resort fallback: if the service worker path fails for ANY reason
+    // (registration refused, stale/corrupt cache, update probe timeout), run
+    // the backend in-page instead of showing the fatal screen. The in-page
+    // server is the same Hono app, so the UI works identically. Never fall
+    // back twice — if the in-page server itself fails, surface the error.
+    if (!isInPageServerLive()) {
+      try {
+        await startInPageOfflineMode();
+        offlineReady = true;
+        return;
+      } catch (fallbackErr) {
+        (window as unknown as { __OFFLINE_ERROR__?: string }).__OFFLINE_ERROR__ =
+          `Offline backend failed (worker: ${(err as Error).message}; in-page: ${(fallbackErr as Error).message})`;
+        throw fallbackErr;
+      }
+    }
     (window as unknown as { __OFFLINE_ERROR__?: string }).__OFFLINE_ERROR__ =
       (err as Error).message;
     throw err;

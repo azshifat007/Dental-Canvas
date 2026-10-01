@@ -48,6 +48,11 @@ export function inPageLastSavedAt(): number {
   return liveDb?.lastSavedAt?.() ?? 0;
 }
 
+/** True once the in-page server has booted (used to route DB flushes). */
+export function isInPageServerLive(): boolean {
+  return liveDb !== null;
+}
+
 /**
  * Boot the in-page backend (idempotent). Resolves once the server has
  * seeded/migrated and answered its first health probe, so the app's first

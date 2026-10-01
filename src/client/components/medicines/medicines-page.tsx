@@ -16,7 +16,11 @@ export function MedicinesPage() {
           The drugs your practice prescribes — they power the prescription editor&apos;s suggestions.
         </p>
       </div>
-      <div className="min-h-0 flex-1 overflow-hidden">
+      {/* Must be a FLEX container, not a plain block: MedicinesTab's root is
+          flex-1/min-h-0, which only bounds its height when the direct parent
+          distributes vertical space. As a plain block the tab grew to its
+          content height and overflow-hidden clipped it with no scrollbar. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <MedicinesTab />
       </div>
     </div>
