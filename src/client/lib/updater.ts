@@ -16,6 +16,7 @@
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { isTauriDesktop, flushDatabase } from "@/offline/activate";
+import { saveUpdateNotesForNextBoot } from "@/components/update-applied-banner";
 
 export interface UpdateState {
   /** Update metadata available from the feed. */
@@ -119,6 +120,9 @@ export async function installUpdate(): Promise<void> {
   // The NSIS installer is about to terminate this process on Windows; push
   // any debounced DB writes to IndexedDB first (best effort, fire-and-forget).
   flushDatabase();
+  // Save the changelog so the post-update banner can greet the user with it
+  // after the relaunch (the fresh process has no in-memory update state).
+  saveUpdateNotesForNextBoot(update.version, current.notes);
   emit({ version: update.version, notes: current.notes, phase: "ready", progress: 1 });
   await relaunch();
 }
