@@ -107,6 +107,33 @@
   --sidebar-border: oklch(0.28 0.015 240);
 }
 
+/* ── Always-visible scrollbars ──────────────────────────────────────────
+   Windows 11 turns scrollbars into hover-only overlays by default, which
+   reads as "there is no scrollbar" for long lists (reported three times on
+   the medicines page). Containers marked .force-scrollbar get a slim
+   scrollbar that is drawn permanently. */
+.force-scrollbar {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--muted-foreground) transparent;
+}
+.force-scrollbar::-webkit-scrollbar {
+  width: 10px;
+}
+.force-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.force-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--muted-foreground);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+}
+.force-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--foreground);
+  background-clip: content-box;
+}
+
 @layer base {
   * { @apply border-border; }
   /* Explicit, not `light dark`: the theme hook (and the no-flash script in

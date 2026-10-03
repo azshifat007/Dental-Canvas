@@ -118,10 +118,12 @@ export function MedicinesTab() {
   }
 
   return (
-    // min-h-0 matters: without it the flex child grows to its content height
-    // instead of scrolling, so long medicine lists clip instead of scrolling.
-    // overflow-y-auto (not overflow-auto) keeps horizontal layout stable.
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+    // Height comes from absolute inset-0 inside the relative wrapper in
+    // medicines-page — a definite height that no ancestor flex quirk can
+    // break (two flex-only fixes still didn't scroll on Windows).
+    // force-scrollbar keeps the scrollbar visible at all times (Windows 11
+    // overlay scrollbars otherwise hide until hover).
+    <div className="force-scrollbar absolute inset-0 flex flex-col gap-3 overflow-y-auto p-4">
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative w-64">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
