@@ -120,7 +120,10 @@ export function Sidebar({
         </button>
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-2 py-3">
+      {/* min-h-0 + force-scrollbar: the nav must always scroll inside the
+          sidebar on short windows, with a visible scrollbar (Windows 11
+          hides overlay scrollbars until hover). */}
+      <nav className="force-scrollbar min-h-0 flex-1 overflow-y-auto px-2 py-3">
         {sections.map((section) => (
           <div key={section.heading} className="mb-4">
             <div className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">

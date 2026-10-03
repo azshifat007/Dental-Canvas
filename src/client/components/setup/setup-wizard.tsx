@@ -118,7 +118,10 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/95 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-xl overflow-hidden rounded-2xl border bg-card shadow-2xl">
+      {/* Bounded flex column: without max-h the card grows with its content
+          and overflow-hidden clipped the footer buttons off-screen on short
+          windows (same bug family as the medicine list clipping). */}
+      <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl">
         {/* Header */}
         <div className="border-b bg-gradient-to-br from-primary/10 to-transparent px-8 pb-6 pt-8">
           <div className="flex items-center gap-2 text-sm font-medium text-primary">
@@ -165,8 +168,8 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
           </div>
         </div>
 
-        {/* Body */}
-        <div className="space-y-4 px-8 py-6">
+        {/* Body — scrolls inside the bounded card so the footer stays visible */}
+        <div className="force-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto px-8 py-6">
           {step === 1 && (
             <>
               <div className="grid gap-4 sm:grid-cols-2">
