@@ -10,7 +10,8 @@
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
     "db:migrate": "wrangler d1 execute dental-canvas-db --local --file=src/server/schema.sql",
-    "build": "vite build && vite build --mode sw",
+    "build": "node scripts/check-scroll-layout.mjs && vite build && vite build --mode sw",
+    "lint:layout": "node scripts/check-scroll-layout.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

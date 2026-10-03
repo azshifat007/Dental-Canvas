@@ -1,0 +1,12 @@
+#!/bin/sh
+# Pre-commit guard: block commits that introduce scroll-clipping layouts
+# (unbounded growth inside overflow-hidden wrappers — the medicines-list and
+# setup-wizard bug class). See scripts/check-scroll-layout.mjs for the rules.
+#
+# Enabled repo-wide via: git config core.hooksPath .githooks
+node scripts/check-scroll-layout.mjs || {
+  echo ""
+  echo "Commit blocked by the scroll-layout guard. Fix the layouts above"
+  echo "(or, if this is a deliberate exception, bypass once with: git commit --no-verify)"
+  exit 1
+}
