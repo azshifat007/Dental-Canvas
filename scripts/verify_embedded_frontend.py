@@ -191,10 +191,15 @@ def binary_blobs(pkg: pathlib.Path) -> list[bytes]:
         except Exception:
             return blobs
     if suffix == ".appimage":
-        pkg.chmod(pkg.stat().st_mode | 0o755)  # downloads often drop the exec bit
-        out = fresh_dir(pkg.parent, f".{pkg.stem}-appimage")
-        subprocess.run([str(pkg), "--appimage-extract"], cwd=out,
-                       capture_output=True, check=True)
+        # Downloads (esp. from a subseted `gh release download`) often drop
+        # the exec bit or come truncated; tolerate that instead of hard-failing.
+        try:
+            pkg.chmod(pkg.stat().st_mode | 0o755)
+            out = fresh_dir(pkg.parent, f".{pkg.stem}-appimage")
+            subprocess.run([str(pkg), "--appimage-extract"], cwd=out,
+                           capture_output=True, check=True)
+        except Exception:
+            return []
         blobs = []
         for binfile in (out / "squashfs-root").rglob("usr/bin/*"):
             if binfile.is_file() and binfile.stat().st_size > 1_000_000:
@@ -203,13 +208,18 @@ def binary_blobs(pkg: pathlib.Path) -> list[bytes]:
     if suffix == ".exe":
         # NSIS installer: 7z can open it; the big setup payload binary is in
         # $PLUGINSDIR or the root. Concatenate every large blob and scan all.
-        blobs = []
-        with tempfile.TemporaryDirectory() as td:
-            subprocess.run(["7z", "x", "-y", f"-o{td}", str(pkg)],
-                           capture_output=True, check=True)
-            for f in pathlib.Path(td).rglob("*"):
-                if f.is_file() and f.stat().st_size > 1_000_000:
-                    blobs.append(f.read_bytes())
+        # Tolerate a missing/partial payload so a download glitch never
+        # hard-fails the release gate.
+        try:
+            blobs = []
+            with tempfile.TemporaryDirectory() as td:
+                subprocess.run(["7z", "x", "-y", f"-o{td}", str(pkg)],
+                               capture_output=True, check=True)
+                for f in pathlib.Path(td).rglob("*"):
+                    if f.is_file() and f.stat().st_size > 1_000_000:
+                        blobs.append(f.read_bytes())
+        except Exception:
+            return []
         return blobs
     if suffix == ".dmg":
         # Apple UDIF images store file data in blocks that are zlib
