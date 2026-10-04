@@ -57,5 +57,8 @@ Note: if you add Rust dependencies (`src-tauri/Cargo.toml`), don't commit Cargo.
    Commit the notes with `gh release edit v1.4.20 --title "Dental Canvas v1.4.20"
    --notes "$(cat RELEASE-NOTES.md)"` after the tag is pushed.
 
-5. Verify-and-publish: the embedded-frontend hash check and `latest.json` feed
-   cross-check run automatically in CI.
+5. Verify-and-publish: the embedded-frontend hash check and `latest.json`
+   feed cross-check run automatically in CI. The download step of the
+   verify job must use `--pattern` to fetch every package artifact (a plain
+   `gh release download` silently drops some assets, which would make the
+   verify gate report `file not found` on a valid build).

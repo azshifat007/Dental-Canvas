@@ -584,7 +584,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p verify
-          gh release download "${GITHUB_REF_NAME}" --dir verify --clobber \
+          # `--pattern` is mandatory: a plain `gh release download` only fetches a
+          # subset of assets on this client, which silently drops the Windows
+          # installer and signature files. Every package type (and every .sig for
+          # the updater verification) must be present before the scan.
+          gh release download "${GITHUB_REF_NAME}" --dir verify --clobber \\
+            --pattern "*.exe" --pattern "*.sig" --pattern "*.dmg" \\
+            --pattern "*.AppImage" --pattern "*.deb" --pattern "*.rpm" \\
+            --pattern "*.apk" --pattern "*.json" \\
             --repo "${GITHUB_REPOSITORY}"
           ls -la verify
 
