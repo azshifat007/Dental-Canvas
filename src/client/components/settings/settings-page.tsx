@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Plus, Trash2, Pencil, Check, X, Clock, UserRound, DatabaseBackup, Palette, Monitor, Sun, Moon, ImageUp, Mail, ReceiptText, MailCheck, QrCode, Printer, Link2, CircleDollarSign, Info, Download, Loader2, RefreshCw, Search, BellRing } from "lucide-react";
+import { Plus, Trash2, Pencil, Check, X, Clock, UserRound, DatabaseBackup, Palette, Monitor, Sun, Moon, ImageUp, Mail, ReceiptText, MailCheck, QrCode, Printer, Link2, CircleDollarSign, Info, Download, Loader2, RefreshCw, Search, BellRing, Sparkles } from "lucide-react";
 import { useApp } from "@/context";
 import { api } from "@/api";
 import { toast } from "@/components/ui/toast";
@@ -8,6 +8,7 @@ import { UpdateCard } from "./app-update-card";
 import { BookingTab } from "./booking-tab";
 import { StorageTab } from "./storage-tab";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
+import { useRouter } from "@/hooks/use-router";
 import { useAccessibility, type A11yPreference } from "@/hooks/use-accessibility";
 import { useBrandAccent } from "@/hooks/use-brand-accent";
 import { brandAccentFromHex } from "@/lib/color";
@@ -617,6 +618,7 @@ function CurrencyCard() {
 // ── About (version + in-app updates) ───────────────────────────
 
 function AboutTab() {
+  const { navigate } = useRouter();
   return (
     <div className="space-y-4">
       <Card>
@@ -635,6 +637,12 @@ function AboutTab() {
             The app runs fully offline: the interface and the local database both live on this computer, so the
             clinic keeps working without internet. When online, it checks for updates automatically once an hour.
           </p>
+          <div>
+            <Button size="sm" variant="outline" onClick={() => navigate("/whats-new")}>
+              <Sparkles className="h-4 w-4" />
+              What&apos;s new — recent versions &amp; changes
+            </Button>
+          </div>
         </CardContent>
       </Card>
       <UpdateCard />

@@ -17,6 +17,7 @@ export type Route =
   | { name: "finance-revenue" }
   | { name: "finance-appointments" }
   | { name: "settings" }
+  | { name: "whats-new" }
   | { name: "not-found" };
 
 function parse(path: string): Route {
@@ -42,6 +43,7 @@ function parse(path: string): Route {
   if (path === "/medicines") return { name: "medicines" };
   if (path === "/inventory") return { name: "inventory" };
   if (path === "/settings") return { name: "settings" };
+  if (path === "/whats-new") return { name: "whats-new" };
   return { name: "not-found" };
 }
 

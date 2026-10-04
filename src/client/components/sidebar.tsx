@@ -17,6 +17,7 @@ import {
   Receipt,
   TrendingUp,
   CalendarClock,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { openQuickRegister } from "@/lib/quick-register";
@@ -56,6 +57,7 @@ const sections: { heading: string; items: NavItem[] }[] = [
     items: [
       { label: "Reports",  icon: FileBarChart2, path: "/reports",  match: (r) => r.name === "reports" },
       { label: "Settings", icon: Settings,      path: "/settings", match: (r) => r.name === "settings" },
+      { label: "What's new", icon: Sparkles,   path: "/whats-new", match: (r) => r.name === "whats-new" },
     ],
   },
 ];
@@ -71,7 +73,7 @@ export function Sidebar({
 }) {
   const { pref: theme, cycleTheme } = useTheme();
   if (embedded) {
-    const icons: Record<string, string> = { "/dashboard": "layout-dashboard", "/agenda": "calendar-days", "/patients": "users", "/lab": "package", "/medicines": "clipboard-list", "/inventory": "archive", "/finance/billing-record": "receipt", "/finance/revenue-breakdown": "trending-up", "/finance/appointment-overview": "calendar-clock", "/reports": "bar-chart-3", "/settings": "settings" };
+    const icons: Record<string, string> = { "/dashboard": "layout-dashboard", "/agenda": "calendar-days", "/patients": "users", "/lab": "package", "/medicines": "clipboard-list", "/inventory": "archive", "/finance/billing-record": "receipt", "/finance/revenue-breakdown": "trending-up", "/finance/appointment-overview": "calendar-clock", "/reports": "bar-chart-3", "/settings": "settings", "/whats-new": "sparkles" };
     const active = sections.flatMap(section => section.items).find(item => item.match?.(route))?.path;
     return <AppNav title="Dental Canvas" icon="calendar-days" active={active}
       groups={sections.map(section => ({ label: section.heading, items: section.items.filter(item => item.path && !item.disabled).map(item => ({

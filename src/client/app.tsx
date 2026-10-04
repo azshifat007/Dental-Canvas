@@ -36,6 +36,7 @@ import { LabPage } from "./components/lab/lab-page";
 import { MedicinesPage } from "./components/medicines/medicines-page";
 import { InventoryPage } from "./components/inventory/inventory-page";
 import { SettingsPage } from "./components/settings/settings-page";
+import { WhatsNewPage } from "./components/whats-new/whats-new-page";
 import { FinancePage } from "./components/finance/finance-page";
 
 export function App() {
@@ -201,6 +202,7 @@ export function App() {
               {route.name === "medicines" && <MedicinesPage />}
               {route.name === "inventory" && <InventoryPage />}
               {route.name === "settings" && <SettingsPage />}
+              {route.name === "whats-new" && <WhatsNewPage />}
               {route.name === "not-found" && (
                 <Placeholder title="Not found" message="That page doesn't exist." />
               )}

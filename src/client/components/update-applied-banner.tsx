@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { PartyPopper, X } from "lucide-react";
+import { PartyPopper, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useRouter } from "@/hooks/use-router";
 
 /**
  * "Update just applied" banner.
@@ -104,6 +105,7 @@ function markDismissedForVersion(version: string): void {
 export function UpdateAppliedBanner() {
   const [applied, setApplied] = useState<AppliedUpdate | null>(null);
   const [dismissed, setDismissed] = useState(true);
+  const { navigate } = useRouter();
 
   useEffect(() => {
     const found = detectAppliedUpdate();
@@ -143,9 +145,20 @@ export function UpdateAppliedBanner() {
             </p>
           )}
         </div>
-        <Button size="sm" variant="ghost" onClick={dismiss} aria-label="Dismiss update banner" className="h-8 shrink-0 px-2">
-          <X className="h-4 w-4" />
-        </Button>
+        <div className="flex shrink-0 items-start gap-1">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => navigate("/whats-new")}
+            className="h-8"
+          >
+            <Sparkles className="h-4 w-4" />
+            What&apos;s new
+          </Button>
+          <Button size="sm" variant="ghost" onClick={dismiss} aria-label="Dismiss update banner" className="h-8 px-2">
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
     </div>
   );
