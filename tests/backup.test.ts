@@ -478,16 +478,60 @@ describe("backup includes patient image bytes", () => {
     expect(imp.status).toBe(200);
 
     // The blob bytes are back, byte for byte, under the same key.
-    const row = await rawBlobRow(img.key);
-    expect(row).not.toBeNull();
-    const restored = row!.data instanceof ArrayBuffer ? new Uint8Array(row!.data) : Uint8Array.from(row!.data as number[]);
+    const blobRow = await rawBlobRow(img.key);
+    expect(blobRow).not.toBeNull();
+    const restored = blobRow!.data instanceof ArrayBuffer ? new Uint8Array(blobRow!.data) : Uint8Array.from(blobRow!.data as number[]);
     expect(restored).toEqual(imageBytes);
-    expect(row!.mime_type).toBe("image/jpeg");
+    expect(blobRow!.mime_type).toBe("image/jpeg");
 
     // And the image is served back intact through the normal endpoint.
     const serve = await app.request(`/api/image-file?key=${encodeURIComponent(img.key)}`, undefined, { DB: ctx.db });
     expect(serve.status).toBe(200);
     expect(new Uint8Array(await serve.arrayBuffer())).toEqual(imageBytes);
+
+    // The export does not inline blobs — it attaches real bytes under image_files
+    // keyed by file_key, so a truncated/partial export can never drop images.
+    const exported = (await fetchExport()) as {
+      tables: Record<string, unknown[]>;
+      image_files: { file_key: string; mime_type: string; created_at: string; data_base64: string }[];
+    };
+    expect(exported.image_files).toEqual([
+      expect.objectContaining({
+        file_key: img.key,
+        mime_type: "image/jpeg",
+        data_base64: expect.any(String),
+      }),
+    ]);
+
+    // Simulate a partial export: drop every patient_image_blobs row and wipe the
+    // image_files attachment (the client-side folder backup periodically ships
+    // the export alone, so a stale copy is realistic).
+    await ctx.db.prepare("DELETE FROM patient_image_blobs").run();
+    await ctx.db.prepare("DELETE FROM patient_images").run();
+    const wiped = (await fetchExport()) as {
+      tables: Record<string, unknown[]>;
+      image_files: { file_key: string; mime_type: string; created_at: string; data_base64: string }[];
+    };
+    expect(wiped.tables.patient_image_blobs).toHaveLength(0);
+    expect(wiped.image_files).toHaveLength(1);
+
+    // Import the surviving export: tables restore (rows are gone, so 0 rows),
+    // but the image bytes come back byte-for-byte via image_files.
+    const imp2 = await app.request(
+      "/api/backup/import",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(wiped) },
+      { DB: ctx.db },
+    );
+    expect(imp2.status).toBe(200);
+    const impData = (await imp2.json()) as { ok: boolean; restored: { patient_image_blobs: number }; imported_rows: number };
+    expect(impData.ok).toBe(true);
+    expect(impData.restored.patient_image_blobs).toBe(1);
+
+    const blobRow2 = await rawBlobRow(img.key);
+    expect(blobRow2).not.toBeNull();
+    const restored2 = blobRow2!.data instanceof ArrayBuffer ? new Uint8Array(blobRow2!.data) : Uint8Array.from(blobRow2!.data as number[]);
+    expect(restored2).toEqual(imageBytes);
+    expect(blobRow2!.mime_type).toBe("image/jpeg");
   });
 
   it("includes image blobs in snapshots and their downloads", async () => {
@@ -513,6 +557,44 @@ describe("backup includes patient image bytes", () => {
 
     const payload = (await fetchExport()) as { tables: { patient_image_blobs: unknown[] } };
     expect(payload.tables.patient_image_blobs).toHaveLength(0);
+  });
+
+  it("restores real image bytes byte-perfect through a full export → wipe → import", async () => {
+    const pid = await seedPracticeData();
+    const imageBytes = new Uint8Array([1, 2, 3, 250, 251, 252, 7, 8, 9, 200]);
+    const img = await uploadImage(pid, imageBytes);
+
+    const payload = (await fetchExport()) as {
+      tables: Record<string, unknown[]>;
+      image_files: { file_key: string; mime_type: string; data_base64: string }[];
+    };
+    expect(payload.image_files).toHaveLength(1);
+    expect(payload.image_files[0]!.file_key).toBe(img.key);
+
+    // Wipe every copy of the image data and metadata, then import.
+    await ctx.db.prepare("DELETE FROM patient_image_blobs").run();
+    await ctx.db.prepare("DELETE FROM patient_images").run();
+    const imp = await app.request(
+      "/api/backup/import",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
+      { DB: ctx.db },
+    );
+    expect(imp.status).toBe(200);
+    const impData = (await imp.json()) as { ok: boolean; restored: { patient_image_blobs: number } };
+    expect(impData.ok).toBe(true);
+    expect(impData.restored.patient_image_blobs).toBe(1);
+
+    // The real bytes are back, keyed by the same file_key, served through the
+    // normal endpoint.
+    const blobRow2 = await rawBlobRow(img.key);
+    expect(blobRow2).not.toBeNull();
+    const restored2 = blobRow2!.data instanceof ArrayBuffer ? new Uint8Array(blobRow2!.data) : Uint8Array.from(blobRow2!.data as number[]);
+    expect(restored2).toEqual(imageBytes);
+    expect(blobRow2!.mime_type).toBe("image/jpeg");
+
+    const serve = await app.request(`/api/image-file?key=${encodeURIComponent(img.key)}`, undefined, { DB: ctx.db });
+    expect(serve.status).toBe(200);
+    expect(new Uint8Array(await serve.arrayBuffer())).toEqual(imageBytes);
   });
 });
 

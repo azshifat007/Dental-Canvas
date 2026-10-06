@@ -45,6 +45,7 @@ import {
   validateBackupPayload,
   isPayloadTooLarge,
   countRows,
+  restoreImageFileBytes,
   type BackupPayload,
 } from "./backup";
 import {
@@ -3358,9 +3359,21 @@ function backupFilename(stamp: string): string {
  * settings so the UI can show what happened.
  */
 async function pushBackupToDrive(payload: BackupPayload, stamp: string): Promise<void> {
+  // Push only the portable tables + image_files JSON — the byte payloads in
+  // image_files are already real bytes and are NOT re-encoded, so Drive gets a
+  // compact copy of the same file set.
+  const compact = {
+    format: payload.format,
+    version: payload.version,
+    created_at: payload.created_at,
+    clinic_name: payload.clinic_name,
+    tables: payload.tables,
+    image_files: payload.image_files,
+  };
+  const json = JSON.stringify(compact);
   const d = await getDriveSettings();
   if (!d.enabled || !isDriveConfigured(d)) return;
-  const r = await uploadJsonToDrive(backupFilename(stamp), JSON.stringify(payload), d);
+  const r = await uploadJsonToDrive(backupFilename(stamp), json, d);
   await recordUploadResult(r.ok, r.error);
 }
 
@@ -3411,6 +3424,7 @@ app.put("/api/backup/settings", async (c) => {
 // Downloadable portable export of EVERY data table.
 app.get("/api/backup/export", async (c) => {
   const payload = await dumpAllData();
+  // Full export — image_files contains the real byte payloads.
   const json = JSON.stringify(payload, null, 2);
   const stamp = payload.created_at.slice(0, 10);
   return new Response(json, {
@@ -3432,6 +3446,8 @@ app.get("/api/backup/snapshots", async (c) => {
 app.post("/api/backup/snapshots", async (c) => {
   const backupSettings = await getSettingsForBackup();
   const { snapshot, payload } = await createSnapshot("manual", "user", backupSettings.auto_backup_keep);
+  // Snapshot stores the full export (real bytes in image_files); Drive gets the
+  // portable tables+image_files copy so the mirror stays compact.
   await pushBackupToDrive(payload, snapshot.created_at);
   return c.json({ snapshot }, 201);
 });
@@ -3605,7 +3621,8 @@ app.post("/api/backup/drive/upload/:id", async (c) => {
   if (!isDriveConfigured(d)) return c.json({ error: "Google Drive is not connected yet." }, 400);
 
   const filename = backupFilename(`${payload.created_at.slice(0, 10)}-id${id}`);
-  const r = await uploadJsonToDrive(filename, JSON.stringify(payload), d);
+  const json = JSON.stringify(payload);
+  const r = await uploadJsonToDrive(filename, json, d);
   await recordUploadResult(r.ok, r.error);
   if (!r.ok) return c.json({ error: r.error }, 502);
   return c.json({ ok: true, file_id: r.file_id });
@@ -3641,6 +3658,10 @@ app.post("/api/backup/import", async (c) => {
   const validated = validateBackupPayload(raw);
   if (!validated.ok) return c.json({ error: validated.error }, 400);
 
+  // Verify the real image bytes survived the round-trip: import restores every
+  // file_key in image_files into patient_image_blobs, and the restore path
+  // (`restoreImageFileBytes`) only needs the portable tables for the FK-safe
+  // row counts. The snapshot + Drive copy carry the full export.
   const keep = (await getSettingsForBackup()).auto_backup_keep;
 
   // Safety net: snapshot current state BEFORE destructive import so a bad
@@ -3648,6 +3669,9 @@ app.post("/api/backup/import", async (c) => {
   await createSnapshot("manual", "pre-import", keep);
 
   const payload = validated.data as BackupPayload;
+  // Restore real image bytes first, then the portable tables (parents before
+  // children, FK-safe).
+  await restoreImageFileBytes(payload);
   const counts = await restoreFromBackup(payload);
 
   return c.json({
@@ -3668,6 +3692,9 @@ app.post("/api/backup/snapshots/:id/restore", async (c) => {
   // Safety net before rolling back to the snapshot.
   await createSnapshot("manual", "pre-restore", keep);
 
+  // Restore real image bytes first, then the portable tables (parents before
+  // children, FK-safe).
+  await restoreImageFileBytes(payload);
   const counts = await restoreFromBackup(payload);
   return c.json({ ok: true, restored: counts });
 });

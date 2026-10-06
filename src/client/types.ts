@@ -46,7 +46,8 @@ export type PrescriptionTemplate =
   | "elegant"
   | "minimal"
   | "bold"
-  | "watermark";
+  | "watermark"
+  | "two-column";
 
 export interface PrescriptionItem {
   id?: number;

@@ -38,6 +38,7 @@ const TEMPLATE_LABELS: Record<PrescriptionTemplate, string> = {
   minimal: "Minimal",
   bold: "Bold",
   watermark: "Watermark",
+  "two-column": "Two-column",
 };
 
 export function PrescriptionPrintView({

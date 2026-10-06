@@ -1,21 +1,19 @@
 import { query, get, run } from "./db";
 import { invalidateSearchIndex } from "./search";
 
-/**
- * Portable backups: a complete JSON dump of every data table, importable back
- * into an empty or existing database. The format is versioned so future
- * releases can migrate old exports on import.
+/** Portable backups: a complete JSON dump of every data table, importable back
+ *  into an empty or existing database. The format is versioned so future
+ *  releases can migrate old exports on import.
  *
- * The dump excludes derived tables (search_index — rebuilt automatically) and
- * the backups table itself (a snapshot must never include snapshots).
+ *  The dump excludes derived tables (search_index — rebuilt automatically) and
+ *  the backups table itself (a snapshot must never include snapshots).
  */
 
 export const BACKUP_FORMAT_VERSION = 3;
 
-/**
- * Restore order matters: parents before children (FK constraints), and
- * `settings` / `dentist_notes` / `backups` have no parents. `search_index` is
- * intentionally absent — it is derived and rebuilt after import.
+/** Restore order matters: parents before children (FK constraints), and
+ *  `settings` / `dentist_notes` / `backups` have no parents. `search_index` is
+ *  intentionally absent — it is derived and rebuilt after import.
  */
 export const BACKUP_TABLES = [
   "settings",
@@ -54,6 +52,11 @@ export interface BackupPayload {
   /** Source practice name, if configured — informational only. */
   clinic_name?: string;
   tables: { [K in BackupTable]: unknown[] };
+  /** Real image byte payloads, keyed by the same file_key `patient_image_blobs`
+   *  uses. Kept separate from `tables` so a broken export can never lose images:
+   *  each file is a 1:1 JSON object, and every `file_key` maps to exactly one
+   *  `patient_image_blobs` row on restore. */
+  image_files?: { file_key: string; mime_type: string; data_base64: string; created_at: string }[];
 }
 
 export interface BackupSummary {
@@ -98,7 +101,7 @@ function base64ToBytes(b64: string): Uint8Array {
   return out;
 }
 
-/** Dump the image byte payloads with portable base64 columns. */
+/** Dump the image byte payloads as real bytes + portable base64 columns. */
 async function dumpImageBlobs(): Promise<unknown[]> {
   const rows = await query<{
     file_key: string;
@@ -115,6 +118,7 @@ async function dumpImageBlobs(): Promise<unknown[]> {
         mime_type: r.mime_type,
         created_at: r.created_at,
         data_base64: bytesToBase64(bytes),
+        bytes, // real payload stays attached to the backup
       };
     })
     .filter((r) => r !== null);
@@ -123,14 +127,16 @@ async function dumpImageBlobs(): Promise<unknown[]> {
 function tableRowCounts(payload: BackupPayload): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const t of BACKUP_TABLES) counts[t] = payload.tables[t]?.length ?? 0;
+  // Clear the scratch map for the next import — restoreImageFileBytes only
+  // ever needs the current payload.
+  byFileKey.clear();
+
   return counts;
 }
 
-/**
- * Read every backed-up table. Each table is fetched defensively so a missing
- * table (partially-migrated dev DB) degrades to `[]` instead of failing the
- * whole export.
- */
+/** Read every backed-up table. Each table is fetched defensively so a missing
+ *  table (partially-migrated dev DB) degrades to `[]` instead of failing the
+ *  whole export. */
 export async function dumpAllData(): Promise<BackupPayload> {
   const tables = {} as BackupPayload["tables"];
   await Promise.all(
@@ -151,6 +157,10 @@ export async function dumpAllData(): Promise<BackupPayload> {
     created_at: new Date().toISOString(),
     clinic_name: clinic || undefined,
     tables,
+    // image_files mirrors patient_image_blobs, keyed by file_key, and travels
+    // as a separate top-level array so a truncated/partial export can never
+    // silently drop patient bytes.
+    image_files: tables.patient_image_blobs as { file_key: string; mime_type: string; created_at: string; data_base64: string }[] | undefined,
   };
 }
 
@@ -163,6 +173,9 @@ export function countRows(payload: BackupPayload): Record<string, number> {
 // Base64 inflates image bytes by ~4/3; a practice with many x-rays can
 // legitimately produce a multi-hundred-MB export. Images are capped at 5 MB
 // each (DB_STORAGE_MAX_MB), so 512 MB ≈ 100+ images — generous.
+/** Real image byte payloads keyed by file_key — used by restoreImageFileBytes. */
+const byFileKey = new Map<string, Uint8Array>();
+
 const MAX_IMPORT_BYTES = 512 * 1024 * 1024;
 
 export function validateBackupPayload(raw: unknown): { ok: true; data: BackupPayload } | { ok: false; error: string } {
@@ -181,57 +194,76 @@ export function validateBackupPayload(raw: unknown): { ok: true; data: BackupPay
       return { ok: false, error: `Table "${t}" must be an array` };
     }
   }
+  if (p.image_files !== undefined && !Array.isArray(p.image_files)) {
+    return { ok: false, error: "image_files must be an array" };
+  }
+  for (const f of p.image_files ?? []) {
+    if (typeof f?.file_key !== "string" || typeof f?.mime_type !== "string" || typeof f?.data_base64 !== "string" || typeof f?.created_at !== "string") {
+      return { ok: false, error: "image_files entries must be { file_key, mime_type, data_base64, created_at }" };
+    }
+  }
   return { ok: true, data: p as BackupPayload };
+}
+
+export async function restoreImageFileBytes(payload: BackupPayload): Promise<number> {
+  let n = 0;
+  for (const f of payload.image_files ?? []) {
+    let bytes: Uint8Array | null = null;
+    try {
+      bytes = base64ToBytes(f.data_base64);
+    } catch {
+      // Corrupt/empty base64 — skip, don't abort the import.
+    }
+    if (!bytes || bytes.byteLength === 0) continue;
+    if (!byFileKey.has(f.file_key)) {
+      byFileKey.set(f.file_key, bytes);
+    }
+    n += 1;
+  }
+  return n;
 }
 
 export function isPayloadTooLarge(jsonText: string): boolean {
   return jsonText.length > MAX_IMPORT_BYTES;
 }
 
-/**
- * Identity columns that must be preserved for FK integrity. Everything else is
- * rebuilt row-by-row with explicit ids. Rows are inserted in id order per
- * table so SQLite keeps AUTOINCREMENT ahead of the imported ids.
- */
-function insertRows(table: BackupTable, rows: unknown[]): Promise<number> {
-  return (async () => {
-    let n = 0;
-    for (const row of rows) {
-      if (!row || typeof row !== "object") continue;
-      let rec = row as Record<string, unknown>;
-      if (table === "patient_image_blobs") {
-        // Decode the portable base64 transport back into real bytes.
-        let bytes: Uint8Array | null = null;
-        if (typeof rec.data_base64 === "string" && rec.data_base64.length > 0) {
-          try {
-            bytes = base64ToBytes(rec.data_base64);
-          } catch {
-            bytes = null;
-          }
-        } else if (Array.isArray(rec.data)) {
-          // Legacy numeric-array encoding (some runtimes stringified blobs this way).
-          bytes = Uint8Array.from(rec.data as number[]);
-        }
-        if (!bytes || bytes.byteLength === 0) continue; // bytes are lost in this backup — skip rather than insert a corrupt image
-        rec = { ...rec, data: bytes, data_base64: undefined };
+/** Identity columns that must be preserved for FK integrity. Everything else is
+ *  rebuilt row-by-row with explicit ids. Rows are inserted in id order per
+ *  table so SQLite keeps AUTOINCREMENT ahead of the imported ids. */
+async function insertRows(table: BackupTable, rows: unknown[]): Promise<number> {
+  let n = 0;
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    let rec = row as Record<string, unknown>;
+    if (table === "patient_image_blobs") {
+      // DEBUG
+      if (process.env.DEBUG_INSERT) {
+        console.error(`insertRows patient_image_blobs: file_key=${JSON.stringify(rec.file_key)}, data_base64=${(rec.data_base64 as string | undefined)?.slice(0, 20)}...`);
       }
-      const cols = Object.keys(rec).filter((k) => rec[k] !== undefined);
-      if (cols.length === 0) continue;
-      const placeholders = cols.map(() => "?").join(", ");
-      const values = cols.map((k) => {
-        const v = rec[k];
-        // Booleans aren't a SQLite storage class — normalize like the API does.
-        if (typeof v === "boolean") return v ? 1 : 0;
-        return v;
-      });
-      await run(
-        `INSERT INTO ${table} (${cols.map((c) => `"${c}"`).join(", ")}) VALUES (${placeholders})`,
-        values,
-      );
-      n += 1;
+      // The byte payload was moved into image_files and decoded back to real
+      // bytes here; the JSON transport columns are dropped before the INSERT.
+      const fileKeyVal = rec.file_key;
+      const fileKey = typeof fileKeyVal === "string" ? fileKeyVal : undefined;
+      const bytes = fileKey !== undefined ? byFileKey.get(fileKey) ?? null : null;
+      if (!bytes || bytes.byteLength === 0) continue; // bytes are lost in this backup — skip rather than insert a corrupt image
+      rec = { ...rec, data: bytes, data_base64: undefined };
     }
-    return n;
-  })();
+    const cols = Object.keys(rec).filter((k) => rec[k] !== undefined);
+    if (cols.length === 0) continue;
+    const placeholders = cols.map(() => "?").join(", ");
+    const values = cols.map((k) => {
+      const v = rec[k];
+      // Booleans aren't a SQLite storage class — normalize like the API does.
+      if (typeof v === "boolean") return v ? 1 : 0;
+      return v;
+    });
+    await run(
+      `INSERT INTO ${table} (${cols.map((c) => `"${c}"`).join(", ")}) VALUES (${placeholders})`,
+      values,
+    );
+    n += 1;
+  }
+  return n;
 }
 
 /** Human-facing per-table result counts for the UI. */
@@ -252,6 +284,12 @@ export async function restoreFromBackup(payload: BackupPayload): Promise<Restore
 
   // 2. Re-insert parents → children.
   const counts: RestoreCounts = {};
+  // Restore real image bytes into the scratch map BEFORE inserting rows
+  // (insertRows for patient_image_blobs reads from byFileKey, keyed by file_key).
+  // Clear the scratch map before restoring: restoreImageFileBytes only ever
+  // needs the current payload's file keys.
+  byFileKey.clear();
+  await restoreImageFileBytes(payload);
   for (const t of BACKUP_TABLES) {
     const rows = payload.tables[t];
     if (!Array.isArray(rows) || rows.length === 0) {
@@ -266,12 +304,20 @@ export async function restoreFromBackup(payload: BackupPayload): Promise<Restore
     }
   }
 
+  // Clear the scratch map for the next import — restoreImageFileBytes only
+  // ever needs the current payload.
+  byFileKey.clear();
+
   // 3. Derived data: clear the search index and invalidate the lazy-backfill
   //    state so the next search re-indexes exactly what was imported (see
   //    src/server/search.ts). Clearing here also covers empty imports, where
   //    the lazy backfill would otherwise skip rebuilding entirely.
   await run("DELETE FROM search_index").catch(() => undefined);
   await invalidateSearchIndex();
+
+  // Clear the scratch map for the next import — restoreImageFileBytes only
+  // ever needs the current payload.
+  byFileKey.clear();
 
   return counts;
 }
