@@ -101,7 +101,12 @@ function base64ToBytes(b64: string): Uint8Array {
   return out;
 }
 
-/** Dump the image byte payloads as real bytes + portable base64 columns. */
+/** Dump the image byte payloads as portable base64 rows. The real bytes travel
+ *  as data_base64 (decoded back to bytes by restoreImageFileBytes); a raw
+ *  Uint8Array must never be attached here — JSON.stringify turns it into a
+ *  mangled object, and tables.patient_image_blobs has no such column, so the
+ *  INSERT failed and the swallowed error silently dropped every image blob
+ *  on import. */
 async function dumpImageBlobs(): Promise<unknown[]> {
   const rows = await query<{
     file_key: string;
@@ -118,7 +123,6 @@ async function dumpImageBlobs(): Promise<unknown[]> {
         mime_type: r.mime_type,
         created_at: r.created_at,
         data_base64: bytesToBase64(bytes),
-        bytes, // real payload stays attached to the backup
       };
     })
     .filter((r) => r !== null);

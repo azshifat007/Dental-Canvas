@@ -168,7 +168,7 @@ describe("CSV export", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain("text/csv");
     const text = await res.text();
-    expect(text.split("\r\n")[0]).toBe("id,first_name,last_name,date_of_birth,email,phone,address,medical_alerts,referral_source,created_at");
+    expect(text.split("\r\n")[0]).toBe("id,first_name,last_name,date_of_birth,patient_gender,email,phone,address,medical_alerts,referral_source,created_at");
     expect(text).toContain("Ada,Balance");
   });
 
