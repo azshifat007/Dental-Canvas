@@ -455,6 +455,7 @@ describe("backup includes patient image bytes", () => {
 
     const payload = (await fetchExport()) as {
       tables: { patient_image_blobs: { file_key: string; data_base64: string; data?: unknown }[] };
+      image_files: { file_key: string; mime_type: string; created_at: string; data_base64: string }[];
     };
 
     // The transport column is present and decodes to the exact bytes.
@@ -503,14 +504,13 @@ describe("backup includes patient image bytes", () => {
       }),
     ]);
 
-    // Simulate a partial export: drop every patient_image_blobs row and wipe the
-    // image_files attachment (the client-side folder backup periodically ships
-    // the export alone, so a stale copy is realistic).
-    await ctx.db.prepare("DELETE FROM patient_image_blobs").run();
-    await ctx.db.prepare("DELETE FROM patient_images").run();
-    const wiped = (await fetchExport()) as {
-      tables: Record<string, unknown[]>;
-      image_files: { file_key: string; mime_type: string; created_at: string; data_base64: string }[];
+    // Simulate a partial/stale export: the portable tables copy lost the
+    // blob rows while the top-level image_files attachment survived (the
+    // client-side folder backup periodically ships only part of the payload).
+    // The bytes must restore from image_files alone.
+    const wiped = {
+      ...payload,
+      tables: { ...payload.tables, patient_image_blobs: [] as unknown[] },
     };
     expect(wiped.tables.patient_image_blobs).toHaveLength(0);
     expect(wiped.image_files).toHaveLength(1);

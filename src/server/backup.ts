@@ -308,6 +308,34 @@ export async function restoreFromBackup(payload: BackupPayload): Promise<Restore
     }
   }
 
+  // 2b. Every image_files entry must exist as a blob row even when the
+  // portable tables copy lost it (a stale/partial export ships only part of
+  // the payload). The tables loop above covers the normal case; this only
+  // fills the gaps, keyed by file_key — the bytes come from the scratch map
+  // that restoreImageFileBytes populated.
+  let imageFilesRestored = 0;
+  for (const f of payload.image_files ?? []) {
+    const bytes = byFileKey.get(f.file_key);
+    if (!bytes || bytes.byteLength === 0) continue;
+    const existing = await get<{ file_key: string }>(
+      "SELECT file_key FROM patient_image_blobs WHERE file_key = ?",
+      [f.file_key],
+    ).catch(() => null);
+    if (existing) continue;
+    try {
+      await run(
+        "INSERT INTO patient_image_blobs (file_key, mime_type, data) VALUES (?, ?, ?)",
+        [f.file_key, f.mime_type, bytes],
+      );
+      imageFilesRestored += 1;
+    } catch {
+      // Missing table / unreadable row — keep importing the rest.
+    }
+  }
+  if (imageFilesRestored > 0) {
+    counts.patient_image_blobs = (counts.patient_image_blobs ?? 0) + imageFilesRestored;
+  }
+
   // Clear the scratch map for the next import — restoreImageFileBytes only
   // ever needs the current payload.
   byFileKey.clear();
