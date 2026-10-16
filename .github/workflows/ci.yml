@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The repo ships a pnpm lockfile only — `npm ci` would fail outright
+      # (no package-lock.json), which is why this workflow used to be a draft.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: typecheck
+        run: pnpm exec tsc --noEmit
+
+      - name: build
+        run: pnpm run build
+
+      # Required, not continue-on-error: the suite is green (271 tests) and a
+      # red suite must block the push like any other failure.
+      - name: tests
+        run: pnpm test
+
+      # Fast, read-only assertions over the build output this job just built:
+      # the prescription print route and the two-column template must survive
+      # into dist (they are runtime-selected, so bundler pruning is the risk).
+      - name: verify print template in build output
+        run: node scripts/verify-two-column-ci.mjs
