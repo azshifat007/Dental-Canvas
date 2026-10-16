@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Copy, Eye, FileText, Plus, Printer, Trash2 } from "lucide-react";
+import { Copy, Eye, FileText, Link, Plus, Printer, Trash2 } from "lucide-react";
 import { api } from "@/api";
 import { useApp } from "@/context";
 import { toast } from "@/components/ui/toast";
@@ -10,6 +10,19 @@ import type {
   PrescriptionItem,
   PrescriptionTemplate,
   TreatmentPlanItem,
+} from "@/types";
+import type {
+  ComplaintChip,
+  Investigation,
+  RxComplaints,
+  RxInvestigations,
+  RxVitals,
+  DoseSchedule,
+  MealRelation,
+} from "@/types";
+import {
+  DOSE_SCHEDULE_LABELS,
+  MEAL_RELATION_LABELS,
 } from "@/types";
 import { formatDate } from "@/lib/utils";
 import { PrescriptionPreviewModal } from "./prescription-preview-modal";
@@ -157,6 +170,24 @@ export function PrescriptionsTab({
                         <Printer className="h-4 w-4" /> Print
                       </Button>
                       <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={async () => {
+                          try {
+                            const res = await api<{ share_token: string; share_url: string }>(
+                              "POST",
+                              `/api/prescriptions/${rx.id}/share`,
+                            );
+                            navigate(res.share_url);
+                          } catch (err) {
+                            app.setError((err as Error).message);
+                          }
+                        }}
+                        title="Share a public read-only link"
+                      >
+                        <Link className="h-4 w-4" /> Share
+                      </Button>
+                      <Button
                         size="icon"
                         variant="ghost"
                         onClick={() => duplicate(rx)}
@@ -230,6 +261,95 @@ const EMPTY_ITEM: DraftItem = { drug_name: "", dosage: "", frequency: "", durati
  * The prescription editor dialog. Exported so the dashboard's consultation
  * card can mount the same editor for issuing a prescription mid-visit.
  */
+/** Clinical preset chip sets used by the prescription editor. These are
+ *  convenience shortcuts — the clinician confirms every value. */
+
+const COMPLAINT_CHIPS = [
+  "Fever",
+  "Pain",
+  "Weakness",
+  "Cough",
+  "Headache",
+  "Toothache",
+  "Loose tooth",
+  "Swelling",
+  "Bleeding",
+  "Sensitivity",
+] as const;
+
+export type ComplaintChipLabel = (typeof COMPLAINT_CHIPS)[number];
+
+const COMPLAINSION_DURATION_CHIPS = [
+  "1 day",
+  "2 days",
+  "3 days",
+  "7 days",
+  "1 month",
+] as const;
+
+const COMPLAINT_SITES = [
+  "Head",
+  "Throat",
+  "Chest",
+  "Abdomen",
+  "Back",
+  "Limb",
+  "Jaw",
+  "Tooth #",
+  "Other",
+] as const;
+
+const VITALS_BP_CHIPS = ["120/80", "140/90", "130/85", "110/70", "Normal"] as const;
+const VITALS_TEMP_CHIPS = ["98.6°F", "100°F", "102°F", "Normal"] as const;
+const VITALS_PULSE_CHIPS = ["60 bpm", "72 bpm", "80 bpm", "90 bpm", "100 bpm"] as const;
+const VITALS_SPO2_CHIPS = ["98%", "96%", "94%", "Normal"] as const;
+
+const INVESTIGATION_CHIPS = [
+  "CBC",
+  "Blood glucose (fasting)",
+  "Blood glucose (random)",
+  "Serum calcium",
+  "25-OH Vitamin D",
+  "Chest X-ray",
+] as const;
+
+export type InvestigationChipLabel = (typeof INVESTIGATION_CHIPS)[number];
+
+const ADVICE_CHIPS = [
+  "Drink plenty of water",
+  "Avoid oily food",
+  "Rest",
+  "Warm salt-water rinse",
+  "Maintain oral hygiene",
+  "Return if symptoms worsen",
+  "Avoid strenuous activity",
+  "Take medication with food",
+] as const;
+
+export type AdviceChipLabel = (typeof ADVICE_CHIPS)[number];
+
+const FOLLOW_UP_UNITS = [
+  { label: "1 day", value: 1, unit: "days" },
+  { label: "7 days", value: 7, unit: "days" },
+  { label: "15 days", value: 15, unit: "days" },
+  { label: "30 days", value: 30, unit: "days" },
+  { label: "90 days", value: 90, unit: "days" },
+  { label: "180 days", value: 180, unit: "days" },
+  { label: "1 month", value: 1, unit: "months" },
+  { label: "3 months", value: 3, unit: "months" },
+  { label: "6 months", value: 6, unit: "months" },
+  { label: "1 year", value: 1, unit: "years" },
+] as const;
+
+function addPeriodISO(baseISO: string, value: number, unit: "days" | "months" | "years"): string {
+  const d = new Date(`${baseISO}T00:00:00`);
+  if (isNaN(d.getTime())) return baseISO;
+  if (unit === "days") d.setUTCDate(d.getUTCDate() + value);
+  else if (unit === "months") d.setUTCMonth(d.getUTCMonth() + value);
+  else d.setUTCFullYear(d.getUTCFullYear() + value);
+  return d.toISOString().slice(0, 10);
+}
+
 export function PrescriptionDialog({
   open,
   onOpenChange,
@@ -651,12 +771,12 @@ export function PrescriptionDialog({
             </div>
           )}
 
-          {/* Medication rows */}
+          {/* Medication rows — bounded scroll so the list never overflows the dialog on long prescriptions. */}
           <div className="space-y-2">
             <Label className="text-xs">Medications *</Label>
-            <div className="space-y-2">
+            <div className="max-h-[44vh] overflow-y-auto space-y-2 rounded-md border border-border/40 bg-muted/20 p-2">
               {items.map((item, i) => (
-                <div key={i} className="grid gap-2 rounded-md border bg-muted/30 p-2 sm:grid-cols-[2fr_1fr_1fr_1fr_1.5fr_auto]">
+                <div key={i} className="grid gap-2 rounded-md border border-border/60 bg-background p-2 sm:grid-cols-[2fr_1fr_1fr_1fr_1.5fr_auto]">
                   <DrugAutocomplete
                     inputId={`drug-${i}`}
                     value={item.drug_name}

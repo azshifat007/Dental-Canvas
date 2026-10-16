@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS patients (
   first_name TEXT NOT NULL,
   last_name TEXT NOT NULL,
   date_of_birth TEXT,                   -- ISO date 'YYYY-MM-DD'
+  patient_gender TEXT,                  -- M/F/Other, blank when not recorded
   email TEXT,
   phone TEXT,
   address TEXT,
@@ -345,6 +346,10 @@ CREATE TABLE IF NOT EXISTS prescriptions (
   history TEXT,                         -- H/O (history of presenting illness) on the Chamber sidebar
   advice TEXT,                          -- general instructions to the patient
   follow_up TEXT,                       -- e.g. 'Recheck in 2 weeks'
+  follow_up_date TEXT,                  -- ISO date auto-computed from the follow-up picker
+  complaints TEXT,                      -- JSON {items:[{label,duration?,site?}]} chief-complaint chips
+  vitals TEXT,                          -- JSON {bp?, temperature?, pulse?, spo2?} on-examination vitals
+  investigations TEXT,                  -- JSON {items:[...]} ordered lab tests
   share_token TEXT UNIQUE,              -- null = not shared
   share_revoked INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -359,8 +364,11 @@ CREATE TABLE IF NOT EXISTS prescription_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   prescription_id INTEGER NOT NULL REFERENCES prescriptions(id) ON DELETE CASCADE,
   drug_name TEXT NOT NULL,
+  generic_name TEXT,                    -- generic / salt name shown in parentheses on the sheet
   dosage TEXT,                          -- e.g. '500 mg'
-  frequency TEXT,                       -- e.g. '3x daily', 'every 8 h'
+  frequency TEXT,                       -- e.g. '3x daily', 'every 8 h' (free-text fallback)
+  schedule TEXT,                        -- structured dosing schedule, e.g. '1+1+1', '1+0+1', '0+0+1'
+  meal_relation TEXT,                   -- e.g. 'after meals', 'before meals', 'empty stomach', 'with food'
   duration TEXT,                        -- e.g. '5 days'
   instructions TEXT,                    -- e.g. 'after meals'
   sort_order INTEGER NOT NULL DEFAULT 0,
@@ -375,9 +383,12 @@ CREATE INDEX IF NOT EXISTS idx_rx_items_prescription ON prescription_items(presc
 CREATE TABLE IF NOT EXISTS medicines (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
+  generic_name TEXT,
   drug_group TEXT,
   dosage TEXT,
   frequency TEXT,
+  schedule TEXT,
+  meal_relation TEXT,
   duration TEXT,
   instructions TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -723,8 +734,26 @@ CREATE TABLE IF NOT EXISTS booking_requests (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- ── Seed data ──────────────────────────────────────────────────
--- The sample operatories, practitioners and treatment types moved into the app
--- (src/server/seed.ts, applied by `ensureSeeded` in src/server/index.ts).
--- A Clawnify deploy applies this file as DDL only: a single INSERT here fails
--- the entire deploy, so no non-DDL statement may be added back.
+-- ── Prescription clinical templates & advice presets ──────────────────
+-- Reusable bundles a clinician can save from a finished prescription and
+-- reload later to pre-fill a new prescription's clinical fields + medication
+-- skeleton. Stored as JSON so the shape can evolve without migrations.
+CREATE TABLE IF NOT EXISTS prescription_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  complaints TEXT,                  -- JSON RxComplaints
+  vitals TEXT,                      -- JSON RxVitals
+  investigations TEXT,              -- JSON RxInvestigations
+  advice TEXT,                      -- reusable advice text
+  items TEXT,                       -- JSON PrescriptionItem[] skeleton (drug_name + optional preset fields)
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_prescription_templates_name ON prescription_templates(name);
+
+-- Reusable advice snippets surfaced as chips in the editor's advice picker.
+CREATE TABLE IF NOT EXISTS prescription_advice_presets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  text TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

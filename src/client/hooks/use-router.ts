@@ -18,6 +18,7 @@ export type Route =
   | { name: "finance-appointments" }
   | { name: "settings" }
   | { name: "whats-new" }
+  | { name: "share-prescription"; token: string }
   | { name: "not-found" };
 
 function parse(path: string): Route {
@@ -44,6 +45,8 @@ function parse(path: string): Route {
   if (path === "/inventory") return { name: "inventory" };
   if (path === "/settings") return { name: "settings" };
   if (path === "/whats-new") return { name: "whats-new" };
+  const share = path.match(/^\/share\/prescription\/([a-f0-9]+)\/?$/);
+  if (share) return { name: "share-prescription", token: share[1] };
   return { name: "not-found" };
 }
 

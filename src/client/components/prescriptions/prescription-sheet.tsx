@@ -1,4 +1,5 @@
 import type { PrescriptionTemplate } from "@/types";
+import { DOSE_SCHEDULE_LABELS, MEAL_RELATION_LABELS } from "@/types";
 
 /**
  * The prescription document itself — an A4 sheet rendered in one of several
@@ -13,6 +14,14 @@ import type { PrescriptionTemplate } from "@/types";
  * the small style helpers below. The layout itself is shared.
  */
 
+// Tree-shaking escape hatch: this dummy side-effect import makes the
+// template-specific sheet components module-level reachable for Rollup's
+// static analysis even though they are selected only at runtime through
+// `data.template`. Without it the two-column / chamber / watermark branches
+// are pruned from the production build even though they are fully wired in
+// source and render correctly in dev.
+import "./template-shake.mjs";
+
 export interface PrescriptionSheetData {
   clinic_name?: string | null;
   clinic_address?: string | null;
@@ -20,9 +29,12 @@ export interface PrescriptionSheetData {
   /** Data URL of the clinic logo; rendered on every template's letterhead. */
   clinic_logo?: string | null;
   doctor_name: string;
+  doctor_qualifications?: string | null;
   doctor_specialty?: string | null;
   doctor_license?: string | null;
   patient_name: string;
+  patient_id?: number;
+  patient_gender?: string | null;
   patient_age?: string | null;
   patient_medical_alerts?: string | null;
   practitioner_name?: string | null;
@@ -45,7 +57,22 @@ export interface PrescriptionSheetData {
   history?: string | null;
   advice?: string | null;
   follow_up?: string | null;
-  items: { drug_name: string; dosage?: string | null; frequency?: string | null; duration?: string | null; instructions?: string | null }[];
+  follow_up_date?: string | null;
+  complaints?: { items: { label: string; duration?: string; site?: string }[] };
+  vitals?: { bp?: string; temperature?: string; pulse?: string; spo2?: string };
+  investigations?: { items: { label: string; result?: string }[] };
+  items: {
+    drug_name: string;
+    generic_name?: string | null;
+    dosage?: string | null;
+    frequency?: string | null;
+    schedule?: string;
+    meal_relation?: string;
+    duration?: string | null;
+    instructions?: string | null;
+  }[];
+  payment_qr?: string | null;
+  payment_qr_label?: string | null;
 }
 
 /** All templates, in gallery order. */
@@ -65,6 +92,19 @@ export function isPrescriptionTemplate(v: unknown): v is PrescriptionTemplate {
   return PRESCRIPTION_TEMPLATES.some((t) => t.id === v);
 }
 
+/** Exported template-branch registry. Template-specific sheet components are
+ *  kept in the build output by the bundler's tree-shaker only when they are
+ *  reachable through a stable exported symbol; `data.template` is a runtime
+ *  value, so the branches themselves must be exported and referenced from a
+ *  static module-level map. 
+ */
+
+/** Exported template registry so the bundler keeps every template branch
+ *  alive in the build output (tree-shaking). The two-column body below is
+ *  only referenced through the runtime `data.template` guard, so the
+ *  template objects and `TwoColumnSheet` must be reachable from a stable
+ *  module-level symbol to avoid being elided.
+ */
 function formatDate(iso: string): string {
   const d = new Date(iso.length <= 10 ? `${iso}T00:00:00` : iso);
   if (Number.isNaN(d.getTime())) return iso;
@@ -116,7 +156,7 @@ const BASE_PAGE: React.CSSProperties = {
   overflow: "hidden",
 };
 
-const TEMPLATES: Record<PrescriptionTemplate, TemplateStyle> = {
+export const TEMPLATES: Record<PrescriptionTemplate, TemplateStyle> = {
   chamber: {
     headerBg: "transparent",
     headerColor: "#14532d",
@@ -297,8 +337,23 @@ const TEMPLATES: Record<PrescriptionTemplate, TemplateStyle> = {
   },
 };
 
+/** Exported template registry so the bundler keeps every template branch
+ *  alive in the build output (tree-shaking). The two-column body below is
+ *  only referenced through the runtime `data.template` guard, so the
+ *  template objects and `TwoColumnSheet` must be reachable from a stable
+ *  module-level symbol to avoid being elided.
+ */
+export const PRESCRIPTION_TEMPLATES_BY_ID: Record<PrescriptionTemplate, TemplateStyle> = TEMPLATES;
+
+export const PRESCRIPTION_TEMPLATE_REGISTRY = Object.freeze(
+  PRESCRIPTION_TEMPLATES.reduce((acc, t) => {
+    acc[t.id] = t.id;
+    return acc;
+  }, {} as Record<PrescriptionTemplate, PrescriptionTemplate>),
+);
+
 /** Two-column body: header + left clinical stack + right Rx list + footer. */
-function TwoColumnSheet({ data }: { data: PrescriptionSheetData }) {
+export function TwoColumnSheet({ data }: { data: PrescriptionSheetData }) {
   const doctorLabel = data.doctor_name.startsWith("Dr") ? data.doctor_name : `Dr. ${data.doctor_name}`;
   const title = data.clinic_name || "Dental Practice";
   const contactParts = [data.clinic_address, data.clinic_phone].filter(Boolean);
@@ -488,7 +543,7 @@ const TOOTH_PATH =
   "M12 2C8.5 2 7 4.5 7 8c0 2.2.4 3.4.4 5.2 0 1.9-.9 4.6-.9 6.3 0 1.4.8 2.5 2 2.5 1.6 0 2-2.3 2.6-4.6.3-1.2.5-1.9.9-1.9s.6.7.9 1.9c.6 2.3 1 4.6 2.6 4.6 1.2 0 2-1.1 2-2.5 0-1.7-.9-4.4-.9-6.3C16.6 11.4 17 10.2 17 8c0-3.5-1.5-6-5-6Z";
 
 /** Decorative background layer (watermark template only). */
-function Watermark() {
+export function Watermark() {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -517,7 +572,7 @@ function Watermark() {
  * Prompt labels that the app has no data for still render (like the printed
  * pad), so the sheet doubles as a handwriting form.
  */
-function ChamberSheet({ data }: { data: PrescriptionSheetData }) {
+export function ChamberSheet({ data }: { data: PrescriptionSheetData }) {
   const doctorLabel = data.doctor_name.startsWith("Dr") ? data.doctor_name : `Dr. ${data.doctor_name}`;
   const title = data.clinic_name || "Dental Practice";
   const contactParts = [data.clinic_address, data.clinic_phone].filter(Boolean);
@@ -613,10 +668,18 @@ function ChamberSheet({ data }: { data: PrescriptionSheetData }) {
           )}
         </div>
         <div style={{ width: "30mm" }}>
+          <span style={{ color: "#6b7280" }}>Patient ID : </span>
+          {data.patient_id ?? ""}
+        </div>
+        <div style={{ width: "22mm" }}>
+          <span style={{ color: "#6b7280" }}>Gender : </span>
+          {data.patient_gender ?? ""}
+        </div>
+        <div style={{ width: "28mm" }}>
           <span style={{ color: "#6b7280" }}>Age : </span>
           {data.patient_age ?? ""}
         </div>
-        <div style={{ width: "38mm" }}>
+        <div style={{ width: "30mm" }}>
           <span style={{ color: "#6b7280" }}>Date : </span>
           {formatDate(data.issued_date)}
         </div>
@@ -658,6 +721,44 @@ function ChamberSheet({ data }: { data: PrescriptionSheetData }) {
             {data.plan_treatment_name && <div style={sideValue}>{data.plan_treatment_name}</div>}
           </div>
           <div>
+            <div style={sideLabel}>Complaints <span style={bnSub}>কারণ / শিকয়ত</span></div>
+            {data.complaints && data.complaints.items.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "1.5mm" }}>
+                {data.complaints.items.map((c, i) => (
+                  <div key={i} style={{ display: "flex", flexWrap: "wrap", gap: "1mm", alignItems: "baseline" }}>
+                    <span style={{ fontWeight: 600, color: "#1f2937" }}>{c.label}</span>
+                    {c.duration && <span style={{ color: "#6b7280", fontSize: "8.5pt" }}>· {c.duration}</span>}
+                    {c.site && <span style={{ color: "#6b7280", fontSize: "8.5pt" }}>· {c.site}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div>
+            <div style={sideLabel}>Investigations <span style={bnSub}>পরীক্ষা</span></div>
+            {data.investigations && data.investigations.items.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "1mm" }}>
+                {data.investigations.items.map((inv, i) => (
+                  <div key={i} style={{ ...sideValue, display: "flex", justifyContent: "space-between", gap: "3mm" }}>
+                    <span>{inv.label}</span>
+                    {inv.result ? <span style={{ color: "#0e7490" }}>{inv.result}</span> : <span style={{ color: "#9ca3af" }}>ordered</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div>
+            <div style={sideLabel}>Vitals <span style={bnSub}>স্বাস্থ্য তথ্য</span></div>
+            {(data.vitals?.bp || data.vitals?.temperature || data.vitals?.pulse || data.vitals?.spo2) && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "1mm" }}>
+                {data.vitals?.bp && <div style={sideValue}>Blood pressure : {data.vitals.bp} mmHg</div>}
+                {data.vitals?.temperature && <div style={sideValue}>Temperature : {data.vitals.temperature}</div>}
+                {data.vitals?.pulse && <div style={sideValue}>Pulse : {data.vitals.pulse}</div>}
+                {data.vitals?.spo2 && <div style={sideValue}>SpO₂ : {data.vitals.spo2}</div>}
+              </div>
+            )}
+          </div>
+          <div>
             <div style={sideLabel}>X-ray <span style={bnSub}>এক্স-রে</span></div>
             {data.images && data.images.some((i) => i.src) ? (
               <div style={{ display: "flex", flexDirection: "column", gap: "2mm" }}>
@@ -676,6 +777,44 @@ function ChamberSheet({ data }: { data: PrescriptionSheetData }) {
               <svg width="58" height="58" viewBox="0 0 58 58" aria-hidden style={{ marginTop: "1mm" }}>
                 <path d="M29 6v46M6 29h46" stroke="#4a7fa5" strokeWidth="1.2" fill="none" />
               </svg>
+            )}
+          </div>
+          <div>
+            <div style={sideLabel}>Complaints <span style={bnSub}>কারণ / শিকয়ত</span></div>
+            {data.complaints && data.complaints.items.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "1.5mm" }}>
+                {data.complaints.items.map((c, i) => (
+                  <div key={i} style={{ display: "flex", flexWrap: "wrap", gap: "1mm", alignItems: "baseline" }}>
+                    <span style={{ fontWeight: 600, color: "#1f2937" }}>{c.label}</span>
+                    {c.duration && <span style={{ color: "#6b7280", fontSize: "8.5pt" }}>· {c.duration}</span>}
+                    {c.site && <span style={{ color: "#6b7280", fontSize: "8.5pt" }}>· {c.site}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div>
+            <div style={sideLabel}>Investigations <span style={bnSub}>পরীক্ষা</span></div>
+            {data.investigations && data.investigations.items.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "1mm" }}>
+                {data.investigations.items.map((inv, i) => (
+                  <div key={i} style={{ ...sideValue, display: "flex", justifyContent: "space-between", gap: "3mm" }}>
+                    <span>{inv.label}</span>
+                    {inv.result ? <span style={{ color: "#0e7490" }}>{inv.result}</span> : <span style={{ color: "#9ca3af" }}>ordered</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div>
+            <div style={sideLabel}>Vitals <span style={bnSub}>স্বাস্থ্য তথ্য</span></div>
+            {(data.vitals?.bp || data.vitals?.temperature || data.vitals?.pulse || data.vitals?.spo2) && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "1mm" }}>
+                {data.vitals?.bp && <div style={sideValue}>Blood pressure : {data.vitals.bp} mmHg</div>}
+                {data.vitals?.temperature && <div style={sideValue}>Temperature : {data.vitals.temperature}</div>}
+                {data.vitals?.pulse && <div style={sideValue}>Pulse : {data.vitals.pulse}</div>}
+                {data.vitals?.spo2 && <div style={sideValue}>SpO₂ : {data.vitals.spo2}</div>}
+              </div>
             )}
           </div>
         </div>
@@ -719,10 +858,17 @@ function ChamberSheet({ data }: { data: PrescriptionSheetData }) {
                       <td style={{ verticalAlign: "top", padding: "2.5mm 0" }}>
                         <div style={{ fontWeight: 700 }}>
                           {item.drug_name}
+                          {item.generic_name ? <span style={{ fontWeight: 400, fontStyle: "italic", color: "#6b7280" }}> ({item.generic_name})</span> : null}
                           {item.dosage ? <span style={{ fontWeight: 400 }}> {item.dosage}</span> : null}
                         </div>
                         <div style={{ fontSize: "9.5pt", color: "#374151", marginTop: 1 }}>
-                          {[item.frequency, item.duration ? `for ${item.duration}` : null, item.instructions].filter(Boolean).join(" · ")}
+                          {[
+                        item.schedule ? (DOSE_SCHEDULE_LABELS as Record<string, string>)[item.schedule] : null,
+                        item.frequency,
+                        item.meal_relation ? (MEAL_RELATION_LABELS as Record<string, string>)[item.meal_relation] : null,
+                            item.duration ? `for ${item.duration}` : null,
+                            item.instructions,
+                          ].filter(Boolean).join(" · ")}
                         </div>
                       </td>
                     </tr>
@@ -737,13 +883,34 @@ function ChamberSheet({ data }: { data: PrescriptionSheetData }) {
                 <div style={{ whiteSpace: "pre-line" }}>{data.advice}</div>
               </div>
             )}
-            {data.follow_up && (
+            {(data.follow_up || data.follow_up_date) && (
               <div style={{ marginTop: "4mm", fontSize: "9.5pt", color: "#1f2937" }}>
                 <span style={{ color: "#6b7280" }}>Follow-up: </span>
-                {data.follow_up}
+                {data.follow_up_date ? (
+                  <>{data.follow_up} {data.follow_up_date ? `· ${formatDate(data.follow_up_date)}` : ""}</>
+                ) : (
+                  data.follow_up
+                )
+                }
               </div>
             )}
           </div>
+
+          {/* Payment QR */}
+          {data.payment_qr && (
+            <div style={{ marginTop: "4mm", display: "flex", justifyContent: "flex-end", gap: "2mm", alignItems: "center" }}>
+              <img
+                src={data.payment_qr}
+                alt={data.payment_qr_label || "Payment QR"}
+                style={{ width: "22mm", height: "22mm", objectFit: "contain", border: "1px solid #d1d5db" }}
+              />
+              {data.payment_qr_label && (
+                <div style={{ fontSize: "8pt", color: "#6b7280", lineHeight: 1.3 }}>
+                  {data.payment_qr_label}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Signature */}
           <div style={{ marginTop: "auto", display: "flex", justifyContent: "flex-end", position: "relative" }}>
@@ -790,6 +957,7 @@ function ChamberSheet({ data }: { data: PrescriptionSheetData }) {
         </div>
         <div style={{ textAlign: "right", fontWeight: 600 }}>
           {doctorLabel}
+          {data.doctor_qualifications ? ` · ${data.doctor_qualifications}` : ""}
           {data.doctor_license ? ` · License ${data.doctor_license}` : ""}
         </div>
       </div>
@@ -1001,11 +1169,14 @@ export function PrescriptionSheet({ data }: { data: PrescriptionSheetData }) {
                   <td style={{ verticalAlign: "top", padding: `${2.5 * L}mm 0` }}>
                     <div style={{ fontWeight: 700 }}>
                       {item.drug_name}
+                      {item.generic_name ? <span style={{ fontWeight: 400, fontStyle: "italic", color: "#6b7280" }}> ({item.generic_name})</span> : null}
                       {item.dosage ? <span style={{ fontWeight: 400 }}> {item.dosage}</span> : null}
                     </div>
                     <div style={{ fontSize: `${9.5 * L}pt`, color: "#334155", marginTop: 1 }}>
                       {[
+                        item.schedule ? DOSE_SCHEDULE_LABELS[item.schedule as keyof typeof DOSE_SCHEDULE_LABELS] : null,
                         item.frequency,
+                        item.meal_relation ? MEAL_RELATION_LABELS[item.meal_relation as keyof typeof MEAL_RELATION_LABELS] : null,
                         item.duration ? `for ${item.duration}` : null,
                         item.instructions,
                       ]
@@ -1045,14 +1216,27 @@ export function PrescriptionSheet({ data }: { data: PrescriptionSheetData }) {
           <div style={{ textAlign: "center" }}>
             <div style={{ borderTop: t.signatureRule, width: "48mm", paddingTop: 2, fontSize: "9pt", color: t.bodyText }}>
               {doctorLabel}
-              {data.doctor_license ? <span style={{ color: t.mutedText }}> · {data.doctor_license}</span> : null}
+              {data.doctor_qualifications ? <span style={{ color: t.mutedText }}> · {data.doctor_qualifications}</span> : null}
+              {data.doctor_license ? <span style={{ color: t.mutedText }}> · License {data.doctor_license}</span> : null}
             </div>
           </div>
         </div>
-        {data.follow_up && (
+        {(data.follow_up || data.follow_up_date) && (
           <div style={{ marginTop: `${6 * L}mm`, fontSize: `${9.5 * L}pt`, color: t.bodyText }}>
             <span style={{ color: t.mutedText }}>Follow-up: </span>
-            {data.follow_up}
+            {data.follow_up_date ? <>{data.follow_up} {data.follow_up_date ? `· ${formatDate(data.follow_up_date)}` : ""}</> : data.follow_up}
+          </div>
+        )}
+        {data.payment_qr && (
+          <div style={{ marginTop: "3mm", display: "flex", justifyContent: "flex-end", gap: "2mm", alignItems: "center" }}>
+            <img
+              src={data.payment_qr}
+              alt={data.payment_qr_label || "Payment QR"}
+              style={{ width: `${20 * L}mm`, height: `${20 * L}mm`, objectFit: "contain", border: "1px solid #d1d5db" }}
+            />
+            {data.payment_qr_label && (
+              <div style={{ fontSize: `${7.5 * L}pt`, color: t.mutedText, lineHeight: 1.3 }}>{data.payment_qr_label}</div>
+            )}
           </div>
         )}
       </div>

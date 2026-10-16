@@ -64,6 +64,7 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
  */
 export const DEFAULT_PROFILE_SETTINGS: Record<string, string> = {
   doctor_name: "",
+  doctor_qualifications: "",
   doctor_specialty: "Dentist",
   clinic_name: "",
   doctor_email: "",

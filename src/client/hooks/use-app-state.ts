@@ -41,6 +41,7 @@ export interface BackupSchedule {
 /** Practice profile (doctor identity) shown on the dashboard and editable in Settings → Profile. */
 export interface ProfileSettings {
   doctor_name: string;
+  doctor_qualifications: string;
   doctor_specialty: string;
   clinic_name: string;
   doctor_email: string;
@@ -81,6 +82,7 @@ export const DEFAULT_PROFILE: ProfileSettings = {
   payment_qr_label: "",
   chamber_footer_instructions: "",
   google_review_url: "",
+  doctor_qualifications: "",
 };
 
 const PROFILE_KEYS = Object.keys(DEFAULT_PROFILE) as (keyof ProfileSettings)[];

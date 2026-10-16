@@ -49,11 +49,104 @@ export type PrescriptionTemplate =
   | "watermark"
   | "two-column";
 
+// Structured clinical fields rendered on the A4 sheet (complaints, vitals,
+// investigations) and the medication schedule/meal-relation model.
+
+export interface ComplaintChip {
+  label: string;
+  duration?: string;
+  site?: string;
+}
+
+export interface Vitals {
+  bp?: string; // e.g. "120/80 mmHg"
+  temperature?: string; // e.g. "98.6°F"
+  pulse?: string; // e.g. "78 bpm"
+  spo2?: string; // e.g. "98%"
+}
+
+export interface Investigation {
+  label: string;
+  result?: string;
+}
+
+export interface RxComplaints {
+  items: ComplaintChip[];
+}
+
+export interface RxVitals {
+  bp?: string;
+  temperature?: string;
+  pulse?: string;
+  spo2?: string;
+}
+
+export interface RxInvestigations {
+  items: Investigation[];
+}
+
+export type MealRelation =
+  | "after meals"
+  | "before meals"
+  | "with food"
+  | "empty stomach"
+  | "any time"
+  | "";
+
+export type DoseSchedule =
+  | "1+0+1"
+  | "1+1+1"
+  | "0+0+1"
+  | "1+0+0"
+  | "0+1+0"
+  | "0+0+0+1"
+  | "1+1+1+1"
+  | "as needed"
+  | "once daily"
+  | "twice daily"
+  | "3x daily"
+  | "4x daily"
+  | "every 6h"
+  | "every 8h"
+  | "every 12h"
+  | "";
+
+export const DOSE_SCHEDULE_LABELS: Record<DoseSchedule, string> = {
+  "": "",
+  "1+0+1": "Morning + Night",
+  "1+1+1": "Morning + Midday + Night",
+  "0+0+1": "Night only",
+  "1+0+0": "Morning only",
+  "0+1+0": "Midday only",
+  "0+0+0+1": "Bedtime only",
+  "1+1+1+1": "4x daily",
+  "as needed": "As needed",
+  "once daily": "Once daily",
+  "twice daily": "Twice daily",
+  "3x daily": "3x daily",
+  "4x daily": "4x daily",
+  "every 6h": "Every 6 hours",
+  "every 8h": "Every 8 hours",
+  "every 12h": "Every 12 hours",
+};
+
+export const MEAL_RELATION_LABELS: Record<MealRelation, string> = {
+  "": "",
+  "after meals": "After meals",
+  "before meals": "Before meals",
+  "with food": "With food",
+  "empty stomach": "Empty stomach",
+  "any time": "Any time",
+};
+
 export interface PrescriptionItem {
   id?: number;
   drug_name: string;
+  generic_name?: string | null;
   dosage?: string | null;
   frequency?: string | null;
+  schedule?: DoseSchedule;
+  meal_relation?: MealRelation;
   duration?: string | null;
   instructions?: string | null;
   sort_order?: number;
@@ -83,6 +176,16 @@ export interface Prescription {
   history?: string | null;
   advice: string | null;
   follow_up: string | null;
+  /** ISO date auto-computed from the follow-up picker (blank when free-text follow-up). */
+  follow_up_date?: string | null;
+  /** Patient gender recorded on this Rx (M/F/Other), blank when not captured. */
+  patient_gender?: string | null;
+  /** Chief-complaint chips captured at prescribing time. */
+  complaints?: RxComplaints | null;
+  /** On-examination vitals captured at prescribing time. */
+  vitals?: RxVitals | null;
+  /** Lab investigations ordered with this Rx. */
+  investigations?: RxInvestigations | null;
   created_at: string;
   practitioner_name?: string | null;
   item_count?: number;
@@ -93,18 +196,65 @@ export interface Prescription {
   patient_medical_alerts?: string | null;
   patient_email?: string | null;
   patient_phone?: string | null;
-}
-
-/** A medicine in the practice's editable formulary (Medicines). */
+}  /** A medicine in the practice's editable formulary (Medicines). */
 export interface Medicine {
   id: number;
   name: string;
+  generic_name?: string | null;
   drug_group?: string | null;
   dosage?: string | null;
   frequency?: string | null;
+  schedule?: string | null;
+  meal_relation?: string | null;
   duration?: string | null;
   instructions?: string | null;
   created_at?: string;
+}
+
+export interface PrescriptionSheetData {
+  clinic_name?: string | null;
+  clinic_address?: string | null;
+  clinic_phone?: string | null;
+  clinic_logo?: string | null;
+  doctor_name: string;
+  doctor_qualifications?: string | null;
+  doctor_specialty?: string | null;
+  doctor_license?: string | null;
+  patient_name: string;
+  patient_id?: number;
+  patient_gender?: string | null;
+  patient_age?: string | null;
+  patient_medical_alerts?: string | null;
+  practitioner_name?: string | null;
+  issued_date: string;
+  template: PrescriptionTemplate;
+  large_print?: boolean;
+  tooth?: string | null;
+  chamber_footer_instructions?: string | null;
+  plan_treatment_name?: string | null;
+  images?: { id: number; label?: string | null; src: string | null }[];
+  diagnosis?: string | null;
+  on_examination?: string | null;
+  history?: string | null;
+  advice?: string | null;
+  follow_up?: string | null;
+  follow_up_date?: string | null;
+  complaints?: RxComplaints | null;
+  vitals?: RxVitals | null;
+  investigations?: RxInvestigations | null;
+  items: {
+    drug_name: string;
+    generic_name?: string | null;
+    dosage?: string | null;
+    frequency?: string | null;
+    schedule?: DoseSchedule;
+    meal_relation?: MealRelation;
+    duration?: string | null;
+    instructions?: string | null;
+  }[];
+  showRxOnly?: boolean;
+  payment_qr?: string | null;
+  payment_qr_label?: string | null;
 }
 
 export interface Operatory {
@@ -137,6 +287,8 @@ export interface TreatmentType {
   created_at: string;
 }
 
+export type PatientGender = "M" | "F" | "O" | "";
+
 export interface Patient {
   id: number;
   first_name: string;
@@ -149,6 +301,7 @@ export interface Patient {
   notes: string | null;
   referral_source: string | null;
   created_at: string;
+  patient_gender?: string | null;
 }
 
 export type AppointmentStatus =

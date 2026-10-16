@@ -238,6 +238,47 @@ async function ensureColumnMigrations(): Promise<void> {
     if (!names.has("image_ids")) {
       await run("ALTER TABLE prescriptions ADD COLUMN image_ids TEXT");
     }
+    if (!names.has("follow_up_date")) {
+      await run("ALTER TABLE prescriptions ADD COLUMN follow_up_date TEXT");
+    }
+    if (!names.has("complaints")) {
+      await run("ALTER TABLE prescriptions ADD COLUMN complaints TEXT");
+    }
+    if (!names.has("vitals")) {
+      await run("ALTER TABLE prescriptions ADD COLUMN vitals TEXT");
+    }
+    if (!names.has("investigations")) {
+      await run("ALTER TABLE prescriptions ADD COLUMN investigations TEXT");
+    }
+    // Patient gender (source of truth for the Rx patient info bar).
+    const patientCols = await query<{ name: string }>("PRAGMA table_info(patients)");
+    if (!patientCols.some((c) => c.name === "patient_gender")) {
+      await run("ALTER TABLE patients ADD COLUMN patient_gender TEXT");
+    }
+    // Medication detail columns: generic / salt name, structured dosing
+    // schedule and meal relation. The prescription INSERTs write these
+    // unconditionally, so a 1.4.20-era database MUST gain them here or every
+    // prescription save fails with "no such column" after the in-app update.
+    const itemCols = await query<{ name: string }>("PRAGMA table_info(prescription_items)");
+    if (!itemCols.some((c) => c.name === "generic_name")) {
+      await run("ALTER TABLE prescription_items ADD COLUMN generic_name TEXT");
+    }
+    if (!itemCols.some((c) => c.name === "schedule")) {
+      await run("ALTER TABLE prescription_items ADD COLUMN schedule TEXT");
+    }
+    if (!itemCols.some((c) => c.name === "meal_relation")) {
+      await run("ALTER TABLE prescription_items ADD COLUMN meal_relation TEXT");
+    }
+    const medCols = await query<{ name: string }>("PRAGMA table_info(medicines)");
+    if (!medCols.some((c) => c.name === "generic_name")) {
+      await run("ALTER TABLE medicines ADD COLUMN generic_name TEXT");
+    }
+    if (!medCols.some((c) => c.name === "schedule")) {
+      await run("ALTER TABLE medicines ADD COLUMN schedule TEXT");
+    }
+    if (!medCols.some((c) => c.name === "meal_relation")) {
+      await run("ALTER TABLE medicines ADD COLUMN meal_relation TEXT");
+    }
     // Databases created before the image module existed need the table.
     await run(`CREATE TABLE IF NOT EXISTS patient_images (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -270,14 +311,34 @@ async function ensureColumnMigrations(): Promise<void> {
     await run(`CREATE TABLE IF NOT EXISTS medicines (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
+      generic_name TEXT,
       drug_group TEXT,
       dosage TEXT,
       frequency TEXT,
+      schedule TEXT,
+      meal_relation TEXT,
       duration TEXT,
       instructions TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`);
     await run("CREATE UNIQUE INDEX IF NOT EXISTS idx_medicines_name ON medicines (name)");
+    // Reusable prescription clinical templates + advice presets.
+    await run(`CREATE TABLE IF NOT EXISTS prescription_templates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      complaints TEXT,
+      vitals TEXT,
+      investigations TEXT,
+      advice TEXT,
+      items TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    await run("CREATE INDEX IF NOT EXISTS idx_prescription_templates_name ON prescription_templates(name)");
+    await run(`CREATE TABLE IF NOT EXISTS prescription_advice_presets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      text TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
     // Databases created before the inventory module existed need the tables.
     await run(`CREATE TABLE IF NOT EXISTS inventory_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -710,6 +771,7 @@ const PatientInput = z.object({
   first_name: z.string().min(1),
   last_name: z.string().min(1),
   date_of_birth: z.string().optional().nullable(),
+  patient_gender: z.string().optional().nullable(),
   email: z.string().optional().nullable(),
   phone: z.string().optional().nullable(),
   address: z.string().optional().nullable(),
@@ -763,8 +825,8 @@ app.post("/api/patients", async (c) => {
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   const d = parsed.data;
   const result = await run(
-    "INSERT INTO patients (first_name, last_name, date_of_birth, email, phone, address, medical_alerts, notes, referral_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    [d.first_name, d.last_name, d.date_of_birth ?? null, d.email ?? null, d.phone ?? null, d.address ?? null, d.medical_alerts ?? null, d.notes ?? null, d.referral_source ?? null],
+    "INSERT INTO patients (first_name, last_name, date_of_birth, patient_gender, email, phone, address, medical_alerts, notes, referral_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [d.first_name, d.last_name, d.date_of_birth ?? null, d.patient_gender ?? null, d.email ?? null, d.phone ?? null, d.address ?? null, d.medical_alerts ?? null, d.notes ?? null, d.referral_source ?? null],
   );
   const row = await get("SELECT * FROM patients WHERE id = ?", [result.lastInsertRowid]);
   return c.json({ patient: row }, 201);
@@ -811,12 +873,20 @@ const PrescriptionInput = z.object({
   history: z.string().optional().nullable(),
   advice: z.string().optional().nullable(),
   follow_up: z.string().optional().nullable(),
+  follow_up_date: z.string().optional().nullable(),
+  patient_gender: z.string().optional().nullable(),
+  complaints: z.string().optional().nullable(),
+  vitals: z.string().optional().nullable(),
+  investigations: z.string().optional().nullable(),
   items: z
     .array(
       z.object({
         drug_name: z.string().min(1),
+        generic_name: z.string().optional().nullable(),
         dosage: z.string().optional().nullable(),
         frequency: z.string().optional().nullable(),
+        schedule: z.string().optional().nullable(),
+        meal_relation: z.string().optional().nullable(),
         duration: z.string().optional().nullable(),
         instructions: z.string().optional().nullable(),
       }),
@@ -831,8 +901,11 @@ const PrescriptionUpdateInput = PrescriptionInput.partial().extend({
     .array(
       z.object({
         drug_name: z.string().min(1),
+        generic_name: z.string().optional().nullable(),
         dosage: z.string().optional().nullable(),
         frequency: z.string().optional().nullable(),
+        schedule: z.string().optional().nullable(),
+        meal_relation: z.string().optional().nullable(),
         duration: z.string().optional().nullable(),
         instructions: z.string().optional().nullable(),
       }),
@@ -855,7 +928,7 @@ async function loadPrescription(id: number) {
   const rx = await get(`
     SELECT rx.*, pr.name as practitioner_name, pr.role as practitioner_role,
            p.first_name as patient_first_name, p.last_name as patient_last_name,
-           p.date_of_birth as patient_date_of_birth, p.medical_alerts as patient_medical_alerts,
+           p.date_of_birth as patient_date_of_birth, p.patient_gender as patient_gender, p.medical_alerts as patient_medical_alerts,
            p.email as patient_email, p.phone as patient_phone,
            tt.name as plan_treatment_name, tt.code as plan_treatment_code
     FROM prescriptions rx
@@ -879,10 +952,13 @@ app.get("/api/patients/:id/prescriptions", async (c) => {
   const id = intParam(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid ID" }, 400);
   const rows = await query(
-    `SELECT rx.*, pr.name as practitioner_name,
+    `SELECT rx.*, p.first_name as patient_first_name, p.last_name as patient_last_name,
+            p.date_of_birth as patient_date_of_birth, p.patient_gender as patient_gender,
+            p.medical_alerts as patient_medical_alerts, pr.name as practitioner_name,
             tt.name as plan_treatment_name,
             (SELECT COUNT(*) FROM prescription_items ri WHERE ri.prescription_id = rx.id) as item_count
      FROM prescriptions rx
+     LEFT JOIN patients p ON p.id = rx.patient_id
      LEFT JOIN practitioners pr ON pr.id = rx.practitioner_id
      LEFT JOIN treatment_plan_items tpi ON tpi.id = rx.plan_item_id
      LEFT JOIN treatment_types tt ON tt.id = tpi.treatment_type_id
@@ -899,6 +975,62 @@ app.get("/api/prescriptions/:id", async (c) => {
   const rx = await loadPrescription(id);
   if (!rx) return c.json({ error: "Not found" }, 404);
   return c.json({ prescription: rx });
+});
+
+/** Generate a new share token for a prescription (practice only). Returns the
+ * token so the UI can open the public share page. Re-issuing replaces any
+ * existing token (a prescription can have at most one live share link). */
+app.post("/api/prescriptions/:id/share", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const existing = await get<{ id: number }>("SELECT id FROM prescriptions WHERE id = ?", [id]);
+  if (!existing) return c.json({ error: "Not found" }, 404);
+  const token = newPrescriptionShareToken();
+  await run("UPDATE prescriptions SET share_token = ?, share_revoked = 0 WHERE id = ?", [token, id]);
+  return c.json({ share_token: token, share_url: `/share/prescription/${token}` });
+});
+
+/** Revoke the public share link for a prescription (practice only). After this,
+ * the token no longer opens the public page. */
+app.post("/api/prescriptions/:id/revoke-share", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const existing = await get<{ id: number }>("SELECT id FROM prescriptions WHERE id = ?", [id]);
+  if (!existing) return c.json({ error: "Not found" }, 404);
+  await run("UPDATE prescriptions SET share_token = NULL, share_revoked = 1 WHERE id = ?", [id]);
+  return c.json({ ok: true });
+});
+
+/** Public, no-auth read for a shared prescription. The token is the random hex
+ * stored in `share_token`; the link is /share/prescription/<token>. A revoked
+ * or missing token returns 404 so the page can show its “not found” state. */
+app.get("/api/prescriptions/share/:token", async (c) => {
+  const token = c.req.param("token");
+  if (!token) return c.json({ error: "Not found" }, 404);
+  const rx = await get<Record<string, unknown>>(
+    `SELECT rx.*, pr.name as practitioner_name, pr.role as practitioner_role,
+            p.first_name as patient_first_name, p.last_name as patient_last_name,
+            p.date_of_birth as patient_date_of_birth, p.medical_alerts as patient_medical_alerts,
+            p.email as patient_email, p.phone as patient_phone,
+            tt.name as plan_treatment_name, tt.code as plan_treatment_code
+     FROM prescriptions rx
+     LEFT JOIN practitioners pr ON pr.id = rx.practitioner_id
+     LEFT JOIN patients p ON p.id = rx.patient_id
+     LEFT JOIN treatment_plan_items tpi ON tpi.id = rx.plan_item_id
+     LEFT JOIN treatment_types tt ON tt.id = tpi.treatment_type_id
+     WHERE rx.share_token = ? AND rx.share_revoked = 0`,
+    [token],
+  );
+  if (!rx) return c.json({ error: "Not found" }, 404);
+  const id = Number(rx.id);
+  const items = await query(
+    "SELECT * FROM prescription_items WHERE prescription_id = ? ORDER BY sort_order, id",
+    [id],
+  );
+  const imageIds = parseImageIds(rx.image_ids);
+  const images = imageIds.length ? await resolveImageRows(imageIds) : [];
+  const out = { ...rx, id, image_ids: imageIds.length ? imageIds : null, items, images };
+  return c.json({ prescription: out });
 });
 
 /** Strip HTML-sensitive characters from interpolated email text. */
@@ -1207,8 +1339,8 @@ app.post("/api/prescriptions", async (c) => {
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   const d = parsed.data;
   const result = await run(
-    `INSERT INTO prescriptions (patient_id, practitioner_id, issued_date, template, large_print, tooth, plan_item_id, diagnosis, on_examination, history, advice, follow_up)
-     VALUES (?, ?, COALESCE(?, date('now')), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO prescriptions (patient_id, practitioner_id, issued_date, template, large_print, tooth, plan_item_id, diagnosis, on_examination, history, advice, follow_up, follow_up_date, patient_gender, complaints, vitals, investigations)
+     VALUES (?, ?, COALESCE(?, date('now')), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       d.patient_id,
       d.practitioner_id ?? null,
@@ -1222,13 +1354,18 @@ app.post("/api/prescriptions", async (c) => {
       d.history ?? null,
       d.advice ?? null,
       d.follow_up ?? null,
+      d.follow_up_date ?? null,
+      d.patient_gender ?? null,
+      d.complaints ?? null,
+      d.vitals ?? null,
+      d.investigations ?? null,
     ],
   );
   const rxId = Number(result.lastInsertRowid);
   for (const [i, item] of d.items.entries()) {
     await run(
-      "INSERT INTO prescription_items (prescription_id, drug_name, dosage, frequency, duration, instructions, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [rxId, item.drug_name, item.dosage ?? null, item.frequency ?? null, item.duration ?? null, item.instructions ?? null, i],
+      "INSERT INTO prescription_items (prescription_id, drug_name, generic_name, dosage, frequency, schedule, meal_relation, duration, instructions, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [rxId, item.drug_name, item.generic_name ?? null, item.dosage ?? null, item.frequency ?? null, item.schedule ?? null, item.meal_relation ?? null, item.duration ?? null, item.instructions ?? null, i],
     );
   }
   await attachPrescriptionImages(rxId, d.patient_id, d.image_ids);
@@ -1247,7 +1384,7 @@ app.put("/api/prescriptions/:id", async (c) => {
 
   const sets: string[] = [];
   const params: unknown[] = [];
-  for (const key of ["practitioner_id", "issued_date", "template", "large_print", "tooth", "plan_item_id", "diagnosis", "on_examination", "history", "advice", "follow_up"] as const) {
+  for (const key of ["practitioner_id", "issued_date", "template", "large_print", "tooth", "plan_item_id", "diagnosis", "on_examination", "history", "advice", "follow_up", "follow_up_date", "patient_gender", "complaints", "vitals", "investigations"] as const) {
     const v = d[key];
     if (v !== undefined) {
       sets.push(`${key} = ?`);
@@ -1262,8 +1399,8 @@ app.put("/api/prescriptions/:id", async (c) => {
     await run("DELETE FROM prescription_items WHERE prescription_id = ?", [id]);
     for (const [i, item] of d.items.entries()) {
       await run(
-        "INSERT INTO prescription_items (prescription_id, drug_name, dosage, frequency, duration, instructions, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [id, item.drug_name, item.dosage ?? null, item.frequency ?? null, item.duration ?? null, item.instructions ?? null, i],
+        "INSERT INTO prescription_items (prescription_id, drug_name, generic_name, dosage, frequency, schedule, meal_relation, duration, instructions, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [id, item.drug_name, item.generic_name ?? null, item.dosage ?? null, item.frequency ?? null, item.schedule ?? null, item.meal_relation ?? null, item.duration ?? null, item.instructions ?? null, i],
       );
     }
   }
@@ -1283,6 +1420,128 @@ app.delete("/api/prescriptions/:id", async (c) => {
 });
 
 // ── Appointments ───────────────────────────────────────────────────
+
+// ── Prescription editor helpers ──────────────────────────────────────
+
+/** Recently used drugs across the practice's prescriptions, for the editor's
+ * quick-add sidebar. Derived from prescription_items ordered by the parent
+ * prescription's created_at (most recent use first), deduplicated by drug name. */
+app.get("/api/prescriptions/recent-drugs", async (c) => {
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10) || 20, 100);
+  const rows = await query<{ drug_name: string; dosage: string | null; frequency: string | null; duration: string | null; instructions: string | null; used_at: string }>(
+    `SELECT ri.drug_name, ri.dosage, ri.frequency, ri.duration, ri.instructions, MAX(rx.created_at) as used_at
+     FROM prescription_items ri
+     JOIN prescriptions rx ON rx.id = ri.prescription_id
+     GROUP BY LOWER(ri.drug_name)
+     ORDER BY used_at DESC
+     LIMIT ?`,
+    [limit],
+  );
+  return c.json({ drugs: rows.map((r) => ({
+    name: r.drug_name,
+    dosage: r.dosage,
+    frequency: r.frequency,
+    duration: r.duration,
+    instructions: r.instructions,
+    used_at: r.used_at,
+  })) });
+});
+
+// ── Advice presets (reusable advice chips) ────────────────────────────
+
+const AdvicePresetInput = z.object({
+  text: z.string().min(1).max(500),
+});
+
+app.get("/api/prescriptions/advice-presets", async (c) => {
+  const rows = await query<{ id: number; text: string; created_at: string }>(
+    "SELECT id, text, created_at FROM prescription_advice_presets ORDER BY created_at DESC",
+  );
+  return c.json({ presets: rows.map((r) => ({ id: r.id, text: r.text })) });
+});
+
+app.post("/api/prescriptions/advice-presets", async (c) => {
+  const parsed = await parseJson(c, AdvicePresetInput);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const d = parsed.data;
+  const existing = await get<{ id: number }>(
+    "SELECT id FROM prescription_advice_presets WHERE LOWER(text) = LOWER(?)",
+    [d.text.trim()],
+  );
+  if (existing) return c.json({ error: "That advice preset already exists" }, 409);
+  const result = await run(
+    "INSERT INTO prescription_advice_presets (text) VALUES (?)",
+    [d.text.trim()],
+  );
+  const row = await get<{ id: number; text: string }>("SELECT id, text FROM prescription_advice_presets WHERE id = ?", [result.lastInsertRowid]);
+  if (!row) return c.json({ error: "Could not read back the created preset" }, 500);
+  return c.json({ preset: { id: row.id, text: row.text } }, 201);
+});
+
+app.delete("/api/prescriptions/advice-presets/:id", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const r = await run("DELETE FROM prescription_advice_presets WHERE id = ?", [id]);
+  if (!r.changes) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true });
+});
+
+// ── Prescription clinical templates (save/load reusable clinical bundles) ──
+
+const PrescriptionTemplateInput = z.object({
+  name: z.string().min(1).max(120),
+  complaints: z.string().optional().nullable(),
+  vitals: z.string().optional().nullable(),
+  investigations: z.string().optional().nullable(),
+  advice: z.string().optional().nullable(),
+  items: z.array(z.object({
+    drug_name: z.string().min(1),
+    generic_name: z.string().optional().nullable(),
+    dosage: z.string().optional().nullable(),
+    frequency: z.string().optional().nullable(),
+    schedule: z.string().optional().nullable(),
+    meal_relation: z.string().optional().nullable(),
+    duration: z.string().optional().nullable(),
+    instructions: z.string().optional().nullable(),
+  })).optional(),
+});
+
+app.get("/api/prescriptions/templates", async (c) => {
+  const rows = await query<{ id: number; name: string; complaints: string | null; vitals: string | null; investigations: string | null; advice: string | null; items: string | null; created_at: string }>(
+    "SELECT id, name, complaints, vitals, investigations, advice, items, created_at FROM prescription_templates ORDER BY created_at DESC",
+  );
+  return c.json({ templates: rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    complaints: r.complaints,
+    vitals: r.vitals,
+    investigations: r.investigations,
+    advice: r.advice,
+    items: r.items,
+  })) });
+});
+
+app.post("/api/prescriptions/templates", async (c) => {
+  const parsed = await parseJson(c, PrescriptionTemplateInput);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const d = parsed.data;
+  const result = await run(
+    `INSERT INTO prescription_templates (name, complaints, vitals, investigations, advice, items)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [d.name.trim(), d.complaints ?? null, d.vitals ?? null, d.investigations ?? null, d.advice ?? null, d.items ? JSON.stringify(d.items) : null],
+  );
+  const row = await get<{ id: number; name: string }>("SELECT id, name FROM prescription_templates WHERE id = ?", [result.lastInsertRowid]);
+  if (!row) return c.json({ error: "Could not read back the created template" }, 500);
+  return c.json({ template: { id: row.id, name: row.name } }, 201);
+});
+
+app.delete("/api/prescriptions/templates/:id", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const r = await run("DELETE FROM prescription_templates WHERE id = ?", [id]);
+  if (!r.changes) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true });
+});
 
 const AppointmentInput = z.object({
   patient_id: z.number().int().nullable().optional(),
@@ -1894,11 +2153,11 @@ function csvResponse(filename: string, rows: unknown[][]): Response {
 
 app.get("/api/export/patients.csv", async (c) => {
   const rows = await query<Record<string, unknown>>(
-    "SELECT id, first_name, last_name, date_of_birth, email, phone, address, medical_alerts, referral_source, created_at FROM patients ORDER BY id",
+    "SELECT id, first_name, last_name, date_of_birth, patient_gender, email, phone, address, medical_alerts, referral_source, created_at FROM patients ORDER BY id",
   );
   return csvResponse("patients.csv", [
-    ["id", "first_name", "last_name", "date_of_birth", "email", "phone", "address", "medical_alerts", "referral_source", "created_at"],
-    ...rows.map((r) => [r.id, r.first_name, r.last_name, r.date_of_birth, r.email, r.phone, r.address, r.medical_alerts, r.referral_source, r.created_at]),
+    ["id", "first_name", "last_name", "date_of_birth", "patient_gender", "email", "phone", "address", "medical_alerts", "referral_source", "created_at"],
+    ...rows.map((r) => [r.id, r.first_name, r.last_name, r.date_of_birth, r.patient_gender, r.email, r.phone, r.address, r.medical_alerts, r.referral_source, r.created_at]),
   ]);
 });
 
@@ -3917,8 +4176,8 @@ app.get("/api/dashboard/consultation", async (c) => {
 
   const patient = await get<{
     id: number; first_name: string; last_name: string; date_of_birth: string | null;
-    medical_alerts: string | null;
-  }>("SELECT id, first_name, last_name, date_of_birth, medical_alerts FROM patients WHERE id = ?", [id]);
+    patient_gender: string | null; medical_alerts: string | null;
+  }>("SELECT id, first_name, last_name, date_of_birth, patient_gender, medical_alerts FROM patients WHERE id = ?", [id]);
   if (!patient) return c.json({ error: "Patient not found" }, 404);
 
   const [lastAppt, conditions] = await Promise.all([
@@ -4763,6 +5022,14 @@ app.get("/api/health", (c) => c.json({ ok: true }));
 
 function newBookingToken(): string {
   const bytes = new Uint8Array(18);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** A prescription share token: 20 random bytes, hex-encoded (40 chars). Long
+ * enough that guessing one is infeasible, short enough to paste into a text. */
+function newPrescriptionShareToken(): string {
+  const bytes = new Uint8Array(20);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }

@@ -431,6 +431,7 @@ export function buildSheetData(
   rx: Prescription,
   profile: {
     doctor_name: string;
+    doctor_qualifications?: string | null;
     doctor_specialty: string;
     doctor_license: string;
     clinic_name: string;
@@ -438,9 +439,20 @@ export function buildSheetData(
     doctor_phone: string;
     clinic_logo?: string;
     chamber_footer_instructions?: string;
+    payment_qr?: string | null;
+    payment_qr_label?: string | null;
   },
 ) {
   const alerts = (rx.patient_medical_alerts ?? "").split(",").map((s) => s.trim()).filter(Boolean).join(", ");
+  const patientGender = (rx.patient_gender ?? "").trim() || undefined;
+  // Clinical fields arrive already parsed from the API (RxComplaints/RxVitals/RxInvestigations);
+  // fall back to empty shapes when absent so the renderers can always iterate safely.
+  const complaints: { items: { label: string; duration?: string; site?: string }[] } =
+    (rx.complaints?.items?.length ? rx.complaints : { items: [] }) ?? { items: [] };
+  const vitals: { bp?: string; temperature?: string; pulse?: string; spo2?: string } =
+    rx.vitals ?? {};
+  const investigations: { items: { label: string; result?: string }[] } =
+    (rx.investigations?.items?.length ? rx.investigations : { items: [] }) ?? { items: [] };
   return {
     clinic_name: profile.clinic_name,
     clinic_address: profile.clinic_address,
@@ -448,9 +460,12 @@ export function buildSheetData(
     clinic_logo: profile.clinic_logo ?? null,
     chamber_footer_instructions: profile.chamber_footer_instructions?.trim() || null,
     doctor_name: profile.doctor_name || "Doctor",
+    doctor_qualifications: profile.doctor_qualifications?.trim() || null,
     doctor_specialty: profile.doctor_specialty,
     doctor_license: profile.doctor_license,
     patient_name: `${rx.patient_first_name ?? ""} ${rx.patient_last_name ?? ""}`.trim() || "Patient",
+    patient_id: rx.patient_id,
+    patient_gender: patientGender || undefined,
     patient_age: ageFromDob(rx.patient_date_of_birth ?? null),
     patient_medical_alerts: alerts || null,
     practitioner_name: rx.practitioner_name ?? null,
@@ -465,7 +480,22 @@ export function buildSheetData(
     history: rx.history ?? null,
     advice: rx.advice,
     follow_up: rx.follow_up,
-    items: rx.items ?? [],
+    follow_up_date: rx.follow_up_date ?? null,
+    complaints: complaints.items.length ? complaints : undefined,
+    vitals: Object.keys(vitals).length ? vitals : undefined,
+    investigations: investigations.items.length ? investigations : undefined,
+    items: (rx.items ?? []).map((it) => ({
+      drug_name: it.drug_name,
+      generic_name: it.generic_name ?? undefined,
+      dosage: it.dosage ?? undefined,
+      frequency: it.frequency ?? undefined,
+      schedule: it.schedule ?? undefined,
+      meal_relation: it.meal_relation ?? undefined,
+      duration: it.duration ?? undefined,
+      instructions: it.instructions ?? undefined,
+    })),
+    payment_qr: profile.payment_qr ?? null,
+    payment_qr_label: profile.payment_qr_label ?? null,
   };
 }
 

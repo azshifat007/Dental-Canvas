@@ -374,15 +374,12 @@ describe("prescription email delivery", () => {
 });
 
 describe("prescription share endpoints", () => {
-  // Sharing is now a PDF *file* through the platform share sheet (client-side),
-  // so the token-link system was removed: no public endpoint, no share routes,
-  // and the schema no longer needs token columns. These tests pin the removal.
-  it("public token endpoint is gone", async () => {
-    const res = await app.request(`/api/public/prescriptions/${"a".repeat(32)}`, undefined, { DB: ctx.db });
-    expect(res.status).toBe(404);
-  });
+  // A prescription can be shared via a public, no-auth link (/share/prescription/<token>).
+  // The token is a random hex string stored in share_token; the public read endpoint
+  // is GET /api/prescriptions/share/:token. Practice staff create/rotate/revoke the link
+  // through the authenticated mutation endpoints.
 
-  it("share create/rotate routes are gone", async () => {
+  it("creates a share token and returns a public URL", async () => {
     const pid = await seedPatient();
     const created = await app.request(
       "/api/prescriptions",
@@ -390,10 +387,123 @@ describe("prescription share endpoints", () => {
       { DB: ctx.db },
     );
     const { prescription } = (await created.json()) as { prescription: { id: number } };
-    const post = await app.request(`/api/prescriptions/${prescription.id}/share`, { method: "POST" }, { DB: ctx.db });
-    expect(post.status).toBe(404);
-    const del = await app.request(`/api/prescriptions/${prescription.id}/share`, { method: "DELETE" }, { DB: ctx.db });
-    expect(del.status).toBe(404);
+
+    const res = await app.request(
+      `/api/prescriptions/${prescription.id}/share`,
+      { method: "POST", headers: { "Content-Type": "application/json" } },
+      { DB: ctx.db },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { share_token: string; share_url: string };
+    expect(body.share_token).toMatch(/^[a-f0-9]{40}$/);
+    expect(body.share_url).toBe(`/share/prescription/${body.share_token}`);
+  });
+
+  it("serves the prescription through the public token endpoint (no auth)", async () => {
+    const pid = await seedPatient();
+    const created = await app.request(
+      "/api/prescriptions",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rxBody(pid)) },
+      { DB: ctx.db },
+    );
+    const { prescription: rx } = (await created.json()) as { prescription: { id: number; items: { drug_name: string }[] } };
+    const tokenRes = await app.request(
+      `/api/prescriptions/${rx.id}/share`,
+      { method: "POST", headers: { "Content-Type": "application/json" } },
+      { DB: ctx.db },
+    );
+    const { share_token } = (await tokenRes.json()) as { share_token: string };
+
+    const pub = await app.request(`/api/prescriptions/share/${share_token}`, undefined, { DB: ctx.db });
+    expect(pub.status).toBe(200);
+    const pubData = (await pub.json()) as { prescription: { id: number; items: { drug_name: string }[]; patient_first_name: string; patient_last_name: string } };
+    expect(pubData.prescription.id).toBe(rx.id);
+    expect(pubData.prescription.items).toHaveLength(2);
+    expect(pubData.prescription.items[0].drug_name).toBe("Amoxicillin");
+    expect(pubData.prescription.patient_first_name).toBe("Grace");
+    expect(pubData.prescription.patient_last_name).toBe("Hopper");
+  });
+
+  it("returns 404 for a bogus token", async () => {
+    const res = await app.request(`/api/prescriptions/share/${"a".repeat(40)}`, undefined, { DB: ctx.db });
+    expect(res.status).toBe(404);
+  });
+
+  it("rotates the token on re-share", async () => {
+    const pid = await seedPatient();
+    const created = await app.request(
+      "/api/prescriptions",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rxBody(pid)) },
+      { DB: ctx.db },
+    );
+    const { prescription: rx } = (await created.json()) as { prescription: { id: number } };
+
+    const first = await app.request(
+      `/api/prescriptions/${rx.id}/share`,
+      { method: "POST", headers: { "Content-Type": "application/json" } },
+      { DB: ctx.db },
+    );
+    const firstToken = (await first.json()) as { share_token: string };
+
+    const second = await app.request(
+      `/api/prescriptions/${rx.id}/share`,
+      { method: "POST", headers: { "Content-Type": "application/json" } },
+      { DB: ctx.db },
+    );
+    const secondToken = (await second.json()) as { share_token: string; share_url: string };
+    expect(secondToken.share_token).not.toBe(firstToken.share_token);
+    expect(secondToken.share_url).toBe(`/share/prescription/${secondToken.share_token}`);
+
+    // The old token no longer opens the page.
+    const old = await app.request(`/api/prescriptions/share/${firstToken.share_token}`, undefined, { DB: ctx.db });
+    expect(old.status).toBe(404);
+    // The new one still works.
+    const fresh = await app.request(`/api/prescriptions/share/${secondToken.share_token}`, undefined, { DB: ctx.db });
+    expect(fresh.status).toBe(200);
+  });
+
+  it("revokes the token so the public page 404s", async () => {
+    const pid = await seedPatient();
+    const created = await app.request(
+      "/api/prescriptions",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rxBody(pid)) },
+      { DB: ctx.db },
+    );
+    const { prescription: rx } = (await created.json()) as { prescription: { id: number } };
+
+    const tokenRes = await app.request(
+      `/api/prescriptions/${rx.id}/share`,
+      { method: "POST", headers: { "Content-Type": "application/json" } },
+      { DB: ctx.db },
+    );
+    const { share_token } = (await tokenRes.json()) as { share_token: string };
+    expect((await app.request(`/api/prescriptions/share/${share_token}`, undefined, { DB: ctx.db })).status).toBe(200);
+
+    const revoke = await app.request(
+      `/api/prescriptions/${rx.id}/revoke-share`,
+      { method: "POST", headers: { "Content-Type": "application/json" } },
+      { DB: ctx.db },
+    );
+    expect(revoke.status).toBe(200);
+
+    const after = await app.request(`/api/prescriptions/share/${share_token}`, undefined, { DB: ctx.db });
+    expect(after.status).toBe(404);
+  });
+
+  it("returns 404 when sharing or revoking a missing prescription", async () => {
+    const share = await app.request(
+      "/api/prescriptions/999999/share",
+      { method: "POST", headers: { "Content-Type": "application/json" } },
+      { DB: ctx.db },
+    );
+    expect(share.status).toBe(404);
+
+    const revoke = await app.request(
+      "/api/prescriptions/999999/revoke-share",
+      { method: "POST", headers: { "Content-Type": "application/json" } },
+      { DB: ctx.db },
+    );
+    expect(revoke.status).toBe(404);
   });
 });
 
