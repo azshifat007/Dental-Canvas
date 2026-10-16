@@ -250,6 +250,12 @@ async function ensureColumnMigrations(): Promise<void> {
     if (!names.has("investigations")) {
       await run("ALTER TABLE prescriptions ADD COLUMN investigations TEXT");
     }
+    // Gender snapshot written by the prescription INSERT/UPDATE (reads still
+    // join patients for the current value, but the column must exist or every
+    // write fails on databases created before it).
+    if (!names.has("patient_gender")) {
+      await run("ALTER TABLE prescriptions ADD COLUMN patient_gender TEXT");
+    }
     // Patient gender (source of truth for the Rx patient info bar).
     const patientCols = await query<{ name: string }>("PRAGMA table_info(patients)");
     if (!patientCols.some((c) => c.name === "patient_gender")) {

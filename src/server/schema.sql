@@ -347,6 +347,7 @@ CREATE TABLE IF NOT EXISTS prescriptions (
   advice TEXT,                          -- general instructions to the patient
   follow_up TEXT,                       -- e.g. 'Recheck in 2 weeks'
   follow_up_date TEXT,                  -- ISO date auto-computed from the follow-up picker
+  patient_gender TEXT,                  -- M/F/Other snapshot at issue time (patients stays source of truth)
   complaints TEXT,                      -- JSON {items:[{label,duration?,site?}]} chief-complaint chips
   vitals TEXT,                          -- JSON {bp?, temperature?, pulse?, spo2?} on-examination vitals
   investigations TEXT,                  -- JSON {items:[...]} ordered lab tests
