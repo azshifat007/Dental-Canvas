@@ -20,12 +20,15 @@ Supported packages: .deb, .rpm, .AppImage, .dmg (raw + zlib scan), .exe
 from __future__ import annotations
 
 import argparse
+import gzip
+import io
+import lzma
 import pathlib
 import re
 import shutil
-import struct
 import subprocess
 import sys
+import tarfile
 import tempfile
 import zipfile
 import zlib
@@ -58,6 +61,75 @@ def fresh_dir(base: pathlib.Path, name: str) -> pathlib.Path:
     return out
 
 
+def _decompress_payload(payload: bytes) -> bytes | None:
+    """gunzip / unxz / unzstd a package payload — first format that works."""
+    try:
+        return gzip.decompress(payload)
+    except Exception:
+        pass
+    try:
+        return lzma.decompress(payload)
+    except Exception:
+        pass
+    if shutil.which("zstd"):
+        try:
+            p = subprocess.run(["zstd", "-dc"], input=payload, capture_output=True, check=True)
+            return p.stdout
+        except Exception:
+            pass
+    return None
+
+
+def _members_bin_blobs(tf: tarfile.TarFile) -> list[bytes]:
+    """Large usr/bin binaries inside a tar — the Tauri frontend carrier."""
+    out: list[bytes] = []
+    for m in tf.getmembers():
+        # Tar members may be prefixed with "./" depending on the builder.
+        base = m.name[2:] if m.name.startswith("./") else m.name
+        if m.isfile() and base.startswith("usr/bin/") and m.size > 1_000_000:
+            f = tf.extractfile(m)
+            if f is not None:
+                out.append(f.read())
+    return out
+
+
+def _tar_bin_blobs(payload: bytes) -> list[bytes]:
+    out: list[bytes] = []
+    try:
+        with tarfile.open(fileobj=io.BytesIO(payload)) as tf:
+            out.extend(_members_bin_blobs(tf))
+    except tarfile.TarError:
+        pass
+    return out
+
+
+def _cpio_bin_blobs(payload: bytes) -> list[bytes]:
+    """usr/bin binaries from a cpio newc archive. The newc header fields are
+    ASCII HEX (not binary) and both the name and the data are padded to
+    4-byte boundaries — the original struct.unpack("<Q") read destroyed the
+    offsets after the first entry, so .rpm verification silently found
+    nothing and then crashed in the unknown-suffix fallthrough."""
+    out: list[bytes] = []
+    pos = 0
+    while pos + 110 <= len(payload) and payload[pos:pos + 6] == b"070701":
+        try:
+            fields = [int(payload[pos + 6 + i * 8: pos + 14 + i * 8], 16) for i in range(13)]
+        except ValueError:
+            break
+        filesize, namesize = fields[6], fields[11]
+        name_start = pos + 110
+        name = payload[name_start:name_start + max(namesize - 1, 0)].decode("latin-1", "replace")
+        if name == "TRAILER!!!":
+            break
+        data_start = (name_start + namesize + 3) & ~3
+        data_end = min(data_start + filesize, len(payload))
+        base = name[2:] if name.startswith("./") else name
+        if base.startswith("usr/bin/") and filesize > 1_000_000:
+            out.append(payload[data_start:data_end])
+        pos = (data_end + 3) & ~3
+    return out
+
+
 def binary_blobs(pkg: pathlib.Path) -> list[bytes]:
     """Return the raw binary blob(s) inside a package that can embed assets."""
     # All shellouts below run with cwd= extraction dirs, so the package path
@@ -65,131 +137,82 @@ def binary_blobs(pkg: pathlib.Path) -> list[bytes]:
     pkg = pkg.resolve()
     suffix = pkg.suffix.lower()
     if suffix == ".deb":
-        blobs = []
-        # Debian .deb (both legacy `ar` + gzipped sub-archives AND modern
-        # format-2.0 paxtar) carry every embedded asset inside `data.tar.gz`/
-        # `data.tar.zst`. We read the payloads ourselves instead of shelling
-        # out to GNU ar/tar, because binutils on the Ubuntu runner mishandles
-        # the newer format and the installed `tar` varies (bug caught on the
-        # v1.4.20 verify run: `ar: ... not a valid archive` or `tar:
-        # data.tar.gz: Cannot open`). Pure stdlib is deterministic everywhere.
+        blobs: list[bytes] = []
+        # Debian .deb (legacy `ar` + compressed data.tar.* AND modern
+        # format-2.0 paxtar) carry every embedded asset inside `data.tar.*`.
+        # We read the payloads ourselves instead of shelling out to GNU ar/tar,
+        # because binutils on the Ubuntu runner mishandles the newer format and
+        # the installed `tar` varies (bug caught on the v1.4.20 verify run).
+        # Pure stdlib is deterministic everywhere.
         try:
-            import tarfile, gzip, lzma, io
-            # 1) Try Python tarfile directly on the whole .deb first (handles a
-            #    raw tar/pax payload that some builders emit without ar wrapping).
-            try:
-                with tarfile.open(pkg) as tf:
-                    for m in tf.getmembers():
-                        if m.name.startswith("data.tar") or m.name.startswith("usr/bin"):
-                            f = tf.extractfile(m)
-                            if f is not None and m.size > 1_000_000:
-                                blobs.append(f.read())
-                if blobs:
-                    return blobs
-            except tarfile.TarError:
-                pass
-
-            # 2) GNU `ar` archive: !<arch>\n entries `debian-binary`,
-            #    `control.tar.gz`, `data.tar.gz`. Read each member and its
-            #    (possibly gzip-compressed) byte payload ourselves.
             buf = pkg.read_bytes()
             if buf.startswith(b"!<arch>"):
-                # Parse the ar global header + member headers (ASCII, 8+12+8+8+8
-                # = 40 bytes per member, padded to even).
-                idx = 8  # skip leading "!<arch>\n"
+                # ar member header: name[16] mtime[12] uid[6] gid[6] mode[8]
+                # size[10] fmag[2]. The size is a 10-byte ASCII DECIMAL — the
+                # original code read it with a binary struct.unpack at the
+                # wrong offset, which corrupted every subsequent member offset
+                # and silently turned each .deb verification into a no-op WARN.
+                idx = 8
                 while idx + 60 <= len(buf):
                     name = buf[idx:idx + 16].rstrip(b" \n").decode("latin-1")
-                    size = struct.unpack("<Q", buf[idx + 16:idx + 24])[0]
-                    idx += 40
+                    size = int(buf[idx + 48:idx + 58].strip() or b"0", 10)
+                    idx += 60
+                    if name.startswith("data.tar"):
+                        dec = _decompress_payload(buf[idx:idx + size])
+                        if dec is not None:
+                            blobs.extend(_tar_bin_blobs(dec))
+                    idx += size
                     if idx % 2 == 1:
-                        idx += 1  # ar pads to even; skip the extra byte
-                    if name in ("data.tar.gz", "control.tar.gz"):
-                        member = buf[idx:idx + size]
-                        idx += size
-                        # Member payload may itself be gzip-compressed (format 2.0).
-                        try:
-                            payload = gzip.decompress(member)
-                        except gzip.errors.GzipError:
-                            payload = member
-                        # Pull out `usr/bin/<content-hashed>.js` from the data tar.
-                        try:
-                            with tarfile.open(fileobj=io.BytesIO(payload)) as tf:
-                                for m in tf.getmembers():
-                                    if m.name.startswith("usr/bin/") and m.size > 1_000_000:
-                                        f = tf.extractfile(m)
-                                        if f is not None:
-                                            blobs.append(f.read())
-                        except tarfile.TarError:
-                            pass
-                    elif name in ("debian-binary", "control.tar.gz"):
-                        idx += size
-                    else:
-                        # Unknown member (e.g. long-name GNU extension or foreign
-                        # archives). Skip defensively.
-                        idx += size
-                        if idx % 2 == 1:
-                            idx += 1
+                        idx += 1  # ar pads members to even
+            if blobs:
                 return blobs
         except Exception:
             # Never hard-fail on a .deb: zero recognizable payloads is a soft
             # failure reported downstream, not a crash.
             return blobs
 
-        # 3) Plain tar/pax archive (format 2.0 without ar wrapper).
+        # Fallback: plain tar/pax archive (format 2.0 without ar wrapper).
         try:
             with tarfile.open(pkg) as tf:
-                for m in tf.getmembers():
-                    if m.name.startswith("usr/bin/") and m.size > 1_000_000:
-                        f = tf.extractfile(m)
-                        if f is not None:
-                            blobs.append(f.read())
-            return blobs
+                blobs.extend(_members_bin_blobs(tf))
         except tarfile.TarError:
-            return blobs
+            pass
+        return blobs
     if suffix == ".rpm":
-        blobs = []
-        # RPM: header + a (usually gzip-compressed) cpio archive. We read the
-        # gzip ourselves instead of shelling out to 7z, because this runner's
-        # 7z writes the decompressed cpio with a truncated/corrupt header
+        # RPM: header + a compressed cpio archive. Read the payload compression
+        # ourselves instead of shelling out to 7z, because this runner's 7z
+        # writes the decompressed cpio with a truncated/corrupt header
         # (observed on the v1.4.20 verify run) and hard-fails with `Data
-        # Error`. Pure stdlib gzip + cpio parsing is deterministic.
+        # Error`. Known suffixes must always RETURN (possibly empty) — the
+        # original block parsed newc's ASCII-hex fields as binary (destroying
+        # every offset after the first entry), found nothing, and fell through
+        # to the unknown-suffix crash (`don't know how to inspect`).
+        blobs: list[bytes] = []
         try:
-            import gzip, io, struct, tarfile
             data = pkg.read_bytes()
-            # Locate the cpio.gz: RPM is `headersize + [pad] + cpio.gz`.
-            # Scan for the gzip magic (0x1f 0x8b) and decompress from there.
-            idx = data.find(b"\x1f\x8b")
-            if idx != -1:
-                gz = gzip.decompress(data[idx:])
-                # cpio new ASCII format: each entry is `magic(6) name(12)... ` +
-                # header (110 bytes) + filename + \0, then file data, then \0.
-                pos = 0
-                while pos + 110 <= len(gz):
-                    magic = gz[pos:pos + 6].decode("latin-1")
-                    if magic != "070701":
+            payload = None
+            for magic, decompress in ((b"\x1f\x8b", gzip.decompress), (b"\xfd7zXZ\x00", lzma.decompress)):
+                at = data.find(magic)
+                if at != -1:
+                    try:
+                        payload = decompress(data[at:])
                         break
-                    cname = gz[pos + 6:pos + 16].rstrip(b" \0").decode("latin-1")
-                    csize = struct.unpack("<Q", gz[pos + 16:pos + 24])[0]
-                    cmaj = struct.unpack("<Q", gz[pos + 24:pos + 32])[0]
-                    cmin = struct.unpack("<Q", gz[pos + 32:pos + 40])[0]
-                    cdevmajor = struct.unpack("<Q", gz[pos + 40:pos + 48])[0]
-                    cdevminor = struct.unpack("<Q", gz[pos + 48:pos + 56])[0]
-                    cpad = struct.unpack("<Q", gz[pos + 56:pos + 64])[0]
-                    cfilesize = struct.unpack("<Q", gz[pos + 64:pos + 72])[0]
-                    cchksum = struct.unpack("<Q", gz[pos + 72:pos + 80])[0]
-                    cname_end = gz.find(b"\0", pos + 110)
-                    cname = gz[pos + 110:cname_end].decode("latin-1")
-                    cdata_start = cname_end + 1
-                    cdata_end = cdata_start + cfilesize
-                    if cname.startswith("usr/bin/") and cfilesize > 1_000_000:
-                        blobs.append(gz[cdata_start:cdata_end])
-                    pos = cdata_end + 1
-                    if pos % 2 == 1:
-                        pos += 1
-            if blobs:
-                return blobs
+                    except Exception:
+                        payload = None
+            if payload is None and shutil.which("zstd"):
+                at = data.find(b"\x28\xb5\x2f\xfd")
+                if at != -1:
+                    try:
+                        payload = subprocess.run(
+                            ["zstd", "-dc"], input=data[at:], capture_output=True, check=True
+                        ).stdout
+                    except Exception:
+                        payload = None
+            if payload is not None:
+                blobs.extend(_cpio_bin_blobs(payload))
         except Exception:
-            return blobs
+            pass
+        return blobs
     if suffix == ".appimage":
         # Downloads (esp. from a subseted `gh release download`) often drop
         # the exec bit or come truncated; tolerate that instead of hard-failing.
