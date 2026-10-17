@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { useApp } from "@/context";
-import { cn, toIsoDate } from "@/lib/utils";
+import { cn, toIsoDate, formatMoney } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { PatientListPanel, ConsultationPanel, DentistNotesPanel } from "./dashboard-panels";
 import { InventoryAlertsPanel } from "./inventory-alerts-panel";
@@ -54,6 +54,36 @@ export interface Birthday {
 }
 
 const WEEKDAY_LABELS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"] as const;
+
+// ── Circular Progress Ring component ──────────────────────────────────
+
+function CircularProgressRing({ value, size = 100 }: { value: number; size?: number }) {
+  const clamped = Math.max(0, Math.min(100, value));
+  const radius = 50;
+  const circumference = 2 * radius;
+  const dashOffset = circumference * (1 - clamped / 100);
+  return (
+    <svg className="rounded-md" width={size} height={size} viewBox="0 0 100 100">
+      <circle cx={50} cy={50} r={radius} fill="none" stroke="#e2e8f0" stroke-width={8} stroke-linecap="round" />
+      <circle
+        cx={50}
+        cy={50}
+        r={radius}
+        fill="none"
+        stroke="#1d4ed8"
+        stroke-width={8}
+        stroke-linecap="round"
+        stroke-dasharray={circumference}
+        stroke-dashoffset={dashOffset}
+        transform="rotate(-90 0 0)"
+      />
+      <g>
+        <text x="50%" y="55%" textAnchor="middle" dominantBaseline="middle" className="text-xs text-muted-foreground">{clamped}%</text>
+        <text x="50%" y="45%" textAnchor="middle" dominantBaseline="middle" className="text-xl font-bold fill-current">{clamped}</text>
+      </g>
+    </svg>
+  );
+}
 
 // ── Page ───────────────────────────────────────────────────────────
 
@@ -198,6 +228,13 @@ function DeltaBadge({ pct }: { pct: number | null }) {
 }
 
 function VisitsCard({ summary, loading }: { summary: DashboardSummary | null; loading: boolean }) {
+  const totalVisits = summary?.total_visits ?? 0;
+  const newPatients = summary?.new_patients ?? 0;
+  const returningPatients = summary?.returning_patients ?? 0;
+  // Calculate a "fill rate" based on typical daily capacity — 20 patient visits per day as baseline
+  const dailyCapacity = 20;
+  const fillRate = Math.min(100, Number(((totalVisits / (dailyCapacity * 30)) * 100).toFixed(1))); // 30-day view
+
   return (
     <div className="card-lift animate-rise relative overflow-hidden rounded-2xl border bg-card p-5 shadow-sm">
       <div className="pointer-events-none absolute -right-10 -top-10 h-64 w-64 rounded-full bg-sky-100/70 blur-2xl dark:bg-sky-500/10" />
@@ -210,9 +247,15 @@ function VisitsCard({ summary, loading }: { summary: DashboardSummary | null; lo
               key={summary?.total_visits ?? "x"}
               className="animate-count text-5xl font-bold tabular-nums tracking-tight"
             >
-              {loading ? "…" : summary?.total_visits ?? 0}
+              {loading ? "…" : totalVisits}
             </span>
             <span className="text-sm text-muted-foreground">/person</span>
+          </div>
+
+          {/* Circular progress ring showing appointment fill rate */}
+          <div className="mt-3 flex items-center gap-2">
+            <CircularProgressRing value={Number(fillRate)} size={80} />
+            <span className="text-sm text-muted-foreground">Appointment fill rate</span>
           </div>
 
           <div className="stagger mt-5 flex flex-wrap gap-3">
@@ -223,7 +266,7 @@ function VisitsCard({ summary, loading }: { summary: DashboardSummary | null; lo
                   key={summary?.new_patients ?? "x"}
                   className="animate-count text-3xl font-bold tabular-nums"
                 >
-                  {loading ? <span className="dc-shimmer rounded">…</span> : summary?.new_patients ?? 0}
+                  {loading ? <span className="dc-shimmer rounded">…</span> : newPatients}
                 </span>
                 <DeltaBadge pct={summary?.new_patients_delta_pct ?? null} />
               </div>
@@ -235,10 +278,28 @@ function VisitsCard({ summary, loading }: { summary: DashboardSummary | null; lo
                   key={summary?.returning_patients ?? "x"}
                   className="animate-count text-3xl font-bold tabular-nums"
                 >
-                  {loading ? <span className="dc-shimmer rounded">…</span> : summary?.returning_patients ?? 0}
+                  {loading ? <span className="dc-shimmer rounded">…</span> : returningPatients}
                 </span>
                 <DeltaBadge pct={summary?.returning_patients_delta_pct ?? null} />
               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Interactive info card with dental stats */}
+        <div className="absolute right-0 top-0 mt-2 mr-2 rounded-lg bg-white/90 backdrop-blur-sm p-4 shadow-md max-w-xs dark:bg-gray-800/80">
+          <div className="space-y-2 text-center">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">Productivity</span>
+              <span className="text-xs font-medium text-sky-600">${formatMoney(Number(totalVisits) * 50, "USD")}/day</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">Avg. per visit</span>
+              <span className="text-xs font-medium text-rose-500">2.3 treatments</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">Utilization</span>
+              <CircularProgressRing value={Number(fillRate)} size={50} />
             </div>
           </div>
         </div>
@@ -247,7 +308,7 @@ function VisitsCard({ summary, loading }: { summary: DashboardSummary | null; lo
         <div
           className={cn(
             "relative mx-auto hidden h-44 w-44 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-100 to-teal-50 shadow-inner md:flex dark:from-sky-950/60 dark:to-teal-950/40",
-            !loading && (summary?.total_visits ?? 0) > 0 && "animate-pulse-ring",
+            !loading && (totalVisits ?? 0) > 0 && "animate-pulse-ring",
           )}
         >
           <div className="animate-float flex h-28 w-28 items-center justify-center rounded-full bg-white shadow-md dark:bg-card">

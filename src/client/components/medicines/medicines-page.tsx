@@ -20,7 +20,7 @@ export function MedicinesPage() {
           needs THIS element to be position:relative — its height no longer
           depends on the flex/height chain above it at all. (Two earlier
           flex-only fixes still failed to scroll on some Windows installs.) */}
-      <div className="relative min-h-0 flex-1 overflow-hidden">
+      <div className="relative min-h-0 flex-1 overflow-y-auto">
         <MedicinesTab />
       </div>
     </div>
