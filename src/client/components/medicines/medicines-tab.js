@@ -103,12 +103,13 @@ export function MedicinesTab() {
         }
     }
     return (
-    // Height comes from absolute inset-0 inside the relative wrapper in
-    // medicines-page — a definite height that no ancestor flex quirk can
-    // break (two flex-only fixes still didn't scroll on Windows).
-    // force-scrollbar keeps the scrollbar visible at all times (Windows 11
-    // overlay scrollbars otherwise hide until hover).
-    _jsxs("div", { className: "force-scrollbar absolute inset-0 flex flex-col gap-3 overflow-y-auto p-4", children: [_jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [_jsxs("div", { className: "relative w-64", children: [_jsx(Search, { className: "pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" }), _jsx(Input, { value: query, onChange: (e) => setQuery(e.target.value), placeholder: "Search medicines\u2026", className: "pl-8" })] }), _jsxs("span", { className: "text-sm text-muted-foreground", children: [app.medicines.length, " medicine", app.medicines.length === 1 ? "" : "s"] }), _jsxs(Button, { size: "sm", className: "ml-auto", onClick: openAdd, children: [_jsx(Plus, { className: "h-4 w-4" }), " Add medicine"] })] }), _jsx("p", { className: "text-sm text-muted-foreground", children: "This list feeds the medicine suggestions when writing a prescription. Presets include a standard adult regimen that fills the prescription row when picked \u2014 everything stays editable there." }), _jsx(Card, { className: "flex flex-col overflow-hidden", children: _jsx(CardContent, { className: "p-0", children: filtered.length === 0 ? (_jsxs("div", { className: "flex flex-col items-center gap-2 p-10 text-center text-muted-foreground", children: [_jsx(Pill, { className: "h-6 w-6" }), app.medicines.length === 0
+    // Scroll area fills the parent flex container (min-h-0 flex-1
+    // overflow-y-auto from medicines-page). No absolute positioning —
+    // that conflicted with the parent's own overflow and clipped the
+    // list on some Windows installs. force-scrollbar keeps the scrollbar
+    // visible at all times (Windows 11 overlay scrollbars otherwise hide
+    // until hover).
+    _jsxs("div", { className: "force-scrollbar flex flex-col gap-3 overflow-y-auto p-4", children: [_jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [_jsxs("div", { className: "relative w-64", children: [_jsx(Search, { className: "pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" }), _jsx(Input, { value: query, onChange: (e) => setQuery(e.target.value), placeholder: "Search medicines\u2026", className: "pl-8" })] }), _jsxs("span", { className: "text-sm text-muted-foreground", children: [app.medicines.length, " medicine", app.medicines.length === 1 ? "" : "s"] }), _jsxs(Button, { size: "sm", className: "ml-auto", onClick: openAdd, children: [_jsx(Plus, { className: "h-4 w-4" }), " Add medicine"] })] }), _jsx("p", { className: "text-sm text-muted-foreground", children: "This list feeds the medicine suggestions when writing a prescription. Presets include a standard adult regimen that fills the prescription row when picked \u2014 everything stays editable there." }), _jsx(Card, { className: "flex flex-col overflow-hidden", children: _jsx(CardContent, { className: "p-0", children: filtered.length === 0 ? (_jsxs("div", { className: "flex flex-col items-center gap-2 p-10 text-center text-muted-foreground", children: [_jsx(Pill, { className: "h-6 w-6" }), app.medicines.length === 0
                                 ? "No medicines yet — add the drugs your practice prescribes most."
                                 : "No medicines match that search."] })) : (_jsx("ul", { className: "divide-y", children: filtered.map((m) => {
                             const group = m.drug_group || "Other";

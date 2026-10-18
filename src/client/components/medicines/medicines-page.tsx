@@ -16,11 +16,12 @@ export function MedicinesPage() {
           The drugs your practice prescribes — they power the prescription editor&apos;s suggestions.
         </p>
       </div>
-      {/* The tab sizes itself with absolute inset-0 (see below), which only
-          needs THIS element to be position:relative — its height no longer
-          depends on the flex/height chain above it at all. (Two earlier
-          flex-only fixes still failed to scroll on some Windows installs.) */}
-      <div className="relative min-h-0 flex-1 overflow-y-auto">
+      {/* Scroll area: flex child with min-h-0 so it shrinks below its
+          content's intrinsic height and lets overflow-y-auto scroll the
+          list. Mirrors whats-new-page / setup-wizard / sidebar patterns
+          that scroll reliably on Windows (where overlay scrollbars hide
+          until hover without force-scrollbar). */}
+      <div className="force-scrollbar min-h-0 flex-1 overflow-y-auto p-4">
         <MedicinesTab />
       </div>
     </div>
