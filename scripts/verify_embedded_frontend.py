@@ -179,16 +179,28 @@ def binary_blobs(pkg: pathlib.Path) -> list[bytes]:
             pass
         return blobs
     if suffix == ".rpm":
-        # RPM: header + a compressed cpio archive. Read the payload compression
-        # ourselves instead of shelling out to 7z, because this runner's 7z
-        # writes the decompressed cpio with a truncated/corrupt header
-        # (observed on the v1.4.20 verify run) and hard-fails with `Data
-        # Error`. Known suffixes must always RETURN (possibly empty) — the
-        # original block parsed newc's ASCII-hex fields as binary (destroying
-        # every offset after the first entry), found nothing, and fell through
-        # to the unknown-suffix crash (`don't know how to inspect`).
+        # RPM: header + a compressed cpio archive. Try 7z first (it handles
+        # truncated gzip streams that Python's gzip module rejects), then fall
+        # back to native decompression. Known suffixes must always RETURN
+        # (possibly empty) — never crash with `don't know how to inspect`.
         blobs: list[bytes] = []
         try:
+            # Prefer 7z: it tolerates RPMs whose embedded cpio.gz lacks the
+            # final gzip trailer bytes (observed on the v1.4.20 verify run).
+            # 7z may return non-zero when the cpio is truncated but still
+            # extracts the file, so we check for extracted files instead.
+            if shutil.which("7z"):
+                with tempfile.TemporaryDirectory() as td:
+                    subprocess.run(
+                        ["7z", "x", "-y", f"-o{td}", str(pkg)],
+                        capture_output=True,
+                    )
+                    for f in pathlib.Path(td).rglob("*"):
+                        if f.is_file() and f.stat().st_size > 1_000_000:
+                            blobs.append(f.read_bytes())
+                if blobs:
+                    return blobs
+            # Native fallback: find and decompress the cpio.gz payload ourselves.
             data = pkg.read_bytes()
             payload = None
             for magic, decompress in ((b"\x1f\x8b", gzip.decompress), (b"\xfd7zXZ\x00", lzma.decompress)):
@@ -302,6 +314,11 @@ def main() -> int:
             # `gh release download` or a flaky CI cache can never block the
             # gate — the real verify result is the embedded-frontend match.
             print(f"WARN {pkg.name}: file not found, skipping")
+            continue
+        # Signature files (.sig) are not packages; skip them silently so a
+        # glob like `*.rpm` that also matches `*.rpm.sig` never reaches the
+        # inspector (which would reject them as unknown suffixes).
+        if pkg.suffix.lower() == ".sig" or pkg.name.endswith(".sig"):
             continue
         blobs = binary_blobs(pkg)
         if not blobs:
