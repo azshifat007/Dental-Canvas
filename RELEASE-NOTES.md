@@ -1,3 +1,51 @@
+# Dental Canvas v1.4.23
+
+Released 2026-10-21.
+
+## Medicines list scrolls (for real this time)
+
+The medicines list has been reported as non-scrolling four times, and the last
+three fixes never reached anyone. The cause was not CSS: committed compiled
+files — `medicines-tab.js` and `medicines-page.js` — sat next to their `.tsx`
+sources, and Vite resolves `.js` **before** `.tsx`. Every edit landed in the
+`.tsx` while the bundle kept compiling the stale `.js`. `tsc` never noticed,
+because it does not read the `.js` at all.
+
+- The stray `.js` files are gone. The list now uses one bounded scroll area:
+  the search field, count and **Add medicine** button stay fixed at the top and
+  only the formulary scrolls, so the list can never clip without a scrollbar.
+- New `scripts/check-shadowed-sources.mjs` fails the build (and CI) when any
+  `.js`/`.mjs`/`.cjs` file shadows a `.ts`/`.tsx` of the same name, so a
+  generated file can never silently replace a source again.
+
+If you are on an old desktop build, this is the release that finally contains
+the working layout.
+
+## "Stuck on an old version" machines now heal themselves
+
+The in-app updater used to swallow every failure and then report "You're on
+the latest version", which is how a Windows install could sit on v1.4.10 while
+the releases page showed v1.4.22.
+
+- Update checks now fall back to the GitHub releases API when the Tauri
+  updater fails, so the app can still see that a newer version exists.
+- Failures are reported in Settings → About and in a banner, never hidden:
+  the last error and the last check time are both shown.
+- Three outcomes, each with the action that actually works:
+  - **Download & install** — the signed in-app updater handles it.
+  - **Download installer** — this install cannot update itself; opens the
+    right installer for the OS on the releases page (`api.github.com` added to
+    the CSP `connect-src`).
+  - **Repair & reload** — the binary is already current but the page is served
+    from a stale service-worker cache; clears the shell cache and worker
+    (patient data lives in IndexedDB and is untouched).
+- An update that is available is now visible outside Settings, with a dismiss
+  that remembers the version.
+
+## Also
+
+- `Cargo.lock` now tracks the release version (it had drifted to 1.4.21).
+
 # Dental Canvas v1.4.20
 
 Released 2026-10-04. Six packages built and verified green in CI

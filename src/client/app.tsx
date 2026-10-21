@@ -7,6 +7,7 @@ import { Sidebar } from "./components/sidebar";
 import { MobileTopBar, BottomNav } from "./components/mobile-nav";
 import { ErrorBanner } from "./components/error-banner";
 import { UpdateAppliedBanner } from "./components/update-applied-banner";
+import { UpdateAvailableBanner } from "./components/update-available-banner";
 import { Toaster } from "./components/ui/toast";
 import { useAutoBackup } from "./hooks/use-auto-backup";
 import { isTauriDesktop } from "./offline/activate";
@@ -217,6 +218,7 @@ export function App() {
         {!isPrintRoute && <BottomNav route={route} navigate={navigate} />}
         <ErrorBanner />
         <UpdateAppliedBanner />
+        <UpdateAvailableBanner />
         <Toaster />
       </div>
       <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} navigate={navigate} />

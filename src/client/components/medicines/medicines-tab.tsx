@@ -118,14 +118,14 @@ export function MedicinesTab() {
   }
 
   return (
-    // Scroll area fills the parent flex container (min-h-0 flex-1
-    // overflow-y-auto from medicines-page). No absolute positioning —
-    // that conflicted with the parent's own overflow and clipped the
-    // list on some Windows installs. force-scrollbar keeps the scrollbar
-    // visible at all times (Windows 11 overlay scrollbars otherwise hide
-    // until hover).
-    <div className="force-scrollbar flex flex-col gap-3 overflow-y-auto p-4">
-      <div className="flex flex-wrap items-center gap-2">
+    // Height contract: the parent page gives this root a bounded height
+    // (min-h-0 flex-1). The controls stay fixed; ONLY the list card scrolls,
+    // so the search field can never be pushed off-screen and the list can
+    // never be clipped without a scrollbar. force-scrollbar keeps the
+    // scrollbar drawn permanently (Windows 11 hides overlay scrollbars until
+    // hover, which reads as "this list does not scroll").
+    <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
         <div className="relative w-64">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search medicines…" className="pl-8" />
@@ -137,15 +137,16 @@ export function MedicinesTab() {
           <Plus className="h-4 w-4" /> Add medicine
         </Button>
       </div>
-      <p className="text-sm text-muted-foreground">
+      <p className="shrink-0 text-sm text-muted-foreground">
         This list feeds the medicine suggestions when writing a prescription. Presets include a standard adult
         regimen that fills the prescription row when picked — everything stays editable there.
       </p>
 
-      {/* The card grows to its content inside the scrolling wrapper; no
-          nested min-h-0/overflow chain that can collapse and clip. */}
-      <Card className="flex flex-col overflow-hidden">
-        <CardContent className="p-0">
+      {/* Card is a flex column with a bounded height (min-h-0 flex-1); its
+          body is the one scrolling element. A plain block here (or a second
+          nested scroller) is what broke this list in earlier releases. */}
+      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <CardContent className="force-scrollbar min-h-0 flex-1 overflow-y-auto p-0">
           {filtered.length === 0 ? (
             <div className="flex flex-col items-center gap-2 p-10 text-center text-muted-foreground">
               <Pill className="h-6 w-6" />

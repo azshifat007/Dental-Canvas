@@ -26,6 +26,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Vite resolves .js before .ts/.tsx, so a stray compiled file next to a
+      # source silently replaces it (the medicines scroll fix shipped four
+      # times as a no-op this way). Fail fast, before the build.
+      - name: sources are not shadowed by compiled .js
+        run: node scripts/check-shadowed-sources.mjs
+
       - name: typecheck
         run: pnpm exec tsc --noEmit
 
