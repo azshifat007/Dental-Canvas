@@ -59,6 +59,19 @@ check("two-column template string is present in the bundle", () => {
   return hits.length > 0;
 });
 
+check("medicines list ships its bounded scroll layout", () => {
+  // The medicines page was "fixed" three releases in a row without the fix
+  // ever reaching the bundle (a stale .js shadowed the .tsx). Assert the
+  // shipped markup, not just the source: the list body must be the single
+  // bounded scroll area under fixed controls.
+  const chunks = distChunks();
+  const contents = chunks.map((f) => fs.readFileSync(path.join("dist/assets", f), "utf8"));
+  const scroller = contents.some((c) => c.includes("force-scrollbar min-h-0 flex-1 overflow-y-auto p-0"));
+  const hoverText = contents.some((c) => c.includes("This list feeds the medicine suggestions"));
+  console.log(`   -> medicines scroll body + copy present: ${scroller && hoverText}`);
+  return scroller && hoverText;
+});
+
 check("template-shake side-effect import keeps template symbols alive in source", () => {
   const sheet = fs.readFileSync("src/client/components/prescriptions/prescription-sheet.tsx", "utf8");
   const shake = fs.readFileSync("src/client/components/prescriptions/template-shake.mjs", "utf8");
