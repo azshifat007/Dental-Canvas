@@ -11,6 +11,8 @@
     "desktop:build": "tauri build",
     "db:migrate": "wrangler d1 execute dental-canvas-db --local --file=src/server/schema.sql",
     "build": "node scripts/check-shadowed-sources.mjs && node scripts/check-scroll-layout.mjs && vite build && vite build --mode sw",
+    "repro": "node scripts/repro-build.mjs",
+    "manifest": "node scripts/build-manifest.mjs dist",
     "lint:layout": "node scripts/check-scroll-layout.mjs",
     "lint:sources": "node scripts/check-shadowed-sources.mjs",
     "test": "vitest run",

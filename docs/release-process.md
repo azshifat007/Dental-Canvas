@@ -16,7 +16,12 @@ How to ship a new Windows installer version.
 npx tsc --noEmit   # typecheck
 npx vitest run     # tests
 npm run build      # builds app + sw.js with precache manifest
+npm run repro      # two builds must be byte-identical (docs/reproducible-builds.md)
 ```
+
+The `repro` check prints a `rootHash`; after the release is published you can
+compare it against the release's `repro-manifest.json` to prove your local
+build is the same software CI shipped.
 
 ## Ship
 
@@ -57,8 +62,9 @@ Note: if you add Rust dependencies (`src-tauri/Cargo.toml`), don't commit Cargo.
    Commit the notes with `gh release edit v1.4.20 --title "Dental Canvas v1.4.20"
    --notes "$(cat RELEASE-NOTES.md)"` after the tag is pushed.
 
-5. Verify-and-publish: the embedded-frontend hash check and `latest.json`
-   feed cross-check run automatically in CI. The download step of the
+5. Verify-and-publish: the embedded-frontend hash check, the `latest.json`
+   feed cross-check, and publishing of `repro-manifest.json` + `SHA256SUMS` run
+   automatically in CI. The download step of the
    verify job must use `--pattern` to fetch every package artifact (a plain
    `gh release download` silently drops some assets, which would make the
    verify gate report `file not found` on a valid build).

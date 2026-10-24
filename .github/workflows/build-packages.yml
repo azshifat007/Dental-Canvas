@@ -17,6 +17,13 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      # Pins SOURCE_DATE_EPOCH (commit time, not the runner clock), TZ, locale
+      # and the Rust path remapping, so rebuilding this tag reproduces the same
+      # bytes. See docs/reproducible-builds.md.
+      - name: Pin reproducible build environment
+        shell: bash
+        run: source scripts/repro-env.sh
+
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -94,6 +101,9 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Pin reproducible build environment
+        run: source scripts/repro-env.sh
+
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -157,6 +167,9 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Pin reproducible build environment
+        run: source scripts/repro-env.sh
+
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -217,6 +230,9 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+
+      - name: Pin reproducible build environment
+        run: source scripts/repro-env.sh
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -574,10 +590,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y p7zip-full binutils
 
+      - name: Pin reproducible build environment
+        run: source scripts/repro-env.sh
+
+      # Built with the pinned environment above, so this dist/ is the reference
+      # every package is checked against and its manifest is published with
+      # the release for developers to compare against.
       - name: Build the reference frontend
         run: |
           npm run build
           echo "Reference build entry chunk: $(grep -o 'index-[A-Za-z0-9_-]*\.js' dist/index.html | head -1)"
+          node scripts/build-manifest.mjs dist --out repro-manifest.json --label "${{ runner.os }}-${{ runner.arch }}"
+
+      # The manifest published below is only useful if rebuilding this tag
+      # reproduces it, so prove that here too: a second build of the same commit
+      # must match the reference dist/ byte for byte.
+      - name: Assert the reference frontend rebuilds identically
+        run: node scripts/repro-build.mjs --baseline dist
 
       - name: Download all release assets
         env:
@@ -621,6 +650,24 @@ jobs:
               assert "signature" in feed["platforms"][plat], f"{plat} missing updater signature"
           print("latest.json OK:", feed["version"], sorted(feed["platforms"]))
           PY
+
+      # Checksums + manifest turn "did CI and I build the same app?" into a
+      # single comparison instead of eyeballing file sizes: rebuild the tag with
+      # `npm run repro` and diff your rootHash against repro-manifest.json.
+      - name: Write release checksums
+        run: |
+          cd verify
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' \
+            | sort | xargs sha256sum > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attach checksums and build manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            verify/SHA256SUMS repro-manifest.json \
+            --clobber --repo "${GITHUB_REPOSITORY}"
 
       - name: Publish the release
         env:

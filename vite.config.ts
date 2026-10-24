@@ -14,14 +14,21 @@ import pkg from "./package.json";
  * is injected into the emitted sw.js after the bundle is known.
  */
 function offlineSwPlugin(): Plugin {
+  // Resolved from the actual Vite config (not hardcoded) so a build can be
+  // redirected with --outDir — scripts/repro-build.mjs relies on that to build
+  // twice into separate directories and compare the bytes.
+  let outDir = path.resolve(__dirname, "dist");
   return {
     name: "offline-sw",
     apply: "build",
     enforce: "post",
+    configResolved(config) {
+      outDir = path.resolve(config.root, config.build.outDir);
+    },
     // closeBundle runs after ALL outputs are emitted, so the manifest sees the
     // full asset list (generateBundle fires per-entry and would race).
     closeBundle() {
-      const swPath = path.resolve(__dirname, "dist/sw.js");
+      const swPath = path.join(outDir, "sw.js");
       let swCode: string;
       try {
         swCode = readFileSync(swPath, "utf8");
@@ -32,14 +39,14 @@ function offlineSwPlugin(): Plugin {
       // fetches /sql-wasm.wasm, and the precache manifest below makes it
       // available with zero network.
       const wasmSrc = path.resolve(__dirname, "node_modules/sql.js/dist/sql-wasm.wasm");
-      const wasmDst = path.resolve(__dirname, "dist/sql-wasm.wasm");
+      const wasmDst = path.join(outDir, "sql-wasm.wasm");
       try {
         writeFileSync(wasmDst, readFileSync(wasmSrc));
       } catch {
         // Not fatal — first offline boot without wasm degrades to an error
         // screen, but a normal install always has the module.
       }
-      const dir = path.resolve(__dirname, "dist");
+      const dir = outDir;
       const walk = (rel: string): string[] => {
         const abs = path.join(dir, rel);
         const out: string[] = [];
@@ -51,7 +58,11 @@ function offlineSwPlugin(): Plugin {
         }
         return out;
       };
-      const assets = walk("").filter((n) => n !== "/sw.js");
+      // Sorted: readdirSync returns entries in filesystem order (ext4, APFS
+      // and NTFS all differ), which made sw.js — and therefore every package
+      // embedding it — differ between machines. A stable order makes the
+      // precache manifest byte-identical everywhere.
+      const assets = walk("").filter((n) => n !== "/sw.js").sort();
       const manifest = ["/index.html", ...assets];
       // The minifier renames the import — match any `x=["/index.html"]` and
       // keep the same identifier name via the capture.

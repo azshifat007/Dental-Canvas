@@ -23,6 +23,16 @@ tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-single-instance = "2"
 
+# Reproducible release binaries: incremental caches embed timestamps, and
+# parallel codegen units let two builds of the same commit lay code out
+# differently. Both are disabled for releases, and scripts/repro-env.sh remaps
+# the build directory so panic locations carry no absolute paths.
+# Symbols are left intact — some platforms load the crate's exported JNI
+# entry points by name.
+[profile.release]
+codegen-units = 1
+incremental = false
+
 [target."cfg(any(target_os = \"macos\", target_os = \"windows\", target_os = \"linux\"))".dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"

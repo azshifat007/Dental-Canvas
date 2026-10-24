@@ -48,3 +48,70 @@ jobs:
       # into dist (they are runtime-selected, so bundler pruning is the risk).
       - name: verify print template in build output
         run: node scripts/verify-two-column-ci.mjs
+
+  # ── Reproducible frontend ─────────────────────────────────────────────────
+  # Every release package embeds dist/, so two builds of one commit must be
+  # byte-identical or a local build can never be compared with a shipped
+  # artifact. Each runner below builds dist/ twice into separate directories
+  # and fails on a single differing byte; reproducible-cross-os then asserts
+  # the Windows and Linux results are identical to each other.
+  #
+  # A developer reproduces this locally with `npm run repro`, which prints the
+  # same rootHash that the release publishes in repro-manifest.json.
+  reproducible-frontend:
+    name: reproducible frontend (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build twice and compare the bytes
+        run: node scripts/repro-build.mjs
+
+      - name: Upload build manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: repro-${{ matrix.os }}
+          path: |
+            .repro/manifest.json
+            .repro/SHA256SUMS
+          if-no-files-found: error
+
+  reproducible-cross-os:
+    name: reproducible cross-OS
+    needs: reproducible-frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # download-artifact places each artifact in its own directory, so the
+      # two manifests cannot overwrite one another.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: repro-*
+          path: .repro-matrix
+
+      - name: Compare the Windows and Linux builds
+        run: |
+          node scripts/build-manifest.mjs --compare \
+            .repro-matrix/repro-ubuntu-latest/manifest.json \
+            .repro-matrix/repro-windows-latest/manifest.json
