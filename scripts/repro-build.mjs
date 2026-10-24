@@ -70,6 +70,16 @@ function pinnedEnv(epoch) {
   };
 }
 
+/** Files git does not track — they exist locally but not in CI's checkout. */
+function untrackedFiles() {
+  const r = spawnSync("git", ["ls-files", "--others", "--exclude-standard"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  });
+  if (r.status !== 0) return [];
+  return r.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+}
+
 function run(cmd, args, env) {
   const r = spawnSync(cmd, args, {
     cwd: REPO_ROOT,
@@ -111,6 +121,20 @@ function main(argv) {
   const epoch = commitEpoch();
   const env = pinnedEnv(epoch);
   console.log(`reproducible build check (SOURCE_DATE_EPOCH=${epoch})`);
+
+  // Both runs see the same tree, so they still agree — but Tailwind scans the
+  // working directory for class names, so an untracked file (an extracted .deb,
+  // a scratch .html) changes the CSS hash and the build will not match CI's
+  // clean checkout. Say so instead of leaving a mystery rootHash.
+  const untracked = untrackedFiles();
+  if (untracked.length > 0) {
+    const sample = untracked.slice(0, 3).join(", ") + (untracked.length > 3 ? ", …" : "");
+    console.warn(
+      `note: ${untracked.length} untracked path(s) in this tree (${sample}).\n` +
+        `      Tailwind scans them, so this rootHash will differ from CI for the same commit.\n` +
+        `      Re-run from a clean checkout to compare with a release manifest.`,
+    );
+  }
 
   // Same pre-flight guards `npm run build` runs, so this cannot pass on a tree
   // whose normal build would fail.

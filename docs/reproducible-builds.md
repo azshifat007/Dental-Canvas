@@ -45,6 +45,12 @@ reproducible build check (SOURCE_DATE_EPOCH=1792604464)
 `--keep` retains both trees so the differing files can be inspected.
 `.repro/` is gitignored.
 
+Run it on a clean checkout when you intend to compare the result with a
+release: Tailwind scans the working directory for class names, so an untracked
+file — an extracted `.deb` tree, a scratch HTML page — changes the CSS hash and
+therefore `sw.js` and the entry chunk. The script warns when it sees untracked
+paths for exactly that reason.
+
 ## Comparing with a release
 
 Each release publishes two extra assets:
