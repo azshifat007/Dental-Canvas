@@ -25,7 +25,7 @@
  *    rejects the header, so it is only added for `s3` or MinIO-style buckets).
  */
 
-import { query } from "./db";
+import { get, query } from "./db";
 import { DEFAULT_STORAGE_SETTINGS } from "./seed";
 
 export const IMAGE_KINDS = ["xray", "intraoral", "panoramic", "photo"] as const;
@@ -113,16 +113,37 @@ export function isDbStorage(s: StorageSettings): boolean {
 }
 
 /**
+ * True when the real bytes for `fileKey` are stored in the database. Bucket
+ * uploads never touch this table, so a hit means the file is served by the app
+ * itself — including files a backup import restored into an install that
+ * otherwise uses a bucket.
+ */
+export async function hasDatabaseFile(fileKey: string): Promise<boolean> {
+  const row = await get<{ file_key: string }>(
+    "SELECT file_key FROM patient_image_blobs WHERE file_key = ?",
+    [fileKey],
+  ).catch(() => null);
+  // The adapter returns undefined (not null) for "no row" — treat both as miss.
+  return row != null;
+}
+
+/**
  * Public display/GET URL for a stored object. DB-backed images are served
  * through the app proxy (same origin, so printing/Pdf works without the
  * cross-origin data-URL dance); bucket images use the public base URL if one
  * is set, otherwise a short-lived presigned GET. Returns null only when
  * storage is switched fully off ("none").
+ *
+ * Database bytes win over the bucket even when a bucket is configured: an
+ * imported backup restores image bytes into the database, and a presigned
+ * bucket URL for an object the bucket never received would 404 — the restored
+ * x-ray would silently vanish from the gallery.
  */
 export async function storageUrlForFile(fileKey: string): Promise<string | null> {
   const s = await readStorageSettings();
   if (!isStorageConfigured(s)) return null;
   if (isDbStorage(s)) return dbFileUrl(fileKey);
+  if (await hasDatabaseFile(fileKey)) return dbFileUrl(fileKey);
   if (s.publicBaseUrl) return `${s.publicBaseUrl}/${encodePath(fileKey)}`;
   const signed = await presignFile("GET", fileKey, s).catch(() => null);
   return signed?.url ?? null;

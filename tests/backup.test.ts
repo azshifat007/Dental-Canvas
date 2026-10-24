@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestContext, freshApp, jsonRequest, type TestContext } from "./helpers";
 
 let ctx: TestContext;
@@ -595,6 +595,134 @@ describe("backup includes patient image bytes", () => {
     const serve = await app.request(`/api/image-file?key=${encodeURIComponent(img.key)}`, undefined, { DB: ctx.db });
     expect(serve.status).toBe(200);
     expect(new Uint8Array(await serve.arrayBuffer())).toEqual(imageBytes);
+  });
+});
+
+// ── Bucket-backed images (s3/r2) ───────────────────────────────────
+// With a bucket provider the browser uploads straight to the bucket, so
+// `patient_image_blobs` stays empty. The export has to pull the real bytes in,
+// or an import restores image rows pointing at objects that aren't there.
+describe("bucket-backed patient images", () => {
+  const PUBLIC_BASE = "https://cdn.dental.test";
+  const imageBytes = new Uint8Array([10, 20, 30, 240, 250, 5, 6, 7]);
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** Point storage at an R2-style bucket with a public read base URL. */
+  async function useBucketStorage() {
+    const res = await app.request(
+      "/api/storage/config",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "r2",
+          endpoint: "https://r2.dental.test",
+          region: "auto",
+          bucket: "dental-canvas",
+          access_key_id: "AKIDEXAMPLE",
+          secret_access_key: "secret",
+          public_base_url: PUBLIC_BASE,
+        }),
+      },
+      { DB: ctx.db },
+    );
+    expect(res.status).toBe(200);
+  }
+
+  /** Register metadata for a file the browser already PUT into the bucket. */
+  async function registerBucketImage(patientId: number, key: string): Promise<void> {
+    const fin = jsonRequest("POST", `/api/patients/${patientId}/images`, {
+      files: [{ key, mime_type: "image/jpeg", size_bytes: imageBytes.byteLength, kind: "xray", label: "BW 12" }],
+    });
+    const res = await app.request(fin.path, fin.init, { DB: ctx.db });
+    expect(res.status).toBe(201);
+    // Nothing reached the database — this is the bucket-only state.
+    expect(await rawBlobRow(key)).toBeNull();
+  }
+
+  function stubBucket(): string[] {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      calls.push(url);
+      if (!url.startsWith(`${PUBLIC_BASE}/`)) return new Response("not found", { status: 404 });
+      return new Response(imageBytes, { status: 200, headers: { "Content-Type": "image/jpeg" } });
+    });
+    return calls;
+  }
+
+  it("downloads the real file into the export and restores it on import", async () => {
+    const pid = await seedPracticeData();
+    await useBucketStorage();
+    const key = `patients/${pid}/2026/10/bucket-xray.jpg`;
+    await registerBucketImage(pid, key);
+
+    const calls = stubBucket();
+    const payload = (await fetchExport()) as {
+      tables: { patient_images: { file_key: string }[]; patient_image_blobs: { file_key: string; data_base64: string }[] };
+      image_files: { file_key: string; mime_type: string; created_at: string; data_base64: string }[];
+    };
+
+    // The bucket object was fetched by its public URL …
+    expect(calls).toContain(`${PUBLIC_BASE}/${key}`);
+    // … and the export carries the real bytes for that image.
+    expect(payload.image_files).toHaveLength(1);
+    expect(payload.image_files[0]).toMatchObject({ file_key: key, mime_type: "image/jpeg" });
+    const decoded = Uint8Array.from(atob(payload.image_files[0].data_base64), (ch) => ch.charCodeAt(0));
+    expect(decoded).toEqual(imageBytes);
+    // Metadata still travels in its own table (restore order depends on it).
+    expect(payload.tables.patient_images).toHaveLength(1);
+
+    // Import into the same install after losing every copy of the image data.
+    await ctx.db.prepare("DELETE FROM patient_image_blobs").run();
+    await ctx.db.prepare("DELETE FROM patient_images").run();
+    const imp = await app.request(
+      "/api/backup/import",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
+      { DB: ctx.db },
+    );
+    expect(imp.status).toBe(200);
+    const impData = (await imp.json()) as { restored: { patient_image_blobs: number; patient_images: number } };
+    expect(impData.restored.patient_images).toBe(1);
+    expect(impData.restored.patient_image_blobs).toBe(1);
+
+    // The bytes are real again and served by the app even though the provider
+    // is still the bucket (a presigned bucket URL would 404 for this object).
+    const blob = await rawBlobRow(key);
+    expect(blob).not.toBeNull();
+    const restored = blob!.data instanceof ArrayBuffer ? new Uint8Array(blob!.data) : Uint8Array.from(blob!.data as number[]);
+    expect(restored).toEqual(imageBytes);
+
+    const served = await app.request(`/api/image-file?key=${encodeURIComponent(key)}`, undefined, { DB: ctx.db });
+    expect(served.status).toBe(200);
+    expect(new Uint8Array(await served.arrayBuffer())).toEqual(imageBytes);
+
+    const list = await app.request(`/api/patients/${pid}/images`, undefined, { DB: ctx.db });
+    const { images } = (await list.json()) as { images: { file_key: string; url: string }[] };
+    expect(images).toHaveLength(1);
+    expect(images[0].file_key).toBe(key);
+    expect(images[0].url).toContain("/api/image-file?key=");
+  });
+
+  it("keeps exporting when the bucket cannot serve a file", async () => {
+    const pid = await seedPracticeData();
+    await useBucketStorage();
+    const key = `patients/${pid}/2026/10/unreachable.jpg`;
+    await registerBucketImage(pid, key);
+
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("bucket offline");
+    });
+
+    const payload = (await fetchExport()) as {
+      tables: { patients: unknown[]; patient_images: { file_key: string }[] };
+      image_files: unknown[];
+    };
+    // The unreadable object is skipped, but the backup itself is still valid.
+    expect(payload.image_files).toHaveLength(0);
+    expect(payload.tables.patients).toHaveLength(1);
+    expect(payload.tables.patient_images).toHaveLength(1);
   });
 });
 

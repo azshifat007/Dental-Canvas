@@ -44,8 +44,8 @@ import {
   snapshotsStats,
   validateBackupPayload,
   isPayloadTooLarge,
+  MAX_IMPORT_BYTES,
   countRows,
-  restoreImageFileBytes,
   type BackupPayload,
 } from "./backup";
 import {
@@ -3911,7 +3911,7 @@ app.post("/api/backup/import", async (c) => {
     return c.json({ error: "Could not read request body" }, 400);
   }
   if (isPayloadTooLarge(bodyText)) {
-    return c.json({ error: "Backup file too large (limit 64 MB)" }, 413);
+    return c.json({ error: `Backup file too large (limit ${Math.round(MAX_IMPORT_BYTES / 1024 / 1024)} MB)` }, 413);
   }
 
   let raw: unknown;
@@ -3924,9 +3924,9 @@ app.post("/api/backup/import", async (c) => {
   if (!validated.ok) return c.json({ error: validated.error }, 400);
 
   // Verify the real image bytes survived the round-trip: import restores every
-  // file_key in image_files into patient_image_blobs, and the restore path
-  // (`restoreImageFileBytes`) only needs the portable tables for the FK-safe
-  // row counts. The snapshot + Drive copy carry the full export.
+  // file_key in image_files into patient_image_blobs (`restoreFromBackup` does
+  // the decoding), so the portable tables only carry metadata. The snapshot +
+  // Drive copy carry the full export.
   const keep = (await getSettingsForBackup()).auto_backup_keep;
 
   // Safety net: snapshot current state BEFORE destructive import so a bad
@@ -3935,8 +3935,8 @@ app.post("/api/backup/import", async (c) => {
 
   const payload = validated.data as BackupPayload;
   // Restore real image bytes first, then the portable tables (parents before
-  // children, FK-safe).
-  await restoreImageFileBytes(payload);
+  // children, FK-safe) — both are handled inside restoreFromBackup, which
+  // decodes image_files into patient_image_blobs before inserting rows.
   const counts = await restoreFromBackup(payload);
 
   return c.json({
@@ -3957,9 +3957,8 @@ app.post("/api/backup/snapshots/:id/restore", async (c) => {
   // Safety net before rolling back to the snapshot.
   await createSnapshot("manual", "pre-restore", keep);
 
-  // Restore real image bytes first, then the portable tables (parents before
-  // children, FK-safe).
-  await restoreImageFileBytes(payload);
+  // restoreFromBackup decodes image_files into patient_image_blobs before
+  // inserting the portable tables (parents before children, FK-safe).
   const counts = await restoreFromBackup(payload);
   return c.json({ ok: true, restored: counts });
 });
