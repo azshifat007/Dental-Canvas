@@ -38,6 +38,16 @@ jobs:
       - name: build
         run: pnpm run build
 
+      # The built stylesheet must match the class set the last release shipped
+      # (scripts/stylesheet-classes.txt). A class that appears without anyone
+      # writing it means the scan reached files it should not — an extracted
+      # package tree, a scratch file inside src/, a widened @source root — and
+      # it would ship silently otherwise, changing the CSS hash and rootHash.
+      # `pnpm run build` runs the same guard, so a local build fails too; this
+      # step makes the result a named CI check instead of build-log tail.
+      - name: stylesheet classes match the last release
+        run: pnpm run lint:classes
+
       # Required, not continue-on-error: the suite is green (271 tests) and a
       # red suite must block the push like any other failure.
       - name: tests

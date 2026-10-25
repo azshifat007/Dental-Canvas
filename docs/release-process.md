@@ -15,13 +15,28 @@ How to ship a new Windows installer version.
 ```bash
 npx tsc --noEmit   # typecheck
 npx vitest run     # tests
-npm run build      # builds app + sw.js with precache manifest
+npm run build      # builds app + sw.js, then checks the stylesheet class set
 npm run repro      # two builds must be byte-identical (docs/reproducible-builds.md)
 ```
 
+`npm run build` ends with the stylesheet class guard: the built CSS must match the
+class snapshot of the previous release (`scripts/stylesheet-classes.txt`). If you
+changed styling on purpose, refresh it in the same commit and check the diff names
+only classes your change introduced:
+
+```bash
+npm run styles:write && git diff scripts/stylesheet-classes.txt
+```
+
+A class arriving without anyone writing it means the Tailwind scan reached files
+it should not (see `docs/inspecting-a-release.md`); do not paper over it by
+rewriting the snapshot.
+
 The `repro` check prints a `rootHash`; after the release is published you can
 compare it against the release's `repro-manifest.json` to prove your local
-build is the same software CI shipped.
+build is the same software CI shipped. To look inside a published package,
+follow [inspecting-a-release.md](inspecting-a-release.md) — unpack it in a temp
+directory, never in the checkout.
 
 ## Ship
 

@@ -52,6 +52,17 @@ extracted in the repo root for inspection — a `.deb`'s `usr/` tree, an AppImag
 `squashfs-root/`, a scratch HTML page — cannot change the CSS or the hash. A new
 untracked file *inside* those roots still can, and the script warns about it.
 
+Unpack packages in a temp directory, not the checkout — see
+[inspecting-a-release.md](inspecting-a-release.md).
+
+When the scan *does* change, the failure is otherwise silent: a different class
+set means a different `index-*.css`, a different `sw.js` and a different
+`rootHash`, all while every build still succeeds. `npm run lint:classes` (run by
+`npm run build` and the CI verify job) compares the built class set against
+`scripts/stylesheet-classes.txt` — the classes the previous release shipped — and
+names every class that appeared or disappeared, so the cause is one line of output
+instead of a hash mismatch discovered later.
+
 ## Comparing with a release
 
 Each release publishes two extra assets:
