@@ -6,15 +6,13 @@
 # @source roots in src/client/styles.css (they must stay src/ and
 # index.html) and look for stray files inside src/.
 #
-# source: main @ 1eb0d5b (2026-10-25)
-# note: after the Tailwind source pinning (v1.4.22 payload drop)
-# classes: 1461
--bottom-16
+# source: main @ 8e0f763 (2026-10-25)
+# note: dashboard progress rings redesigned (ProgressRing/MiniStatRing)
+# classes: 1445
 -left-1
 -mt-1
 -mx-1
--right-10
--top-10
+-rotate-90
 -top-[3px]
 -translate-x-1/2
 -translate-y-1/2
@@ -142,7 +140,6 @@ bg-secondary
 bg-sidebar
 bg-sidebar-accent
 bg-sky-100
-bg-sky-100/70
 bg-sky-200
 bg-sky-300
 bg-sky-400
@@ -166,7 +163,6 @@ bg-slate-700
 bg-slate-800
 bg-slate-900
 bg-teal-100
-bg-teal-100/60
 bg-teal-200
 bg-teal-300
 bg-teal-400
@@ -192,7 +188,6 @@ bg-white/10
 bg-white/15
 bg-white/90
 block
-blur-2xl
 border
 border-2
 border-amber-100
@@ -374,7 +369,6 @@ dark:bg-fuchsia-700
 dark:bg-fuchsia-800
 dark:bg-fuchsia-900
 dark:bg-fuchsia-950/60
-dark:bg-gray-800/80
 dark:bg-orange-100
 dark:bg-orange-200
 dark:bg-orange-300
@@ -409,7 +403,6 @@ dark:bg-sky-300
 dark:bg-sky-400
 dark:bg-sky-50
 dark:bg-sky-500
-dark:bg-sky-500/10
 dark:bg-sky-600
 dark:bg-sky-700
 dark:bg-sky-800
@@ -437,7 +430,6 @@ dark:bg-teal-300
 dark:bg-teal-400
 dark:bg-teal-50
 dark:bg-teal-500
-dark:bg-teal-500/10
 dark:bg-teal-600
 dark:bg-teal-700
 dark:bg-teal-800
@@ -549,7 +541,6 @@ dark:border-violet-700
 dark:border-violet-800
 dark:border-violet-900
 dark:from-sky-950/30
-dark:from-sky-950/60
 dark:hover:bg-emerald-900
 dark:hover:bg-pink-950/70
 dark:hover:bg-sky-400
@@ -736,7 +727,6 @@ dark:text-violet-600
 dark:text-violet-700
 dark:text-violet-800
 dark:text-violet-900
-dark:to-teal-950/40
 data-[disabled]:opacity-50
 data-[disabled]:pointer-events-none
 data-[placeholder]:text-muted-foreground
@@ -752,6 +742,7 @@ data-[state=open]:animate-in
 data-[state=open]:fade-in-0
 data-[state=open]:zoom-in-95
 data-[state=selected]:bg-muted
+dc-ring-arc
 dc-shimmer
 disabled:cursor-not-allowed
 disabled:opacity-40
@@ -796,7 +787,6 @@ font-normal
 font-semibold
 force-scrollbar
 from-primary/10
-from-sky-100
 from-sky-50/60
 gap-0
 gap-0.5
@@ -806,7 +796,7 @@ gap-2
 gap-2.5
 gap-3
 gap-4
-gap-6
+gap-5
 gap-x-3
 gap-x-5
 gap-x-6
@@ -821,6 +811,7 @@ grid-cols-7
 group
 group-focus-within:opacity-100
 group-hover:opacity-100
+group-hover:scale-105
 h-1.5
 h-10
 h-11
@@ -831,14 +822,11 @@ h-2
 h-2.5
 h-20
 h-24
-h-28
 h-3
 h-3.5
 h-4
-h-44
 h-5
 h-6
-h-64
 h-7
 h-8
 h-9
@@ -962,13 +950,10 @@ mb-1
 mb-2
 mb-3
 mb-4
-md:block
 md:bottom-6
 md:flex
 md:flex-row
 md:hidden
-md:items-center
-md:justify-between
 md:p-6
 md:px-6
 md:text-sm
@@ -976,7 +961,6 @@ min-h-0
 min-h-[80px]
 min-h-screen
 min-w-0
-min-w-[150px]
 min-w-[64px]
 min-w-[8rem]
 min-w-[var(--radix-select-trigger-width)]
@@ -1087,7 +1071,6 @@ resize
 right-0
 right-2
 right-2.5
-right-24
 right-3
 right-4
 ring
@@ -1202,9 +1185,9 @@ running
 scale-110
 select-none
 selected
+self-center
 shadow
 shadow-2xl
-shadow-inner
 shadow-lg
 shadow-md
 shadow-sm
@@ -1239,6 +1222,7 @@ sm:max-w-none
 sm:max-w-sm
 sm:max-w-xl
 sm:rounded-lg
+sm:self-auto
 sm:space-x-2
 sm:text-left
 space-y-0
@@ -1255,6 +1239,7 @@ stagger
 start
 static
 sticky
+stroke-muted
 table
 tabular-nums
 text-2xl
@@ -1386,7 +1371,6 @@ text-white/60
 text-xl
 text-xs
 to-background
-to-teal-50
 to-transparent
 toast-in
 toast-out
@@ -1398,6 +1382,7 @@ top-4
 top-[15%]
 top-[50%]
 touch-none
+tracking-[0.16em]
 tracking-tight
 tracking-wide
 tracking-wider
@@ -1423,7 +1408,6 @@ w-1.5
 w-10
 w-11
 w-12
-w-14
 w-16
 w-2
 w-2.5

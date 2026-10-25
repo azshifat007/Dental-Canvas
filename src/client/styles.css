@@ -334,6 +334,14 @@ html.a11y-reduce-motion *::after {
   animation-delay: calc(var(--stagger-i, 0) * 90ms + 150ms);
 }
 
+/* Progress ring sweep: the component renders the arc empty on mount and this
+   transition carries it to the real value, so the gauge fills once instead of
+   snapping. The .a11y-reduce-motion block above collapses it to ~0ms, which
+   leaves the ring at its final value with no motion. */
+.dc-ring-arc {
+  transition: stroke-dashoffset 900ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 /* Staggered children: set --stagger-i per child via nth-child. Supports the
    first ~12 children, which covers every dashboard container. */
 .stagger > *:nth-child(1) { --stagger-i: 0; }

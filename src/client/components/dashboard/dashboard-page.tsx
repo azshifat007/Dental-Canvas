@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  Armchair,
   Bell,
   Calendar as CalendarIcon,
   Cake,
   ChevronLeft,
   ChevronRight,
+  Repeat,
   Search,
   TrendingDown,
   TrendingUp,
@@ -12,10 +14,12 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { useApp } from "@/context";
-import { cn, toIsoDate, formatMoney } from "@/lib/utils";
+import { cn, toIsoDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { MiniStatRing, ProgressRing } from "@/components/ui/progress-ring";
 import { PatientListPanel, ConsultationPanel, DentistNotesPanel } from "./dashboard-panels";
 import { InventoryAlertsPanel } from "./inventory-alerts-panel";
+import { visitMetrics } from "./visits-metrics";
 import { openQuickRegister } from "@/lib/quick-register";
 
 // ── Dashboard API types ────────────────────────────────────────────
@@ -54,36 +58,6 @@ export interface Birthday {
 }
 
 const WEEKDAY_LABELS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"] as const;
-
-// ── Circular Progress Ring component ──────────────────────────────────
-
-function CircularProgressRing({ value, size = 100 }: { value: number; size?: number }) {
-  const clamped = Math.max(0, Math.min(100, value));
-  const radius = 50;
-  const circumference = 2 * radius;
-  const dashOffset = circumference * (1 - clamped / 100);
-  return (
-    <svg className="rounded-md" width={size} height={size} viewBox="0 0 100 100">
-      <circle cx={50} cy={50} r={radius} fill="none" stroke="#e2e8f0" stroke-width={8} stroke-linecap="round" />
-      <circle
-        cx={50}
-        cy={50}
-        r={radius}
-        fill="none"
-        stroke="#1d4ed8"
-        stroke-width={8}
-        stroke-linecap="round"
-        stroke-dasharray={circumference}
-        stroke-dashoffset={dashOffset}
-        transform="rotate(-90 0 0)"
-      />
-      <g>
-        <text x="50%" y="55%" textAnchor="middle" dominantBaseline="middle" className="text-xs text-muted-foreground">{clamped}%</text>
-        <text x="50%" y="45%" textAnchor="middle" dominantBaseline="middle" className="text-xl font-bold fill-current">{clamped}</text>
-      </g>
-    </svg>
-  );
-}
 
 // ── Page ───────────────────────────────────────────────────────────
 
@@ -228,57 +202,55 @@ function DeltaBadge({ pct }: { pct: number | null }) {
 }
 
 function VisitsCard({ summary, loading }: { summary: DashboardSummary | null; loading: boolean }) {
-  const totalVisits = summary?.total_visits ?? 0;
-  const newPatients = summary?.new_patients ?? 0;
-  const returningPatients = summary?.returning_patients ?? 0;
-  // Calculate a "fill rate" based on typical daily capacity — 20 patient visits per day as baseline
-  const dailyCapacity = 20;
-  const fillRate = Math.min(100, Number(((totalVisits / (dailyCapacity * 30)) * 100).toFixed(1))); // 30-day view
+  const m = visitMetrics(summary);
 
   return (
-    <div className="card-lift animate-rise relative overflow-hidden rounded-2xl border bg-card p-5 shadow-sm">
-      <div className="pointer-events-none absolute -right-10 -top-10 h-64 w-64 rounded-full bg-sky-100/70 blur-2xl dark:bg-sky-500/10" />
-      <div className="pointer-events-none absolute -bottom-16 right-24 hidden h-44 w-44 rounded-full bg-teal-100/60 blur-2xl md:block dark:bg-teal-500/10" />
-      <div className="relative flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+    <div className="card-lift animate-rise rounded-2xl border bg-card p-5 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-lg font-semibold tracking-tight">Today's Patient Visits</h2>
-          <div className="mt-1 flex items-baseline gap-2">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Today</p>
+          <h2 className="text-lg font-semibold tracking-tight">Patient Visits</h2>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="hidden text-[11px] font-medium text-muted-foreground sm:inline">vs last month</span>
+          <DeltaBadge pct={m.visitsDelta} />
+        </div>
+      </div>
+
+      {/* Headline count, patient-mix tiles, and the ring they are summed up by. */}
+      <div className="mt-4 flex flex-col gap-5 sm:flex-row sm:items-center">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2">
             <span
-              key={summary?.total_visits ?? "x"}
+              key={m.visits}
               className="animate-count text-5xl font-bold tabular-nums tracking-tight"
             >
-              {loading ? "…" : totalVisits}
+              {loading ? "…" : m.visits}
             </span>
-            <span className="text-sm text-muted-foreground">/person</span>
+            <span className="text-sm text-muted-foreground">of {m.capacity} chair slots</span>
           </div>
 
-          {/* Circular progress ring showing appointment fill rate */}
-          <div className="mt-3 flex items-center gap-2">
-            <CircularProgressRing value={Number(fillRate)} size={80} />
-            <span className="text-sm text-muted-foreground">Appointment fill rate</span>
-          </div>
-
-          <div className="stagger mt-5 flex flex-wrap gap-3">
-            <div className="card-lift min-w-[150px] flex-1 rounded-xl bg-sky-500 p-4 text-white shadow-sm">
-              <div className="text-sm font-medium opacity-90">New Patients.</div>
+          <div className="stagger mt-4 grid grid-cols-2 gap-3">
+            <div className="card-lift rounded-xl bg-sky-500 p-4 text-white shadow-sm">
+              <div className="text-sm font-medium opacity-90">New patients</div>
               <div className="mt-2 flex items-center justify-between gap-2">
                 <span
-                  key={summary?.new_patients ?? "x"}
+                  key={m.newPatients}
                   className="animate-count text-3xl font-bold tabular-nums"
                 >
-                  {loading ? <span className="dc-shimmer rounded">…</span> : newPatients}
+                  {loading ? <span className="dc-shimmer rounded">…</span> : m.newPatients}
                 </span>
                 <DeltaBadge pct={summary?.new_patients_delta_pct ?? null} />
               </div>
             </div>
-            <div className="card-lift min-w-[150px] flex-1 rounded-xl bg-rose-400 p-4 text-white shadow-sm">
-              <div className="text-sm font-medium opacity-90">Returning Patients</div>
+            <div className="card-lift rounded-xl bg-rose-400 p-4 text-white shadow-sm">
+              <div className="text-sm font-medium opacity-90">Returning patients</div>
               <div className="mt-2 flex items-center justify-between gap-2">
                 <span
-                  key={summary?.returning_patients ?? "x"}
+                  key={m.returningPatients}
                   className="animate-count text-3xl font-bold tabular-nums"
                 >
-                  {loading ? <span className="dc-shimmer rounded">…</span> : returningPatients}
+                  {loading ? <span className="dc-shimmer rounded">…</span> : m.returningPatients}
                 </span>
                 <DeltaBadge pct={summary?.returning_patients_delta_pct ?? null} />
               </div>
@@ -286,37 +258,38 @@ function VisitsCard({ summary, loading }: { summary: DashboardSummary | null; lo
           </div>
         </div>
 
-        {/* Interactive info card with dental stats */}
-        <div className="absolute right-0 top-0 mt-2 mr-2 rounded-lg bg-white/90 backdrop-blur-sm p-4 shadow-md max-w-xs dark:bg-gray-800/80">
-          <div className="space-y-2 text-center">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">Productivity</span>
-              <span className="text-xs font-medium text-sky-600">${formatMoney(Number(totalVisits) * 50, "USD")}/day</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">Avg. per visit</span>
-              <span className="text-xs font-medium text-rose-500">2.3 treatments</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">Utilization</span>
-              <CircularProgressRing value={Number(fillRate)} size={50} />
-            </div>
-          </div>
-        </div>
+        <ProgressRing
+          value={loading ? 0 : m.fillPercent}
+          size={132}
+          caption="Chair utilization"
+          label={`Chair utilization today: ${Math.round(m.fillPercent)} percent of ${m.capacity} chair slots`}
+          className="self-center sm:self-auto"
+        />
+      </div>
 
-        {/* Decorative tooth emblem — gently floats, pulses when there are visits today. */}
-        <div
-          className={cn(
-            "relative mx-auto hidden h-44 w-44 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-100 to-teal-50 shadow-inner md:flex dark:from-sky-950/60 dark:to-teal-950/40",
-            !loading && (totalVisits ?? 0) > 0 && "animate-pulse-ring",
-          )}
-        >
-          <div className="animate-float flex h-28 w-28 items-center justify-center rounded-full bg-white shadow-md dark:bg-card">
-            <svg viewBox="0 0 24 24" className="animate-pop h-14 w-14 text-sky-300" fill="currentColor" aria-hidden>
-              <path d="M12 2C8.5 2 7 4.5 7 8c0 2.2.4 3.4.4 5.2 0 1.9-.9 4.6-.9 6.3 0 1.4.8 2.5 2 2.5 1.6 0 2-2.3 2.6-4.6.3-1.2.5-1.9.9-1.9s.6.7.9 1.9c.6 2.3 1 4.6 2.6 4.6 1.2 0 2-1.1 2-2.5 0-1.7-.9-4.4-.9-6.3C16.6 11.4 17 10.2 17 8c0-3.5-1.5-6-5-6Z" />
-            </svg>
-          </div>
-        </div>
+      {/* The ring's sub-gauges: who is in the chair, and what is still free. */}
+      <div className="mt-5 flex items-center gap-2 rounded-xl border bg-muted/40 px-3 py-3">
+        <MiniStatRing
+          icon={<UserPlus className="h-4 w-4" />}
+          value={m.newShare}
+          label="New patients"
+          detail={`${m.newPatients} patients have no completed visit yet`}
+          tone="teal"
+        />
+        <MiniStatRing
+          icon={<Repeat className="h-4 w-4" />}
+          value={m.returningShare}
+          label="Returning"
+          detail={`${m.returningPatients} patients have completed a visit before this month`}
+          tone="rose"
+        />
+        <MiniStatRing
+          icon={<Armchair className="h-4 w-4" />}
+          value={m.openPercent}
+          label="Open chairs"
+          detail={`${m.openSlots} of ${m.capacity} chair slots are still open today`}
+          tone="amber"
+        />
       </div>
     </div>
   );
