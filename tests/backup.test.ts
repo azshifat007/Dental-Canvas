@@ -1,4 +1,8 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { BACKUP_TABLES } from "../src/server/backup";
 import { createTestContext, freshApp, jsonRequest, type TestContext } from "./helpers";
 
 let ctx: TestContext;
@@ -819,5 +823,214 @@ describe("import restores searchability", () => {
     const patientHit = data.hits.find((h) => h.entity_type === "patients");
     expect(patientHit).toBeDefined();
     expect(patientHit!.title).toContain("Tester");
+  });
+});
+
+// ── Whole-practice restore into a brand-new install ────────────────
+// The unit-level round-trips above prove individual pieces. This exercises the
+// exact user story: build a practice with patients, x-rays, a prescription, an
+// invoice and a lab case, export it to a real file on disk, then import that
+// file into a completely empty database and require every table row and every
+// image byte to come back.
+
+/** JSON with sorted keys, so row comparison ignores column order. */
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") {
+    const rec = value as Record<string, unknown>;
+    return Object.fromEntries(Object.keys(rec).sort().map((k) => [k, canonical(rec[k])]));
+  }
+  return value;
+}
+
+/** Order-independent row digest — two DBs agree iff their digests agree. */
+function rowDigests(rows: unknown[] | undefined): string[] {
+  return (rows ?? []).map((r) => JSON.stringify(canonical(r))).sort();
+}
+
+describe("whole-practice restore into a fresh install", () => {
+  it("keeps every row and every image byte through a file export → empty-database import", async () => {
+    // 1. Build a realistic practice through the public API.
+    const pid = await seedPracticeData();
+    const xrayBytes = new Uint8Array(2048).map((_, i) => (i * 37 + 11) % 256); // realistic-size binary
+    const panoBytes = new Uint8Array([255, 216, 255, 224, 0, 16, 74, 70, 73, 70, 0, 1]);
+    const xray = await uploadImage(pid, xrayBytes);
+    const pano = await uploadImage(pid, panoBytes);
+
+    const chart = jsonRequest("POST", "/api/tooth-conditions", {
+      patient_id: pid,
+      tooth: "36",
+      surface: "O",
+      condition: "endo",
+    });
+    expect((await app.request(chart.path, chart.init, { DB: ctx.db })).status).toBe(201);
+
+    const rxReq = jsonRequest("POST", "/api/prescriptions", {
+      patient_id: pid,
+      tooth: "36",
+      diagnosis: "Irreversible pulpitis",
+      advice: "Soft diet for 24 hours",
+      items: [
+        { drug_name: "Amoxicillin 500 mg", dosage: "1 capsule", frequency: "TID", duration: "5 days" },
+        { drug_name: "Paracetamol 500 mg", dosage: "1 tablet", frequency: "PRN", duration: "3 days" },
+      ],
+    });
+    const rxRes = await app.request(rxReq.path, rxReq.init, { DB: ctx.db });
+    expect(rxRes.status).toBe(201);
+    const rxId = ((await rxRes.json()) as { prescription: { id: number } }).prescription.id;
+
+    const invReq = jsonRequest("POST", "/api/invoices", {
+      patient_id: pid,
+      status: "open",
+      notes: "Root canal — instalment 1",
+    });
+    const invRes = await app.request(invReq.path, invReq.init, { DB: ctx.db });
+    expect(invRes.status).toBe(201);
+    const invId = ((await invRes.json()) as { invoice: { id: number } }).invoice.id;
+
+    const itemsReq = jsonRequest("PUT", `/api/invoices/${invId}/items`, {
+      items: [
+        { description: "Root canal treatment — molar", quantity: 1, unit_price: 4200 },
+        { description: "Periapical radiograph", quantity: 2, unit_price: 300 },
+      ],
+    });
+    expect((await app.request(itemsReq.path, itemsReq.init, { DB: ctx.db })).status).toBe(200);
+
+    const payReq = jsonRequest("POST", `/api/invoices/${invId}/payments`, {
+      amount: 1000,
+      method: "card",
+      note: "Deposit",
+    });
+    expect((await app.request(payReq.path, payReq.init, { DB: ctx.db })).status).toBe(201);
+
+    const labReq = jsonRequest("POST", "/api/lab-cases", {
+      patient_id: pid,
+      lab_name: "Precision Dental Lab",
+      case_type: "Zirconia crown",
+      tooth: "36",
+      shade: "A2",
+      fee: 4500,
+      status: "in_lab",
+      notes: "Match adjacent 37",
+    });
+    expect((await app.request(labReq.path, labReq.init, { DB: ctx.db })).status).toBe(201);
+
+    // 2. Export to a real file — the same bytes the Export button downloads.
+    const source = (await fetchExport()) as {
+      tables: Record<string, unknown[]>;
+      image_files: { file_key: string; mime_type: string; data_base64: string }[];
+    };
+    const dir = mkdtempSync(path.join(os.tmpdir(), "dental-backup-"));
+    const file = path.join(dir, "practice-backup.json");
+    writeFileSync(file, JSON.stringify(source), "utf8");
+
+    const populated = [
+      "settings",
+      "operatories",
+      "practitioners",
+      "patients",
+      "appointments",
+      "clinical_notes",
+      "patient_images",
+      "patient_image_blobs",
+      "tooth_conditions",
+      "prescriptions",
+      "prescription_items",
+      "invoices",
+      "invoice_items",
+      "invoice_payments",
+      "lab_cases",
+    ];
+    // Guard against a vacuous pass: the source must actually hold this data.
+    for (const t of populated) expect(source.tables[t]?.length, `source ${t}`).toBeGreaterThan(0);
+    expect(source.image_files).toHaveLength(2);
+
+    // 3. Import that file into a database that has never seen this practice.
+    const target = await createTestContext();
+    try {
+      // A brand-new install: schema applied, zero practice data.
+      await target.resetDb();
+      const install = await freshApp();
+      // First request seeds this install's defaults, which the import replaces.
+      await install.request("/api/health", undefined, { DB: target.db });
+
+      const fileText = readFileSync(file, "utf8");
+      expect(fileText.length).toBeGreaterThan(4000);
+      const imp = await install.request(
+        "/api/backup/import",
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: fileText },
+        { DB: target.db },
+      );
+      const impText = await imp.text();
+      expect(imp.status, impText).toBe(200);
+      const impData = JSON.parse(impText) as { ok: boolean; restored: Record<string, number> };
+      expect(impData.ok).toBe(true);
+      expect(impData.restored.patient_image_blobs).toBe(2);
+      expect(impData.restored.prescriptions).toBe(1);
+      expect(impData.restored.prescription_items).toBe(2);
+      expect(impData.restored.invoice_payments).toBe(1);
+
+      // 4. Re-export from the fresh install and require an exact match, table
+      //    by table. This covers columns, ids, FKs, timestamps and blob bytes.
+      const reExport = await install.request("/api/backup/export", undefined, { DB: target.db });
+      expect(reExport.status).toBe(200);
+      const restored = (await reExport.json()) as typeof source;
+
+      expect(Object.keys(restored.tables).sort()).toEqual([...BACKUP_TABLES].sort());
+      for (const table of BACKUP_TABLES) {
+        expect(rowDigests(restored.tables[table]), `restored ${table} rows`).toEqual(
+          rowDigests(source.tables[table]),
+        );
+      }
+      expect(restored.image_files).toEqual(source.image_files);
+
+      // 5. The images are not just rows: the new install serves the real bytes.
+      for (const [img, expected] of [
+        [xray, xrayBytes],
+        [pano, panoBytes],
+      ] as const) {
+        const served = await install.request(
+          `/api/image-file?key=${encodeURIComponent(img.key)}`,
+          undefined,
+          { DB: target.db },
+        );
+        expect(served.status, `serving ${img.key}`).toBe(200);
+        expect(new Uint8Array(await served.arrayBuffer()), `bytes for ${img.key}`).toEqual(expected);
+      }
+
+      const gallery = await install.request(`/api/patients/${pid}/images`, undefined, { DB: target.db });
+      const { images } = (await gallery.json()) as { images: { file_key: string; url: string }[] };
+      expect(images.map((i) => i.file_key).sort()).toEqual([xray.key, pano.key].sort());
+      expect(images.every((i) => i.url.includes("/api/image-file?key="))).toBe(true);
+
+      // 6. Relations still resolve after restore (not just raw rows).
+      const rx = await install.request(`/api/prescriptions/${rxId}`, undefined, { DB: target.db });
+      expect(rx.status).toBe(200);
+      const rxData = (await rx.json()) as {
+        prescription: { diagnosis: string; items: { drug_name: string }[] };
+      };
+      expect(rxData.prescription.diagnosis).toBe("Irreversible pulpitis");
+      expect(rxData.prescription.items.map((i) => i.drug_name)).toEqual([
+        "Amoxicillin 500 mg",
+        "Paracetamol 500 mg",
+      ]);
+
+      const inv = await install.request(`/api/invoices/${invId}`, undefined, { DB: target.db });
+      expect(inv.status).toBe(200);
+      const invData = (await inv.json()) as {
+        invoice: { total: number; amount_paid: number; balance: number; patient_last_name: string };
+        items: { description: string }[];
+        payments: { amount: number; method: string }[];
+      };
+      expect(invData.invoice.patient_last_name).toBe("Tester");
+      expect(invData.invoice.total).toBe(4800);
+      expect(invData.invoice.amount_paid).toBe(1000);
+      expect(invData.invoice.balance).toBe(3800);
+      expect(invData.items).toHaveLength(2);
+      expect(invData.payments).toEqual([expect.objectContaining({ amount: 1000, method: "card" })]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      await target.dispose();
+    }
   });
 });
