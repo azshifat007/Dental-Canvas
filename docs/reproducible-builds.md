@@ -46,10 +46,11 @@ reproducible build check (SOURCE_DATE_EPOCH=1792604464)
 `.repro/` is gitignored.
 
 Run it on a clean checkout when you intend to compare the result with a
-release: Tailwind scans the working directory for class names, so an untracked
-file — an extracted `.deb` tree, a scratch HTML page — changes the CSS hash and
-therefore `sw.js` and the entry chunk. The script warns when it sees untracked
-paths for exactly that reason.
+release. Tailwind's content sources are pinned to `src/` and `index.html` in
+`src/client/styles.css` (`source(none)` plus explicit `@source`), so a package
+extracted in the repo root for inspection — a `.deb`'s `usr/` tree, an AppImage's
+`squashfs-root/`, a scratch HTML page — cannot change the CSS or the hash. A new
+untracked file *inside* those roots still can, and the script warns about it.
 
 ## Comparing with a release
 

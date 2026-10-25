@@ -1,5 +1,14 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
 @import "tw-animate-css";
+
+/* Explicit source roots instead of Tailwind's automatic detection, which walks
+   the entire working tree. A package extracted in the repo root for inspection
+   (a .deb's usr/, an AppImage's squashfs-root/, a scratch .html) contributed
+   strings to the generated CSS, so the same commit built to a different hash
+   locally than on a clean CI checkout. With the roots spelled out here, only
+   the app's own sources can change the stylesheet. */
+@source "../../src";
+@source "../../index.html";
 
 @custom-variant dark (&:is(.dark *));
 

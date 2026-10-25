@@ -8,3 +8,10 @@ dist
 .dev.vars
 src-tauri/target
 src-tauri/gen/schemas
+
+# Package payloads extracted in the repo root to inspect a release (dpkg-deb -x,
+# rpm2cpio, an AppImage's --appimage-extract). They are not source; keeping them
+# out of git also keeps them out of the Tailwind scan.
+/usr/
+/squashfs-root/
+/verify/
