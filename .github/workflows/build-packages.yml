@@ -651,6 +651,38 @@ jobs:
           print("latest.json OK:", feed["version"], sorted(feed["platforms"]))
           PY
 
+      # The repo's scripts/stylesheet-classes.txt is the class set the build is
+      # *expected* to produce; this is the set the packages above actually
+      # contain. Regenerate it from the reference dist/ — the same bytes every
+      # package was just verified against — so the release carries a baseline
+      # that is derived from shipped CSS instead of hand-maintained, and fail if
+      # the two disagree: that would mean the tag ships classes the repo does
+      # not claim, which the per-commit guard in `pnpm run build` cannot have
+      # seen (e.g. a guard bypassed by building with plain `vite build`).
+      - name: Refresh the stylesheet class snapshot from the shipped build
+        run: |
+          set -eu
+          node scripts/check-stylesheet-classes.mjs --write \
+            --file verify/stylesheet-classes.txt \
+            --note "shipped in ${GITHUB_REF_NAME} (reference build)"
+          # Tags cut before the guard existed have no snapshot to compare with;
+          # the regenerated one above is still worth publishing for them.
+          if [ ! -f scripts/stylesheet-classes.txt ]; then
+            echo "::warning::${GITHUB_REF_NAME} predates scripts/stylesheet-classes.txt; publishing the regenerated snapshot without a comparison."
+            exit 0
+          fi
+          # Compare class sets only, not bytes: the header's `# source:` line
+          # differs by design (a branch tip locally, the tag here).
+          grep -v '^#' scripts/stylesheet-classes.txt | grep -v '^$' | sort > /tmp/tag-classes.txt
+          grep -v '^#' verify/stylesheet-classes.txt | grep -v '^$' | sort > /tmp/shipped-classes.txt
+          if ! diff -u /tmp/tag-classes.txt /tmp/shipped-classes.txt > /tmp/classes.diff 2>&1; then
+            echo "::error::The CSS in ${GITHUB_REF_NAME} does not match scripts/stylesheet-classes.txt, so the tag ships classes the repo does not claim."
+            echo "Fix on the tag's commit, then re-tag: pnpm run build && pnpm run styles:write && commit."
+            head -60 /tmp/classes.diff
+            exit 1
+          fi
+          echo "class snapshot matches the tag ($(wc -l < /tmp/shipped-classes.txt) classes)"
+
       # Checksums + manifest turn "did CI and I build the same app?" into a
       # single comparison instead of eyeballing file sizes: rebuild the tag with
       # `npm run repro` and diff your rootHash against repro-manifest.json.
@@ -666,7 +698,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "${GITHUB_REF_NAME}" \
-            verify/SHA256SUMS repro-manifest.json \
+            verify/SHA256SUMS repro-manifest.json verify/stylesheet-classes.txt \
             --clobber --repo "${GITHUB_REPOSITORY}"
 
       - name: Publish the release

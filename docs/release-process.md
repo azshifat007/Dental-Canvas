@@ -20,9 +20,9 @@ npm run repro      # two builds must be byte-identical (docs/reproducible-builds
 ```
 
 `npm run build` ends with the stylesheet class guard: the built CSS must match the
-class snapshot of the previous release (`scripts/stylesheet-classes.txt`). If you
-changed styling on purpose, refresh it in the same commit and check the diff names
-only classes your change introduced:
+class snapshot (`scripts/stylesheet-classes.txt`). If you changed styling on
+purpose, refresh it in the same commit and check the diff names only classes your
+change introduced:
 
 ```bash
 npm run styles:write && git diff scripts/stylesheet-classes.txt
@@ -31,6 +31,14 @@ npm run styles:write && git diff scripts/stylesheet-classes.txt
 A class arriving without anyone writing it means the Tailwind scan reached files
 it should not (see `docs/inspecting-a-release.md`); do not paper over it by
 rewriting the snapshot.
+
+You do not have to keep that snapshot current by hand between releases. The tag's
+`verify-and-publish` job regenerates it from the reference `dist/`, refuses to
+publish the release if the result differs from the tag's file (the tag would be
+shipping CSS the repo does not claim — fix and re-tag), and attaches the
+regenerated copy to the release as `stylesheet-classes.txt`. So the published
+snapshot always describes the CSS inside the packages, whatever the repo file
+looked like when the tag was cut.
 
 The `repro` check prints a `rootHash`; after the release is published you can
 compare it against the release's `repro-manifest.json` to prove your local
@@ -78,7 +86,8 @@ Note: if you add Rust dependencies (`src-tauri/Cargo.toml`), don't commit Cargo.
    --notes "$(cat RELEASE-NOTES.md)"` after the tag is pushed.
 
 5. Verify-and-publish: the embedded-frontend hash check, the `latest.json`
-   feed cross-check, and publishing of `repro-manifest.json` + `SHA256SUMS` run
+   feed cross-check, the shipped stylesheet class snapshot, and publishing of
+   `repro-manifest.json` + `SHA256SUMS` + `stylesheet-classes.txt` run
    automatically in CI. The download step of the
    verify job must use `--pattern` to fetch every package artifact (a plain
    `gh release download` silently drops some assets, which would make the

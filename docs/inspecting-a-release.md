@@ -137,8 +137,10 @@ Compare that `rootHash` with `repro-manifest.json` from the release you were
 inspecting (tags up to v1.4.23 predate the step that attaches it, so its absence
 there means nothing). If they match, the stray tree never reached the build.
 
-Faster than a hash comparison, `pnpm run lint:classes` names the classes the
-current build has that the previous release did not — a stray tree shows up
-there as a handful of utilities nobody wrote. If they
+Faster than a hash comparison, `pnpm run lint:classes` names every class the
+current build has that `scripts/stylesheet-classes.txt` does not — a stray tree
+shows up there as a handful of utilities nobody wrote. To see the classes the
+release you are inspecting actually shipped, compare against the
+`stylesheet-classes.txt` asset on that release instead. If they
 differ, rebuild from a clean checkout (`git clean -ndx` shows what would be
 removed first) before concluding the build is broken.

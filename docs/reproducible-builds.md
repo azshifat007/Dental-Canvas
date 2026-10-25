@@ -59,16 +59,25 @@ When the scan *does* change, the failure is otherwise silent: a different class
 set means a different `index-*.css`, a different `sw.js` and a different
 `rootHash`, all while every build still succeeds. `npm run lint:classes` (run by
 `npm run build` and the CI verify job) compares the built class set against
-`scripts/stylesheet-classes.txt` — the classes the previous release shipped — and
-names every class that appeared or disappeared, so the cause is one line of output
-instead of a hash mismatch discovered later.
+`scripts/stylesheet-classes.txt` — the set the repo has acknowledged for the
+current commit — and names every class that appeared or disappeared, so the cause
+is one line of output instead of a hash mismatch discovered later.
+
+That file is only as trustworthy as the build it was written from, so the release
+job does not take it on trust: at tag time it regenerates the snapshot from the
+reference `dist/` and fails the release if the result disagrees with the tag
+(see [release-process.md](release-process.md)).
 
 ## Comparing with a release
 
-Each release publishes two extra assets:
+Each release publishes three extra assets:
 
 - `repro-manifest.json` — the manifest of the frontend that CI verified inside
   every package (file list + SHA-256 + `rootHash`), plus the tool versions used.
+- `stylesheet-classes.txt` — the class set of the CSS inside those packages,
+  regenerated from the reference build at tag time. Comparing your local
+  `scripts/stylesheet-classes.txt` against it tells you whether the classes you
+  see are the ones users have.
 - `SHA256SUMS` — checksums of the release assets themselves.
 
 To confirm your local build is the same software CI shipped:
