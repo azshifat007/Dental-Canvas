@@ -217,7 +217,9 @@ function VisitsCard({ summary, loading }: { summary: DashboardSummary | null; lo
         </div>
       </div>
 
-      {/* Headline count, patient-mix tiles, and the ring they are summed up by. */}
+      {/* Headline count and the ring that summarises the day. New and returning
+          patients are shown once, as the sub-gauges below — they used to sit in
+          coloured tiles here as well, which said the same thing twice. */}
       <div className="mt-4 flex flex-col gap-5 sm:flex-row sm:items-center">
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
@@ -229,33 +231,15 @@ function VisitsCard({ summary, loading }: { summary: DashboardSummary | null; lo
             </span>
             <span className="text-sm text-muted-foreground">of {m.capacity} chair slots</span>
           </div>
-
-          <div className="stagger mt-4 grid grid-cols-2 gap-3">
-            <div className="card-lift rounded-xl bg-sky-500 p-4 text-white shadow-sm">
-              <div className="text-sm font-medium opacity-90">New patients</div>
-              <div className="mt-2 flex items-center justify-between gap-2">
-                <span
-                  key={m.newPatients}
-                  className="animate-count text-3xl font-bold tabular-nums"
-                >
-                  {loading ? <span className="dc-shimmer rounded">…</span> : m.newPatients}
-                </span>
-                <DeltaBadge pct={summary?.new_patients_delta_pct ?? null} />
-              </div>
-            </div>
-            <div className="card-lift rounded-xl bg-rose-400 p-4 text-white shadow-sm">
-              <div className="text-sm font-medium opacity-90">Returning patients</div>
-              <div className="mt-2 flex items-center justify-between gap-2">
-                <span
-                  key={m.returningPatients}
-                  className="animate-count text-3xl font-bold tabular-nums"
-                >
-                  {loading ? <span className="dc-shimmer rounded">…</span> : m.returningPatients}
-                </span>
-                <DeltaBadge pct={summary?.returning_patients_delta_pct ?? null} />
-              </div>
-            </div>
-          </div>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {loading
+              ? "Loading today's schedule…"
+              : m.visits === 0
+                ? "No patient visits booked yet today."
+                : m.openSlots > 0
+                  ? `${m.openSlots} ${m.openSlots === 1 ? "chair slot is" : "chair slots are"} still open today.`
+                  : "The day is fully booked — every chair slot is taken."}
+          </p>
         </div>
 
         <ProgressRing
@@ -267,27 +251,60 @@ function VisitsCard({ summary, loading }: { summary: DashboardSummary | null; lo
         />
       </div>
 
-      {/* The ring's sub-gauges: who is in the chair, and what is still free. */}
-      <div className="mt-5 flex items-center gap-2 rounded-xl border bg-muted/40 px-3 py-3">
+      {/* Sub-gauges: the day's new-patient goal, how much of the day is repeat
+          business, and what is left to book. */}
+      <div className="mt-5 grid grid-cols-3 gap-2 rounded-xl border bg-muted/40 px-2 py-3">
         <MiniStatRing
           icon={<UserPlus className="h-4 w-4" />}
-          value={m.newShare}
+          value={loading ? 0 : m.newGoalPercent}
           label="New patients"
-          detail={`${m.newPatients} patients have no completed visit yet`}
+          display={`${loading ? "…" : m.newToday}/${m.newGoal}`}
+          detail={
+            loading
+              ? "New patients today"
+              : `${m.newToday} of ${m.newGoal} new patients today — ${
+                  m.newGoalRemaining === 0
+                    ? "daily goal met"
+                    : `${m.newGoalRemaining} more to reach the daily goal`
+                }`
+          }
+          ariaLabel={
+            loading
+              ? "New patients today: loading"
+              : `New patients today: ${m.newToday} of ${m.newGoal}, ${Math.round(m.newGoalPercent)} percent of the daily goal`
+          }
           tone="teal"
         />
         <MiniStatRing
           icon={<Repeat className="h-4 w-4" />}
-          value={m.returningShare}
+          value={loading ? 0 : m.returningShare}
           label="Returning"
-          detail={`${m.returningPatients} patients have completed a visit before this month`}
+          detail={
+            loading
+              ? "Returning patients today"
+              : `${m.returningToday} of today's ${m.visits} ${m.visits === 1 ? "visit is" : "visits are"} returning patients (a completed visit before today)`
+          }
+          ariaLabel={
+            loading
+              ? "Returning patients today: loading"
+              : `Returning patients: ${m.returningToday} of today's ${m.visits} visits, ${Math.round(m.returningShare)} percent`
+          }
           tone="rose"
         />
         <MiniStatRing
           icon={<Armchair className="h-4 w-4" />}
-          value={m.openPercent}
+          value={loading ? 0 : m.openPercent}
           label="Open chairs"
-          detail={`${m.openSlots} of ${m.capacity} chair slots are still open today`}
+          detail={
+            loading
+              ? "Open chair slots today"
+              : `${m.openSlots} of ${m.capacity} chair slots are still open today`
+          }
+          ariaLabel={
+            loading
+              ? "Open chair slots today: loading"
+              : `Open chair slots today: ${m.openSlots} of ${m.capacity}, ${Math.round(m.openPercent)} percent`
+          }
           tone="amber"
         />
       </div>

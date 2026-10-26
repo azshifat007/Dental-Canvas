@@ -36,6 +36,15 @@ pub fn run() {
             {
                 app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
                 app.handle().plugin(tauri_plugin_process::init())?;
+                // "Launch at login" (Settings → Appearance → Startup). The
+                // plugin only registers/unregisters the OS startup entry the
+                // webview asks for; it never starts anything on its own, and
+                // it passes no extra arguments, so a login launch opens the
+                // normal window. LaunchAgent is the documented macOS backend.
+                app.handle().plugin(tauri_plugin_autostart::init(
+                    tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+                    None,
+                ))?;
             }
             Ok(())
         })

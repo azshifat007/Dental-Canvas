@@ -2,7 +2,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { clampPercent, ringGeometry, MiniStatRing, ProgressRing } from "@/components/ui/progress-ring";
-import { DAILY_VISIT_CAPACITY, visitMetrics } from "@/components/dashboard/visits-metrics";
+import {
+  DAILY_VISIT_CAPACITY,
+  NEW_PATIENT_DAILY_TARGET,
+  visitMetrics,
+} from "@/components/dashboard/visits-metrics";
 
 describe("progress ring geometry", () => {
   it("clamps values that cannot be drawn", () => {
@@ -80,12 +84,40 @@ describe("ProgressRing markup", () => {
     expect(html).toContain("74");
     expect(html).toContain("New patients");
   });
+
+  it("shows a goal counter instead of the percentage when asked", () => {
+    // A ring measured against a target is only meaningful with both numbers
+    // visible — "30%" says nothing about 3 of 10 patients.
+    const html = renderToStaticMarkup(
+      createElement(MiniStatRing, {
+        icon: createElement("span", null, "x"),
+        value: 30,
+        label: "New patients",
+        display: "3/10",
+        ariaLabel: "New patients today: 3 of 10",
+      }),
+    );
+    expect(html).toContain("3/10");
+    expect(html).toContain('aria-label="New patients today: 3 of 10"');
+    // The ring itself still carries the clamped percentage.
+    expect(html).toContain('aria-valuenow="30"');
+  });
 });
 
 describe("dashboard visit metrics", () => {
   it("returns zeros, not NaN, for a practice with no visits", () => {
     const m = visitMetrics(null);
-    expect(m).toMatchObject({ visits: 0, fillPercent: 0, newShare: 0, returningShare: 0, openPercent: 100 });
+    expect(m).toMatchObject({
+      visits: 0,
+      fillPercent: 0,
+      newToday: 0,
+      returningToday: 0,
+      newGoalPercent: 0,
+      newGoalRemaining: NEW_PATIENT_DAILY_TARGET,
+      returningShare: 0,
+      openPercent: 100,
+    });
+    expect(m.newGoal).toBe(10);
     expect(m.visitsDelta).toBeNull();
     for (const value of Object.values(m)) {
       expect(Number.isNaN(value)).toBe(false);
@@ -93,13 +125,34 @@ describe("dashboard visit metrics", () => {
   });
 
   it("measures today's visits against the day's chair slots", () => {
-    const m = visitMetrics({ total_visits: 12, new_patients: 3, returning_patients: 9 });
+    const m = visitMetrics({ total_visits: 12 });
     expect(m.capacity).toBe(DAILY_VISIT_CAPACITY);
     expect(m.fillPercent).toBe(60);
     expect(m.openSlots).toBe(8);
     expect(m.openPercent).toBe(40);
-    expect(m.newShare).toBe(25);
+  });
+
+  it("measures new patients against the ten-a-day goal", () => {
+    const four = visitMetrics({ total_visits: 4, new_patients_today: 4 });
+    expect(four.newGoal).toBe(NEW_PATIENT_DAILY_TARGET);
+    expect(four.newGoalPercent).toBe(40);
+    expect(four.newGoalRemaining).toBe(6);
+
+    const met = visitMetrics({ total_visits: 10, new_patients_today: 10 });
+    expect(met.newGoalPercent).toBe(100);
+    expect(met.newGoalRemaining).toBe(0);
+
+    // Twelve new patients is not "120%": the ring is full and the goal is met.
+    const exceeded = visitMetrics({ total_visits: 14, new_patients_today: 12 });
+    expect(exceeded.newGoalPercent).toBe(100);
+    expect(exceeded.newGoalRemaining).toBe(0);
+  });
+
+  it("shows returning patients as a share of today's visits", () => {
+    const m = visitMetrics({ total_visits: 4, new_patients_today: 1, returning_patients_today: 3 });
     expect(m.returningShare).toBe(75);
+    // No visits at all: a share of nothing is 0, not NaN or 100.
+    expect(visitMetrics({ total_visits: 0, returning_patients_today: 2 }).returningShare).toBe(0);
   });
 
   it("never shows more than a full ring when the day is overbooked", () => {
@@ -110,12 +163,17 @@ describe("dashboard visit metrics", () => {
   });
 
   it("ignores malformed summary values instead of rendering NaN", () => {
-    const m = visitMetrics({ total_visits: Number.NaN, new_patients: -4, returning_patients: Number.POSITIVE_INFINITY });
+    const m = visitMetrics({
+      total_visits: Number.NaN,
+      new_patients_today: -4,
+      returning_patients_today: Number.POSITIVE_INFINITY,
+    });
     expect(m.visits).toBe(0);
-    expect(m.newPatients).toBe(0);
-    expect(m.returningPatients).toBe(0);
+    expect(m.newToday).toBe(0);
+    expect(m.returningToday).toBe(0);
     expect(m.fillPercent).toBe(0);
-    expect(m.newShare).toBe(0);
+    expect(m.newGoalPercent).toBe(0);
+    expect(m.returningShare).toBe(0);
   });
 
   it("passes the month-over-month delta through for the header chip", () => {

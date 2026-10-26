@@ -4010,6 +4010,8 @@ app.get("/api/dashboard/summary", async (c) => {
     newPatientsLastMonth,
     returningPatients,
     returningPatientsLastMonth,
+    newPatientsToday,
+    returningPatientsToday,
     upcoming,
   ] = await Promise.all([
     // All patient visits today (the dashboard's headline number). Cancelled
@@ -4054,6 +4056,37 @@ app.get("/api/dashboard/summary", async (c) => {
        WHERE a.patient_id IS NOT NULL AND a.status = 'completed'
          AND substr(a.start_time, 1, 10) < ?`,
       [prevMonthStart], { n: 0 },
+    ),
+    // New patients *today*: in the chair today and never completed a visit
+    // before today. The month-wide figures above count the whole patient base,
+    // so they cannot measure a daily goal — the dashboard's new-patient ring
+    // would sit at "hundreds of percent" for any practice with history.
+    safeGet<{ n: number }>(
+      `SELECT COUNT(*) as n FROM patients p
+       WHERE EXISTS (
+         SELECT 1 FROM appointments a
+         WHERE a.patient_id = p.id AND substr(a.start_time, 1, 10) = ?
+           AND a.kind = 'patient' AND a.status NOT IN ('cancelled', 'no_show')
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM appointments c
+         WHERE c.patient_id = p.id AND c.status = 'completed'
+           AND substr(c.start_time, 1, 10) < ?
+       )`,
+      [today, today], { n: 0 },
+    ),
+    // Returning *today*: in the chair today with a completed visit before today.
+    safeGet<{ n: number }>(
+      `SELECT COUNT(DISTINCT p.id) as n FROM appointments a
+       JOIN patients p ON p.id = a.patient_id
+       WHERE substr(a.start_time, 1, 10) = ? AND a.kind = 'patient'
+         AND a.status NOT IN ('cancelled', 'no_show')
+         AND EXISTS (
+           SELECT 1 FROM appointments c
+           WHERE c.patient_id = p.id AND c.status = 'completed'
+             AND substr(c.start_time, 1, 10) < ?
+         )`,
+      [today, today], { n: 0 },
     ),
     // Next 5 upcoming events: future patient appointments + open recalls.
     (async () => {
@@ -4100,6 +4133,9 @@ app.get("/api/dashboard/summary", async (c) => {
     new_patients_delta_pct: pct(newPatients.n ?? 0, newPatientsLastMonth.n ?? 0),
     returning_patients: returningPatients.n ?? 0,
     returning_patients_delta_pct: pct(returningPatients.n ?? 0, returningPatientsLastMonth.n ?? 0),
+    // Per-day figures, the ones the dashboard's goal rings are drawn from.
+    new_patients_today: newPatientsToday.n ?? 0,
+    returning_patients_today: returningPatientsToday.n ?? 0,
     upcoming,
   });
 });

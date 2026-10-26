@@ -7,6 +7,7 @@ import { BackupTab } from "./backup-tab";
 import { UpdateCard } from "./app-update-card";
 import { BookingTab } from "./booking-tab";
 import { StorageTab } from "./storage-tab";
+import { StartupCard } from "./startup-card";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
 import { useRouter } from "@/hooks/use-router";
 import { useAccessibility, type A11yPreference } from "@/hooks/use-accessibility";
@@ -80,6 +81,7 @@ export function SettingsPage() {
             <CurrencyCard />
             <AccentColorCard />
             <AccessibilityCard />
+            <StartupCard />
           </TabsContent>
           <TabsContent value="operatories" className="mt-4">
             <OperatoriesTab />

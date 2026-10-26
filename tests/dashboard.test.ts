@@ -123,6 +123,57 @@ describe("GET /api/dashboard/summary", () => {
     expect(data.new_patients).toBe(1);
   });
 
+  it("counts new and returning patients in today's chair for the goal rings", async () => {
+    const firstTimer = await seedPatient({ first_name: "First", last_name: "Timer" });
+    const regular = await seedPatient({ first_name: "Reg", last_name: "Ular" });
+    const today = new Date().toISOString().slice(0, 10);
+
+    // The regular completed a visit last year; the first-timer has none.
+    const lastYear = new Date();
+    lastYear.setFullYear(lastYear.getFullYear() - 1);
+    await seedAppointment({
+      patient_id: regular,
+      start_time: `${lastYear.toISOString().slice(0, 10)}T10:00:00`,
+      end_time: `${lastYear.toISOString().slice(0, 10)}T10:30:00`,
+      status: "completed",
+    });
+
+    await seedAppointment({ patient_id: firstTimer });
+    await seedAppointment({
+      patient_id: regular,
+      start_time: `${today}T13:00:00`,
+      end_time: `${today}T13:30:00`,
+    });
+    // A cancelled visit never reaches a chair, so it is not a new patient "seen".
+    await seedAppointment({
+      patient_id: firstTimer,
+      start_time: `${today}T15:00:00`,
+      end_time: `${today}T15:30:00`,
+      status: "cancelled",
+    });
+
+    const res = await app.request("/api/dashboard/summary", undefined, { DB: ctx.db });
+    const data = (await res.json()) as {
+      total_visits: number;
+      new_patients_today: number;
+      returning_patients_today: number;
+    };
+    // Two patients in the chair today; the cancelled slot adds nobody.
+    expect(data.total_visits).toBe(2);
+    expect(data.new_patients_today).toBe(1);
+    expect(data.returning_patients_today).toBe(1);
+  });
+
+  it("reports no patients in the chair on a fresh practice", async () => {
+    const res = await app.request("/api/dashboard/summary", undefined, { DB: ctx.db });
+    const data = (await res.json()) as {
+      new_patients_today: number;
+      returning_patients_today: number;
+    };
+    expect(data.new_patients_today).toBe(0);
+    expect(data.returning_patients_today).toBe(0);
+  });
+
   it("lists upcoming appointments and recalls sorted by time", async () => {
     const pid = await seedPatient();
     const today = new Date().toISOString().slice(0, 10);
