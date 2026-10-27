@@ -121,7 +121,14 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
       {/* Bounded flex column: without max-h the card grows with its content
           and overflow-hidden clipped the footer buttons off-screen on short
           windows (same bug family as the medicine list clipping). */}
-      <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl">
+      {/* role="dialog": it is announced as a modal, and it is what tells the
+          unattended updater not to restart the app — an unfinished setup is the
+          worst thing to throw away. */}
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="flex max-h-[calc(100vh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl"
+      >
         {/* Header */}
         <div className="border-b bg-gradient-to-br from-primary/10 to-transparent px-8 pb-6 pt-8">
           <div className="flex items-center gap-2 text-sm font-medium text-primary">

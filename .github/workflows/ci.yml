@@ -59,6 +59,32 @@ jobs:
       - name: verify print template in build output
         run: node scripts/verify-two-column-ci.mjs
 
+  # ── Rust dependency graph ────────────────────────────────────────────────
+  # Nothing in CI used to open src-tauri/Cargo.lock, so a dependency added to
+  # src-tauri/Cargo.toml could sit unlocked for as long as nobody noticed: the
+  # release workflow runs `cargo build` without --locked, which quietly resolves
+  # whatever the manifest asks for, and every package built from that tag then
+  # differs from the reviewed commit. The lock did drift that far — it described
+  # a root package with no Tauri plugins at all while the manifest depended on
+  # six of them.
+  #
+  # `cargo metadata --locked` resolves the whole graph and refuses to write the
+  # lock, so it fails on exactly that mistake: a manifest the committed lock
+  # does not already describe. It compiles nothing — no WebKit or GTK packages
+  # — it only reads the crates.io index.
+  rust-lockfile:
+    name: rust lockfile matches the manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: cargo metadata --locked resolves the crate graph
+        working-directory: src-tauri
+        run: cargo metadata --locked --format-version 1 > /dev/null
+
   # ── Reproducible frontend ─────────────────────────────────────────────────
   # Every release package embeds dist/, so two builds of one commit must be
   # byte-identical or a local build can never be compared with a shipped

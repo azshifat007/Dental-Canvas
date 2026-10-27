@@ -122,6 +122,20 @@ cd dist && find . -type f | sort | xargs sha256sum | sha256sum
 - `[profile.release]` in `src-tauri/Cargo.toml` sets `codegen-units = 1` and
   `incremental = false` (incremental caches embed timestamps, and parallel
   codegen units let two builds of one commit lay code out differently).
+- `src-tauri/Cargo.lock` is committed and pins every crate the desktop binary
+  links, so "same commit" also means "same crates". The release jobs build
+  without `--locked`, so a lock that does not describe the manifest is not an
+  error there: cargo quietly resolves whatever is missing and the package ships
+  crates nobody reviewed. After changing `src-tauri/Cargo.toml`, refresh it with
+
+  ```bash
+  cd src-tauri && cargo metadata --format-version 1 >/dev/null
+  ```
+
+  which updates the lock in place and keeps the versions already in it, rather
+  than `cargo generate-lockfile`, which re-resolves every crate to the newest
+  compatible one. Then confirm the result with `cargo metadata --locked` — the
+  same command CI runs.
 - The output contains no clock, hostname, username or absolute path: nothing in
   the bundle is stamped with "now". `scripts/repro-build.mjs` fails if the two
   runs disagree, and the CI gate below catches a reintroduction on every push.
@@ -134,6 +148,9 @@ cd dist && find . -type f | sort | xargs sha256sum | sha256sum
    the two runs are byte-identical.
 2. `reproducible-cross-os` — compares the Windows and Linux manifests and fails
    unless they are byte-identical to each other.
+3. `rust-lockfile` — `cargo metadata --locked` in `src-tauri/`, which fails when
+   the manifest depends on something `src-tauri/Cargo.lock` does not already
+   contain. It compiles nothing, so it needs no WebKit or GTK packages.
 
 Release builds (`build-packages.yml`, triggered by a `v*` tag) run the same
 pinned environment in all four packaging jobs, and the verify job records the

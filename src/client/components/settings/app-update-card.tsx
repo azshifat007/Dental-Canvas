@@ -5,6 +5,7 @@ import {
   checkForUpdates,
   getUpdateDiagnostics,
   getUpdateState,
+  installStagedUpdate,
   installUpdate,
   isUpdateSupported,
   openManualUpdate,
@@ -15,6 +16,7 @@ import {
   type UpdateDiagnostics,
   type UpdateState,
 } from "@/lib/updater";
+import { useApp } from "@/context";
 import { openExternalUrl } from "@/lib/open-external";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,16 +33,34 @@ import { toast } from "@/components/ui/toast";
  * installer and a cache repair.
  */
 export function UpdateCard() {
+  const app = useApp();
   const [update, setUpdate] = useState<UpdateState | null>(getUpdateState());
   const [diag, setDiag] = useState<UpdateDiagnostics>(getUpdateDiagnostics());
   const [checking, setChecking] = useState(false);
   const [installing, setInstalling] = useState(false);
+  const [savingMode, setSavingMode] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => subscribeToUpdates(setUpdate), []);
   useEffect(() => subscribeToDiagnostics(setDiag), []);
 
   if (!isUpdateSupported()) return null;
+
+  // The setting is the source of truth; app.tsx pushes it into the updater (and
+  // starts the download when it flips to automatic).
+  const autoUpdate = app.settings.update_mode === "auto";
+
+  const setAuto = async (on: boolean) => {
+    setSavingMode(true);
+    setError(null);
+    try {
+      await saveUpdateMode(app.updateSettings, on);
+    } catch (err) {
+      setError(`Could not save the setting: ${(err as Error).message}`);
+    } finally {
+      setSavingMode(false);
+    }
+  };
 
   const checkNow = async () => {
     setChecking(true);
@@ -59,7 +79,9 @@ export function UpdateCard() {
     setInstalling(true);
     setError(null);
     try {
-      await installUpdate();
+      // A staged download installs as-is; otherwise installUpdate() fetches it.
+      if (update?.phase === "staged") await installStagedUpdate();
+      else await installUpdate();
       // On Windows the installer closes the app during install, so this line
       // is usually never reached — but on other paths the app relaunches.
     } catch (err) {
@@ -108,21 +130,31 @@ export function UpdateCard() {
                 <p className="text-sm font-medium">
                   {update.phase === "downloading"
                     ? "Downloading update…"
-                    : update.phase === "ready"
-                      ? "Update installed — restarting…"
-                      : update.mode === "repair"
-                        ? `Version ${update.version} is installed, but this screen is running an older copy`
-                        : `Version ${update.version} is available`}
+                    : update.phase === "staged"
+                      ? `Version ${update.version} is ready to install`
+                      : update.phase === "ready"
+                        ? "Update installed — restarting…"
+                        : update.mode === "repair"
+                          ? `Version ${update.version} is installed, but this screen is running an older copy`
+                          : `Version ${update.version} is available`}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {update.mode === "repair"
                     ? "The cached app files are out of date. Repair clears them and reloads the current version — your patient data is not touched."
                     : update.mode === "manual"
                       ? "This install cannot update itself. Download the installer once; future updates are automatic again."
-                      : "Downloads and installs in the background, then restarts the app."}
+                      : update.phase === "staged"
+                        ? autoUpdate
+                          ? "It installs itself and restarts the app the next time the app is left alone. Install now to do it straight away."
+                          : "Downloads are staged until you say so — install whenever it suits."
+                        : update.phase === "downloading"
+                          ? "The app keeps working while it downloads; the install waits for a quiet moment."
+                          : autoUpdate
+                            ? "It downloads in the background and installs itself when the app is next left alone."
+                            : "Downloads and installs when you click, then restarts the app."}
                 </p>
               </div>
-              {update.phase === "available" && (
+              {(update.phase === "available" || update.phase === "staged") && (
                 <Button
                   size="sm"
                   onClick={update.mode === "repair" ? repair : update.mode === "manual" ? manualDownload : install}
@@ -135,7 +167,13 @@ export function UpdateCard() {
                   ) : (
                     <Download className="h-4 w-4" />
                   )}
-                  {update.mode === "repair" ? "Repair & reload" : update.mode === "manual" ? "Download installer" : "Download & install"}
+                  {update.mode === "repair"
+                    ? "Repair & reload"
+                    : update.mode === "manual"
+                      ? "Download installer"
+                      : update.phase === "staged"
+                        ? "Install now"
+                        : "Download & install"}
                 </Button>
               )}
             </div>
@@ -151,8 +189,10 @@ export function UpdateCard() {
         ) : (
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-muted-foreground">
-              Updates are checked automatically once an hour. New versions install in the background and the app
-              restarts itself — no installer download needed.
+              Updates are checked once an hour.{" "}
+              {autoUpdate
+                ? "A new version downloads in the background and installs itself the next time the app is left alone."
+                : "You are told when one is available, and install it with one click."}
             </p>
             <Button size="sm" variant="outline" onClick={checkNow} disabled={checking} className="shrink-0">
               {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
@@ -174,6 +214,25 @@ export function UpdateCard() {
           </div>
         )}
 
+        <label className="flex items-center justify-between gap-4 rounded-lg border p-3">
+          <span className="min-w-0">
+            <span className="block text-sm font-medium">Install updates automatically</span>
+            <span className="block text-xs text-muted-foreground">
+              Ten minutes without anyone touching the app, or thirty seconds with the window in the background,
+              is treated as a quiet moment: the update installs itself and the app restarts. An open dialog or
+              form is never interrupted. Turn this off to be asked first.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="h-5 w-5 shrink-0 accent-[var(--primary)]"
+            checked={autoUpdate}
+            disabled={savingMode}
+            onChange={(e) => void setAuto(e.target.checked)}
+            aria-label="Install updates automatically"
+          />
+        </label>
+
         <div className="flex flex-wrap items-center gap-2 border-t pt-3 text-xs text-muted-foreground">
           <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => void manualDownload()}>
             <ExternalLink className="h-3.5 w-3.5" /> Release page
@@ -189,6 +248,19 @@ export function UpdateCard() {
       </CardContent>
     </Card>
   );
+}
+
+/**
+ * Store the "install automatically" switch as `update_mode`. The card does not
+ * touch the updater itself: the app shell pushes the stored value into it (see
+ * the `setUpdateMode` effect in app.tsx), so a failed save cannot leave the app
+ * behaving differently from what Settings shows.
+ */
+export async function saveUpdateMode(
+  updateSettings: (patch: { update_mode: "auto" | "ask" }) => Promise<void>,
+  enabled: boolean,
+): Promise<void> {
+  await updateSettings({ update_mode: enabled ? "auto" : "ask" });
 }
 
 function formatAgo(ms: number): string {

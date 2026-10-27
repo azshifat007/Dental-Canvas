@@ -54,6 +54,12 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   // reminder_minutes before each of today's appointments (Settings → Notifications).
   reminders_enabled: "1",
   reminder_minutes: "15",
+  // In-app desktop updates (Settings → About): "auto" downloads a new version
+  // as soon as one is published and installs it the next time the app is left
+  // alone — ten minutes without input, or thirty seconds in the background.
+  // "ask" waits for a click in the banner instead. Desktop only; the web build
+  // ignores it.
+  update_mode: "auto",
 };
 
 /**

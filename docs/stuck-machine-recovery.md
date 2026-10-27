@@ -15,6 +15,25 @@ the audit can be re-run after future releases.*
 
 The rest of this document shows the evidence and the recovery runbooks.
 
+## Automatic installation (why machines stop drifting)
+
+The desktop app no longer waits to be asked. Settings → About → **App updates**
+has an *Install updates automatically* switch, stored as the `update_mode`
+setting and **on by default**:
+
+- the hourly check downloads a new version in the background the moment it is
+  found, and
+- it installs itself at the first quiet moment — ten minutes with nobody
+  touching the app, or thirty seconds with the window in the background. An open
+  dialog or form is never interrupted, and pending database writes are flushed
+  before the installer runs, so the restart costs nothing.
+
+`update_mode = "ask"` restores click-to-install: the banner and the Settings
+card behave exactly as before. The two fallbacks for machines that cannot
+self-install — the one-time installer download and the cached-shell repair —
+are never used automatically: opening a browser or clearing caches is always the
+user's call.
+
 ## Evidence
 
 ### 1. When the updater shipped, and that its trust config never changed

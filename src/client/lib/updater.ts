@@ -12,6 +12,22 @@
  * app relaunches. On Windows the install step exits the app automatically,
  * so save pending DB writes first via the offline flush.
  *
+ * ── Unattended installation ────────────────────────────────────────────────
+ * Waiting for that click meant a clinic machine could sit on an old version for
+ * weeks: nobody opens Settings → About, and a banner is easy to ignore for
+ * good. So the default (Settings → About → "Install updates automatically",
+ * the `update_mode` setting) is now unattended. The update is downloaded in the
+ * background the moment it is found, then installed at the first *safe*
+ * moment — the window has been in the background for 30 s, or nothing has been
+ * touched for ten minutes. An open modal is never a safe moment, so an
+ * unfinished form cannot be thrown away mid-edit, and pending DB writes are
+ * flushed before the installer starts.
+ *
+ * The client itself defaults to "ask" — nothing downloads or restarts until the
+ * app shell has read the stored preference — and `update_mode = "ask"` restores
+ * the old behaviour exactly: check, banner, install on click. Flipping the
+ * switch back and forth never loses a download that is already staged.
+ *
  * ── Why there is a second path ─────────────────────────────────────────────
  * The plugin's check() is a black box that either works or throws. A single
  * failed install (NSIS registry entry missing after a per-machine install, a
@@ -40,8 +56,12 @@ export interface UpdateState {
   /** Update metadata available from the feed. */
   version: string;
   notes: string;
-  /** "available" → idle prompt; "downloading" → progress 0..1; "ready" → restart pending. */
-  phase: "available" | "downloading" | "ready";
+  /**
+   * "available" → found but not downloaded; "downloading" → progress 0..1;
+   * "staged" → downloaded, waiting for a safe moment to install;
+   * "ready" → installing and restarting.
+   */
+  phase: "available" | "downloading" | "staged" | "ready";
   /** 0..1 download progress; only meaningful while downloading. */
   progress: number;
   /**
@@ -69,6 +89,15 @@ export interface UpdateDiagnostics {
   selfInstall: boolean;
 }
 
+/**
+ * How this machine applies updates (Settings → About).
+ *
+ * - "auto": download as soon as an update is found, install it at the first
+ *   safe moment — no click. The default.
+ * - "ask": check, tell the user, install only when they click.
+ */
+export type UpdateMode = "auto" | "ask";
+
 type Listener = (state: UpdateState | null) => void;
 type DiagnosticsListener = (diag: UpdateDiagnostics) => void;
 
@@ -82,6 +111,24 @@ let diagnostics: UpdateDiagnostics = {
   selfInstall: true,
 };
 let checkTimer: number | null = null;
+/**
+ * How this machine applies updates — set from Settings → About.
+ *
+ * Defaults to the non-destructive mode: nothing downloads or restarts until
+ * the app shell has read the stored preference and called `setUpdateMode` (a
+ * fresh install stores "auto"). A build that forgets to wire the setting asks
+ * instead of restarting itself.
+ */
+let updateMode: UpdateMode = "ask";
+/** A downloaded package, held until a safe moment to install it. */
+let staged: Update | null = null;
+/** In-flight background download (dedupes the hourly check and the toggle). */
+let backgroundDownload: Promise<void> | null = null;
+/** Last pointer/keyboard/wheel input, ms epoch — the idle clock. */
+let lastInteractionAt = Date.now();
+/** When the window went to the background, or null while it is on screen. */
+let hiddenSince: number | null = null;
+let applyTimer: number | null = null;
 
 /**
  * The release feed the Tauri updater reads is a release *asset*, and GitHub
@@ -208,6 +255,12 @@ export function checkForUpdates(): Promise<string | null> {
   if (!isUpdateSupported()) return Promise.resolve(null);
   if (checking) return checking;
   checking = (async () => {
+    // An update that is already downloaded (or downloading) is not up for
+    // re-decision: re-running the check would overwrite the staged state the
+    // installer is waiting on, and the next hourly check would then never
+    // install it.
+    if (staged || state?.phase === "downloading") return state?.version ?? null;
+
     let pluginError: string | null = null;
     let update: Update | null = null;
 
@@ -218,7 +271,6 @@ export function checkForUpdates(): Promise<string | null> {
     }
 
     if (update) {
-      if (state?.phase === "downloading") return state.version; // already on it
       emit({
         version: update.version,
         notes: update.body ?? "",
@@ -232,6 +284,9 @@ export function checkForUpdates(): Promise<string | null> {
         feedVersion: update.version,
         selfInstall: true,
       });
+      // Unattended machines download straight away; the install itself waits
+      // for a safe moment (see applyStagedUpdateIfSafe).
+      if (updateMode === "auto") void beginBackgroundDownload(update);
       return update.version;
     }
 
@@ -249,7 +304,6 @@ export function checkForUpdates(): Promise<string | null> {
     });
 
     if (feedVersion && isNewer(feedVersion, __APP_VERSION__)) {
-      if (state?.phase === "downloading") return state.version;
       // A clean "no update" from the plugin means the BINARY is already at
       // (or beyond) the feed version while this page is older: the update was
       // installed but the UI is still served from a stale shell cache. That is
@@ -273,6 +327,203 @@ export function checkForUpdates(): Promise<string | null> {
   });
 }
 
+// ── Unattended installation ───────────────────────────────────────────────
+
+/**
+ * How long the app must be left alone before a staged update installs itself.
+ *
+ * Ten minutes of no input is a consultation room with nobody at the keyboard;
+ * thirty seconds in the background is a window the user has walked away from.
+ * Either is long enough that the restart lands between appointments instead of
+ * in the middle of one.
+ */
+export const AUTO_INSTALL_IDLE_MS = 10 * 60 * 1000;
+export const AUTO_INSTALL_HIDDEN_MS = 30 * 1000;
+
+/** How often a staged update re-checks whether the moment has come. */
+const AUTO_INSTALL_POLL_MS = 30 * 1000;
+
+export interface AutoApplyContext {
+  now: number;
+  /** Last pointer/keyboard/wheel input, ms epoch. */
+  lastInteractionAt: number;
+  /** When the window went to the background, or null while it is on screen. */
+  hiddenSince: number | null;
+  /** A modal is open — the user may have an unfinished form on screen. */
+  dialogOpen: boolean;
+}
+
+/**
+ * Is this a moment where restarting the app costs the user nothing?
+ *
+ * Pure so the ruling is testable and stated in one place: an open modal always
+ * says no, otherwise the app must have been untouched for ten minutes or the
+ * window in the background for thirty seconds.
+ */
+export function shouldAutoApply(ctx: AutoApplyContext): boolean {
+  if (ctx.dialogOpen) return false;
+  if (ctx.hiddenSince !== null && ctx.now - ctx.hiddenSince >= AUTO_INSTALL_HIDDEN_MS) return true;
+  return ctx.now - ctx.lastInteractionAt >= AUTO_INSTALL_IDLE_MS;
+}
+
+/** The live inputs `shouldAutoApply` rules on. */
+function liveContext(): AutoApplyContext {
+  const doc = typeof document === "undefined" ? null : document;
+  if (doc && hiddenSince === null && doc.visibilityState === "hidden") hiddenSince = Date.now();
+  return {
+    now: Date.now(),
+    lastInteractionAt,
+    hiddenSince,
+    // Radix dialogs set role="dialog"; the setup wizard is marked the same way.
+    dialogOpen: Boolean(doc?.querySelector('[role="dialog"], [aria-modal="true"]')),
+  };
+}
+
+/**
+ * Install the package downloaded by `beginBackgroundDownload`. Returns false
+ * when nothing is staged (the caller then downloads it the ordinary way).
+ *
+ * On Windows the NSIS installer exits this process, so everything that must
+ * survive — the doctor's data, the changelog for the post-update banner — is
+ * written before `install()` is called.
+ */
+export async function installStagedUpdate(): Promise<boolean> {
+  const update = staged;
+  if (!update) return false;
+  staged = null;
+  const notes = state?.notes ?? "";
+  flushDatabase();
+  saveUpdateNotesForNextBoot(update.version, notes);
+  emit({ version: update.version, notes, phase: "ready", progress: 1, mode: "installer" });
+  await update.install();
+  // Windows ended the process above; macOS and Linux only swap the files, so
+  // the new build has to be started explicitly.
+  await relaunch();
+  return true;
+}
+
+/**
+ * Apply a staged update when — and only when — the moment is safe. Called by
+ * the watcher timer and right after a download finishes. Returns true when the
+ * install was started.
+ */
+export async function applyStagedUpdateIfSafe(): Promise<boolean> {
+  // The staged handle — not the advertised state — is what decides: the check
+  // that survives it may have re-advertised the version.
+  if (!staged) return false;
+  if (updateMode !== "auto") return false;
+  if (!shouldAutoApply(liveContext())) return false;
+  try {
+    return await installStagedUpdate();
+  } catch (err) {
+    // A failed automatic install must not leave the app promising an update it
+    // cannot apply: fall back to the one-time installer download and say why.
+    emitDiagnostics({ lastError: `automatic install failed: ${errorMessage(err)}` });
+    emit(state ? { ...state, phase: "available", progress: 0, mode: "manual" } : null);
+    return false;
+  }
+}
+
+/**
+ * Download the pending update in the background, then install it as soon as
+ * the app is left alone. Failures are recorded, never fatal: the update stays
+ * advertised and the banner/card can still offer it by hand.
+ */
+async function beginBackgroundDownload(handle?: Update): Promise<void> {
+  if (backgroundDownload || staged) return;
+  const current = state;
+  if (!current || current.mode !== "installer") return;
+  const run = (async () => {
+    const update = handle ?? (await check({ timeout: 15_000 }));
+    if (!update) return;
+    emit({ ...current, phase: "downloading", progress: 0 });
+    let total = 0;
+    await update.download((event) => {
+      switch (event.event) {
+        case "Started":
+          total = event.data.contentLength ?? 0;
+          break;
+        case "Progress":
+          if (total > 0) {
+            emit({
+              ...(state ?? current),
+              phase: "downloading",
+              progress: Math.min(0.99, ((state?.progress ?? 0) * total + event.data.chunkLength) / total),
+            });
+          }
+          break;
+        case "Finished":
+          break;
+      }
+    });
+    staged = update;
+    emit({ version: update.version, notes: current.notes, phase: "staged", progress: 1, mode: "installer" });
+    await applyStagedUpdateIfSafe();
+  })();
+  backgroundDownload = run;
+  try {
+    await run;
+  } catch (err) {
+    emitDiagnostics({ lastError: `background download failed: ${errorMessage(err)}` });
+    if (state?.phase === "downloading") emit({ ...state, phase: "available", progress: 0 });
+  } finally {
+    backgroundDownload = null;
+  }
+}
+
+/**
+ * Set how this machine applies updates (Settings → About). Switching to
+ * "auto" while an update is already on offer starts its download right away
+ * instead of waiting up to an hour for the next check.
+ */
+export function setUpdateMode(mode: UpdateMode): void {
+  updateMode = mode;
+  if (mode !== "auto") return;
+  if (state?.phase === "available" && state.mode === "installer") void beginBackgroundDownload();
+  else void applyStagedUpdateIfSafe();
+}
+
+export function getUpdateMode(): UpdateMode {
+  return updateMode;
+}
+
+/**
+ * Watch for input, background the window and apply a staged update when the
+ * moment is safe. Returns a cleanup function; never runs outside Tauri desktop
+ * (the poller calls it).
+ */
+function watchForSafeMoment(): () => void {
+  lastInteractionAt = Date.now();
+  hiddenSince = document.visibilityState === "hidden" ? Date.now() : null;
+  const noteInteraction = () => {
+    lastInteractionAt = Date.now();
+    if (document.visibilityState === "visible") hiddenSince = null;
+  };
+  const onVisibility = () => {
+    hiddenSince = document.visibilityState === "hidden" ? Date.now() : null;
+  };
+  window.addEventListener("pointerdown", noteInteraction, { passive: true, capture: true });
+  window.addEventListener("keydown", noteInteraction, { passive: true, capture: true });
+  window.addEventListener("wheel", noteInteraction, { passive: true, capture: true });
+  document.addEventListener("visibilitychange", onVisibility);
+  applyTimer = window.setInterval(() => void applyStagedUpdateIfSafe(), AUTO_INSTALL_POLL_MS);
+  return () => {
+    window.removeEventListener("pointerdown", noteInteraction, { capture: true });
+    window.removeEventListener("keydown", noteInteraction, { capture: true });
+    window.removeEventListener("wheel", noteInteraction, { capture: true });
+    document.removeEventListener("visibilitychange", onVisibility);
+    if (applyTimer !== null) {
+      window.clearInterval(applyTimer);
+      applyTimer = null;
+    }
+  };
+}
+
+/** The in-flight background download, for tests that must await it. */
+export function __backgroundDownloadForTests(): Promise<void> {
+  return backgroundDownload ?? Promise.resolve();
+}
+
 /**
  * Download and install the pending update via the signed in-app updater, then
  * relaunch. The returned promise resolves when the installer has been launched
@@ -290,6 +541,9 @@ export async function installUpdate(): Promise<void> {
     await openManualUpdate();
     return;
   }
+  // Already downloaded in the background: install that copy instead of
+  // fetching a second one.
+  if (await installStagedUpdate()) return;
   emit({ ...current, phase: "downloading", progress: 0 });
   // Re-check to obtain a fresh Update handle (handles are single-use).
   const update = await check({ timeout: 15_000 });
@@ -370,6 +624,7 @@ const CHECK_INTERVAL_MS = 60 * 60 * 1000;
  */
 export function startUpdatePoller(): () => void {
   if (!isUpdateSupported()) return () => undefined;
+  const stopWatching = watchForSafeMoment();
   // Give the app time to boot and the clinic a moment before the first probe.
   const initial = window.setTimeout(() => {
     void checkForUpdates();
@@ -378,6 +633,7 @@ export function startUpdatePoller(): () => void {
   return () => {
     window.clearTimeout(initial);
     if (checkTimer !== null) window.clearInterval(checkTimer);
+    stopWatching();
   };
 }
 
@@ -388,6 +644,11 @@ export function __resetUpdateStateForTests(): void {
   state = null;
   diagnostics = { lastCheckedAt: null, lastError: null, feedVersion: null, selfInstall: true };
   checking = null;
+  staged = null;
+  backgroundDownload = null;
+  updateMode = "ask";
+  lastInteractionAt = Date.now();
+  hiddenSince = null;
   if (checkTimer !== null) {
     window.clearInterval(checkTimer);
     checkTimer = null;

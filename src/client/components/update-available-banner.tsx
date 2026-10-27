@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Download, Loader2, Wrench, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
+  getUpdateState,
   installUpdate,
   isUpdateSupported,
   openManualUpdate,
@@ -20,6 +21,10 @@ import {
  * installer download, or a cache repair for a stale UI.
  *
  * Dismissing remembers the version, so it never nags twice for the same one.
+ *
+ * A downloaded ("staged") update keeps the banner up with an "Install now"
+ * action, because on an automatically-updating machine the restart can be
+ * hours away — whenever the clinic next walks away from the app.
  */
 
 const DISMISSED_KEY = "dental-canvas:update-available-dismissed";
@@ -33,7 +38,10 @@ function readDismissed(): string | null {
 }
 
 export function UpdateAvailableBanner() {
-  const [update, setUpdate] = useState<UpdateState | null>(null);
+  // Start from what the updater already knows: an update found before this
+  // mounted (the hourly check runs app-wide) is on screen immediately instead
+  // of waiting for the first subscription callback.
+  const [update, setUpdate] = useState<UpdateState | null>(() => getUpdateState());
   const [dismissed, setDismissed] = useState<string | null>(() => readDismissed());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,8 +52,10 @@ export function UpdateAvailableBanner() {
   }, []);
 
   if (!isUpdateSupported()) return null;
-  if (!update || update.phase !== "available") return null;
+  if (!update) return null;
+  if (update.phase !== "available" && update.phase !== "staged") return null;
   if (dismissed === update.version) return null;
+  const staged = update.phase === "staged";
 
   const dismiss = () => {
     try {
@@ -70,15 +80,29 @@ export function UpdateAvailableBanner() {
     }
   };
 
-  const label =
-    update.mode === "repair"
+  const label = staged
+    ? `Version ${update.version} is ready to install`
+    : update.mode === "repair"
       ? "This screen is out of date — repair cached files"
       : update.mode === "manual"
         ? `Version ${update.version} is available — download the installer`
         : `Version ${update.version} is available`;
 
-  const action =
-    update.mode === "repair" ? "Repair & reload" : update.mode === "manual" ? "Download installer" : "Download & install";
+  const action = staged
+    ? "Install now"
+    : update.mode === "repair"
+      ? "Repair & reload"
+      : update.mode === "manual"
+        ? "Download installer"
+        : "Download & install";
+
+  const hint = staged
+    ? "It installs itself and restarts the app the next time it is left alone. Your patient data is not affected."
+    : update.mode === "repair"
+      ? "Your patient data is not affected."
+      : update.mode === "manual"
+        ? "Run the installer once; updates are automatic again afterwards."
+        : "Downloads in the background, then restarts the app.";
 
   return (
     <div
@@ -89,13 +113,7 @@ export function UpdateAvailableBanner() {
         <Download className="mt-0.5 h-5 w-5 shrink-0 text-teal-600 dark:text-teal-400" aria-hidden />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">{label}</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {update.mode === "repair"
-              ? "Your patient data is not affected."
-              : update.mode === "manual"
-                ? "Run the installer once; updates are automatic again afterwards."
-                : "Downloads in the background, then restarts the app."}
-          </p>
+          <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
           {error && <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{error}</p>}
         </div>
         <div className="flex shrink-0 items-start gap-1">

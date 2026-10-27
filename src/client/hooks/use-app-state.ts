@@ -30,6 +30,12 @@ export interface PracticeSettings {
   reminders_enabled: boolean;
   /** Minutes before the appointment to raise the reminder. */
   reminder_minutes: number;
+  /**
+   * In-app updates (desktop only, Settings → About): "auto" downloads as soon
+   * as one is found and installs it at the first safe moment, "ask" waits for
+   * a click. Never silently left undefined — see parseSettings.
+   */
+  update_mode: "auto" | "ask";
 }
 
 /** Auto-backup schedule (see src/client/hooks/use-auto-backup.ts). */
@@ -67,6 +73,7 @@ const DEFAULT_SETTINGS: PracticeSettings = {
   currency: "USD",
   reminders_enabled: true,
   reminder_minutes: 15,
+  update_mode: "auto",
 };
 
 export const DEFAULT_PROFILE: ProfileSettings = {
@@ -108,6 +115,9 @@ function parseSettings(raw: Record<string, string>): PracticeSettings {
     currency: raw.currency === "BDT" ? "BDT" : "USD",
     reminders_enabled: raw.reminders_enabled !== "0",
     reminder_minutes: Math.min(Math.max(num("reminder_minutes"), 1), 240),
+    // Anything but a stored "ask" means unattended updates: that is what a
+    // fresh install gets, and what an install predating this key gets too.
+    update_mode: raw.update_mode === "ask" ? "ask" : "auto",
   };
 }
 

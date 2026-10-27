@@ -12,7 +12,7 @@ import { Toaster } from "./components/ui/toast";
 import { useAutoBackup } from "./hooks/use-auto-backup";
 import { isTauriDesktop } from "./offline/activate";
 import { startDesktopBackupScheduler } from "./offline/desktop-backup";
-import { startUpdatePoller } from "./lib/updater";
+import { setUpdateMode, startUpdatePoller } from "./lib/updater";
 import { useDailyInventoryScan } from "./hooks/use-daily-inventory-scan";
 import { useDailyDigest } from "./hooks/use-daily-digest";
 import { useAppointmentReminders } from "./hooks/use-appointment-reminders";
@@ -90,6 +90,14 @@ export function App() {
     if (!isTauriDesktop()) return;
     return startUpdatePoller();
   }, []);
+
+  // How updates are applied comes from Settings → About (`update_mode`). Set
+  // imperatively rather than by restarting the poller, so flipping the switch
+  // never resets the hourly check or discards an update already downloaded.
+  useEffect(() => {
+    if (!isTauriDesktop() || state.loading) return;
+    setUpdateMode(state.settings.update_mode);
+  }, [state.loading, state.settings.update_mode]);
 
   // Once-per-day stock scan — refreshes low-stock/expiry alerts and the
   // dashboard notification panel (serverless: the timer lives in the browser).
