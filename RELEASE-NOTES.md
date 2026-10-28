@@ -1,3 +1,94 @@
+# Dental Canvas v1.4.25
+
+Released 2026-10-29.
+
+## The dashboard counts your day, not UTC's
+
+The headline card said **0 visits** on mornings when the agenda clearly showed
+a full day. The cause was the clock, not the data: the backend derived "today"
+from its own UTC timestamp, so anywhere east of UTC the app was still looking
+at yesterday for the first hours of the working day, and west of UTC it counted
+tomorrow's appointments as today's. Every number on the card — visits, chair
+utilization, new patients, returning patients, the bookable slots — was affected.
+The dashboard now asks for the clinic's own calendar day and the server answers
+for that day.
+
+The birthday board had the same bug in a nastier form: a patient whose birthday
+is today read *"Turns 37 tomorrow"*, and their card only said "today" the next
+day. Both screens now agree with the calendar on the wall.
+
+## The consultation panel stopped lying about errors
+
+When the server could not return a patient's record, the panel printed "No
+patient data yet" — the same thing it shows when there is genuinely no patient
+selected. A real failure looked like an empty practice. It now says the record
+could not be loaded, says that the record is still there, and offers **Try
+again**.
+
+## Readable in dark mode
+
+Several surfaces were drawn for light mode only:
+
+- The time chip on the patient list was white text on a near-white pill in dark
+  mode — the appointment times were simply invisible. It now contrasts on both
+  themes.
+- Upcoming visits, birthdays and dentist notes were pale blue panels under pale
+  text; all three have proper dark equivalents.
+- Appointment status labels (Scheduled, Confirmed, In Chair, No-show…) sit at a
+  contrast under 3:1 on the dark card and now carry a lighter dark-mode shade.
+- Same treatment for the lab "overdue" badge and the bucket name in Settings →
+  Storage.
+
+## One brand colour
+
+The dashboard was hard-coded sky-blue while everything else followed your
+brand accent, so changing the colour in Settings recoloured the whole app
+except the home screen. Buttons, the greeting, the avatar and the calendar's
+today marker now use the same accent everywhere.
+
+## Less repetition, less empty space
+
+- Upcoming rows printed the patient's name twice — once as the heading and
+  again at the start of the line below it. The second line now carries the
+treatment, date and time, with cleaner separators.
+- A `scheduled` appointment was labelled "Weekly Visit". It says **Scheduled**.
+- The returning-patient ring was coloured in the danger red, reading as a
+  problem, for a metric that is neither good nor bad. It has its own colour.
+- Stock alerts and dentist notes moved up under the patient lists: the right
+  rail ran ~500 px longer than the left column, leaving half the page empty.
+- Patient lists and the upcoming panel show skeleton rows while loading instead
+  of a line of text, so the panel no longer jumps when data arrives.
+- An empty day in the patient list now offers **Book a patient** instead of only
+  saying there is nothing there.
+
+## Phone layout
+
+- The update banner and toasts sat on top of the bottom navigation, hiding the
+  main way to move around the app. Both now clear it.
+- The patients table no longer scrolls sideways: email moves off the small
+  screen (it is still on the patient's record), names and phone numbers stay on
+  one line, and the badges stack.
+- The agenda's side panel had six tabs in a 320 px rail; the last two were
+  clipped to "Rev…". They are now a 3 × 2 grid and every label is legible.
+
+## Smaller things
+
+- The sidebar marks the current page for screen readers (`aria-current`), as
+  the bottom bar already did.
+- Calendar days announce the full date and whether appointments are booked,
+  instead of just a number.
+- The dashboard's bell was labelled "Notifications" but opens the agenda; it
+  now says what it does.
+
+## Under the hood
+
+- `GET /api/dashboard/summary` and `GET /api/dashboard/birthdays` accept the
+  caller's calendar day (`?today=YYYY-MM-DD`) and fall back to UTC when it is
+  absent or malformed, so tools that call them directly keep working.
+- Three tests cover it: a visit counted on the clinic's day and not the server's,
+  the malformed-parameter fallback, and a birthday read as today rather than
+  tomorrow.
+
 # Dental Canvas v1.4.24
 
 Released 2026-10-28.
