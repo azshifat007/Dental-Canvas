@@ -1,3 +1,82 @@
+# Dental Canvas v1.4.24
+
+Released 2026-10-28.
+
+## Updates install themselves now
+
+Every previous update path ended with a click in Settings → About, and nobody
+opens that card — which is how a clinic machine could sit on an old version for
+months while the releases page showed a newer one. The hourly check now
+downloads a new version as soon as it is found and installs it at the first
+quiet moment: ten minutes with nobody touching the app, or thirty seconds with
+the window in the background. An open dialog is never that moment, so a
+half-finished patient form is never thrown away, and pending writes are flushed
+before the installer starts and the app restarts itself.
+
+**Settings → About → App updates** has an *Install updates automatically*
+switch. Turning it off restores click-to-install exactly. The two fallbacks for
+machines that cannot update themselves — downloading the installer once, and
+repairing a stale cached page — are never used unattended: opening a browser or
+clearing caches stays your call. Update failures are still reported, never
+hidden, and an update you install by hand can now be started immediately from
+the banner instead of waiting for the next idle window.
+
+## The dashboard measures four different things
+
+The visits card said the same thing twice: new and returning counts appeared as
+tiles and again as gauges. The tiles are gone, and each ring now measures
+something only it measures — chair utilization for today, the new-patient goal,
+the share of today's visits that are repeat business, and the slots still
+bookable. The new-patient ring reads *3/10*, because the goal is ten new
+patients a day and a percentage of a goal you cannot see is not a number you
+can act on. Cancelled and no-show slots add no patients. The rings are redrawn
+from real circle geometry (the old arc length never matched the number beside
+it) in the design's flat style, and they animate in unless your system asks for
+reduced motion.
+
+## Launch at login
+
+**Settings → Appearance → Startup** starts Dental Canvas when you sign in — a
+Run key on Windows, a LaunchAgent on macOS, an autostart entry on Linux. The
+toggle reads the real OS state when the screen opens, so an entry disabled from
+Task Manager or systemd shows as off instead of lying.
+
+## Local backups carry the x-rays
+
+A local export now embeds the actual image files, not just their records, so
+importing it into a fresh installation restores every patient, visit,
+prescription, invoice **and** image. One end-to-end test exports a whole
+practice, imports it into an empty database and compares every table and every
+image byte for byte, so this cannot regress quietly.
+
+## Builds you can compare
+
+Two builds of the same commit now produce byte-identical frontends, on your
+machine and in CI. `npm run repro` builds `dist/` twice and fails on a single
+differing byte; the release publishes a `repro-manifest.json` with a
+`rootHash`, so `npm run repro` locally answers "is my build the software that
+was shipped?". Sorting the service-worker manifest, pinning `SOURCE_DATE_EPOCH`
+to the commit time, LF line endings everywhere and single-unit codegen removed
+the causes. See `docs/reproducible-builds.md`.
+
+Two guards keep the CSS honest, because a silent extra class is a silent
+different hash: the build now fails when the built class set drifts from
+`scripts/stylesheet-classes.txt`, and a package extracted in the checkout can no
+longer change it (Tailwind's sources are pinned, and the reproducibilty check
+warns about untracked files inside them). At tag time CI regenerates that
+snapshot from the reference build and refuses to publish a release whose CSS
+the repo does not claim.
+
+## Rust crates are locked
+
+`src-tauri/Cargo.lock` listed no Tauri plugins at all while the manifest
+depended on six, including the new autostart crate — and the release jobs build
+without `--locked`, so cargo quietly resolved whatever was missing and shipped
+crates nobody reviewed. The lock now describes the manifest (tauri 2.12.5,
+tauri-plugin-autostart 2.7.0, 517 packages) and a new CI job runs
+`cargo metadata --locked` on every push, so a dependency cannot sit unlocked
+again.
+
 # Dental Canvas v1.4.23
 
 Released 2026-10-21.
