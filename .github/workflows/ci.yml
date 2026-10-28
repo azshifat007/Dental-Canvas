@@ -59,6 +59,28 @@ jobs:
       - name: verify print template in build output
         run: node scripts/verify-two-column-ci.mjs
 
+  # ── Tauri plugin pairing ─────────────────────────────────────────────────
+  # The Tauri CLI rejects a desktop build whose Rust plugin crate and JS
+  # wrapper sit on different major.minor versions, and nothing checked that
+  # before a tag. v1.4.24's first release run died in all five package jobs in
+  # 64 seconds — before compiling anything — because Cargo.lock had resolved
+  # tauri-plugin-opener 2.7.2 next to @tauri-apps/plugin-opener 2.5.5.
+  #
+  # The script compares the two lockfiles, so this job needs no install, no
+  # Rust toolchain and no network: checkout plus node, a few seconds.
+  tauri-plugins:
+    name: tauri plugin versions pair up
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Rust crate and JS wrapper agree on major.minor
+        run: node scripts/check-tauri-plugin-versions.mjs
+
   # ── Rust dependency graph ────────────────────────────────────────────────
   # Nothing in CI used to open src-tauri/Cargo.lock, so a dependency added to
   # src-tauri/Cargo.toml could sit unlocked for as long as nobody noticed: the

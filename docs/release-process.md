@@ -17,6 +17,7 @@ npx tsc --noEmit   # typecheck
 npx vitest run     # tests
 npm run build      # builds app + sw.js, then checks the stylesheet class set
 npm run repro      # two builds must be byte-identical (docs/reproducible-builds.md)
+npm run lint:tauri-plugins   # Tauri plugin crates match the JS wrappers
 ```
 
 `npm run build` ends with the stylesheet class guard: the built CSS must match the
@@ -45,6 +46,18 @@ compare it against the release's `repro-manifest.json` to prove your local
 build is the same software CI shipped. To look inside a published package,
 follow [inspecting-a-release.md](inspecting-a-release.md) — unpack it in a temp
 directory, never in the checkout.
+
+`lint:tauri-plugins` (CI job **tauri plugin versions pair up**) compares each
+`tauri-plugin-*` crate in `src-tauri/Cargo.lock` with its
+`@tauri-apps/plugin-*` package in `pnpm-lock.yaml` and fails when the two
+disagree on major.minor. The Tauri CLI refuses to build a desktop package in
+that state, and the failure only shows up at tag time — v1.4.24's first release
+run died in all five package jobs before compiling anything, because the
+lockfile had resolved `tauri-plugin-opener` 2.7.2 next to
+`@tauri-apps/plugin-opener` 2.5.5. Fix it by moving the JS package to the
+crate's major.minor and reinstalling; pin the minor with `~` rather than `^`,
+otherwise the next install is free to resolve a newer minor on its own and
+reintroduce the mismatch.
 
 ## Ship
 
