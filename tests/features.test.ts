@@ -57,6 +57,40 @@ describe("birthday board", () => {
     expect(bella!.name).toBe("Bella Gomez");
   });
 
+  it("counts days from the clinic's local day when the client sends one", async () => {
+    const { patientId } = await seedFixtures();
+    // Fixed dates: today is the 14th, so Bella (born 1990-03-14) has her
+    // birthday today and the second patient's is two days out. Without the
+    // parameter the server would use UTC and drift by a day either side of
+    // midnight, which is what made a birthday read "tomorrow" on the day.
+    const setDob = async (id: number, dob: string) => {
+      const req = jsonRequest("PUT", `/api/patients/${id}`, { date_of_birth: dob });
+      await app.request(req.path, req.init, { DB: ctx.db });
+    };
+    await setDob(patientId, "1990-03-14");
+    const later = jsonRequest("POST", "/api/patients", {
+      first_name: "Later",
+      last_name: "Birdie",
+      date_of_birth: "1980-03-16",
+    });
+    const laterRes = await app.request(later.path, later.init, { DB: ctx.db });
+    const laterId = ((await laterRes.json()) as { patient: { id: number } }).patient.id;
+
+    const res = await app.request(
+      "/api/dashboard/birthdays?days=30&today=2026-03-14",
+      undefined,
+      { DB: ctx.db },
+    );
+    expect(res.status).toBe(200);
+    const { birthdays } = (await res.json()) as {
+      birthdays: { id: number; is_today: boolean; days_away: number; turning: number }[];
+    };
+    const bella = birthdays.find((b) => b.id === patientId);
+    expect(bella).toMatchObject({ is_today: true, days_away: 0, turning: 36 });
+    const late = birthdays.find((b) => b.id === laterId);
+    expect(late).toMatchObject({ is_today: false, days_away: 2 });
+  });
+
   it("returns empty list when no birthdays are in the window", async () => {
     const res = await app.request("/api/dashboard/birthdays?days=3", undefined, { DB: ctx.db });
     expect(res.status).toBe(200);

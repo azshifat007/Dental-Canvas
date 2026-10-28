@@ -123,6 +123,32 @@ describe("GET /api/dashboard/summary", () => {
     expect(data.new_patients).toBe(1);
   });
 
+  it("counts the calendar day the client sends, not the server's UTC day", async () => {
+    const pid = await seedPatient();
+    // A day that is never the server's UTC "today", so only the explicit
+    // ?today= parameter can pick these two visits up.
+    const clinicDay = new Date();
+    clinicDay.setUTCDate(clinicDay.getUTCDate() - 45);
+    const day = clinicDay.toISOString().slice(0, 10);
+    await seedAppointment({ patient_id: pid, start_time: `${day}T09:00:00`, end_time: `${day}T09:30:00` });
+    await seedAppointment({ patient_id: pid, start_time: `${day}T11:00:00`, end_time: `${day}T11:30:00` });
+
+    const utc = await app.request("/api/dashboard/summary", undefined, { DB: ctx.db });
+    expect(((await utc.json()) as { total_visits: number }).total_visits).toBe(0);
+
+    const local = await app.request(`/api/dashboard/summary?today=${day}`, undefined, { DB: ctx.db });
+    const data = (await local.json()) as { total_visits: number; new_patients_today: number };
+    expect(data.total_visits).toBe(2);
+    expect(data.new_patients_today).toBe(1);
+  });
+
+  it("falls back to UTC when today is not a valid date", async () => {
+    const res = await app.request("/api/dashboard/summary?today=29-10-2026", undefined, { DB: ctx.db });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { total_visits: number };
+    expect(data.total_visits).toBe(0);
+  });
+
   it("counts new and returning patients in today's chair for the goal rings", async () => {
     const firstTimer = await seedPatient({ first_name: "First", last_name: "Timer" });
     const regular = await seedPatient({ first_name: "Reg", last_name: "Ular" });

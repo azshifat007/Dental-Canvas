@@ -3992,7 +3992,17 @@ app.post("/api/backup/inspect", async (c) => {
 // ── Dashboard ─────────────────────────────────────────────────────
 
 app.get("/api/dashboard/summary", async (c) => {
-  const today = new Date().toISOString().slice(0, 10);
+  // "Today" is the clinic's calendar day, not UTC's. The Worker's clock is UTC,
+  // so for any practice east or west of it the UTC date is a day off for part
+  // of every day — at 09:00 in Dhaka (UTC+6) UTC still says yesterday, and the
+  // headline card reported 0 visits while four were booked. The client sends
+  // its own local date; an absent or malformed value falls back to UTC so the
+  // endpoint still works for scripts and tests.
+  const requestedToday = c.req.query("today");
+  const today =
+    requestedToday && /^\d{4}-\d{2}-\d{2}$/.test(requestedToday)
+      ? requestedToday
+      : new Date().toISOString().slice(0, 10);
   const startOfMonth = `${today.slice(0, 8)}01`;
   const prevMonthStart = (() => {
     const d = new Date(`${startOfMonth}T00:00:00`);
@@ -4149,7 +4159,15 @@ app.get("/api/dashboard/summary", async (c) => {
 app.get("/api/dashboard/birthdays", async (c) => {
   const days = Math.min(Math.max(parseInt(c.req.query("days") ?? "7", 10) || 7, 1), 60);
   const month = c.req.query("month"); // YYYY-MM, overrides ?days
-  const today = new Date();
+  // The clinic's calendar day, as the dashboard summary does: a UTC "today"
+  // pushed every birthday east of UTC a day out ("turns 37 tomorrow" on the
+  // morning of the birthday). Parsed as UTC midnight so the getUTC* helpers
+  // below read back the same calendar date either way.
+  const requestedToday = c.req.query("today");
+  const today =
+    requestedToday && /^\d{4}-\d{2}-\d{2}$/.test(requestedToday)
+      ? new Date(`${requestedToday}T00:00:00Z`)
+      : new Date();
 
   const rows = await query<{
     id: number; first_name: string | null; last_name: string | null;

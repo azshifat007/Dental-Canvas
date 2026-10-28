@@ -128,11 +128,13 @@ export function Toaster() {
     return () => timers.forEach((t) => window.clearTimeout(t));
   }, [items]);
 
+  // Lifted clear of the mobile bottom nav (which is ~4.5rem tall) so a toast
+  // never covers the primary navigation; desktop has no bottom bar.
   return (
     <div
       aria-live="polite"
       aria-label="Notifications"
-      className="pointer-events-none fixed bottom-4 right-4 z-[60] flex w-[min(92vw,380px)] flex-col gap-2 print:hidden"
+      className="pointer-events-none fixed bottom-24 right-4 z-[60] flex w-[min(92vw,380px)] flex-col gap-2 print:hidden md:bottom-4"
     >
       {items.map((t) => {
         const style = TONE_STYLE[t.tone];

@@ -128,7 +128,10 @@ export function StorageTab() {
                   <>
                     <CheckCircle2 className="h-4 w-4 shrink-0" />
                     Storage is <strong className="font-semibold">configured</strong> — uploads go to{" "}
-                    <code className="rounded bg-emerald-100/70 px-1">{bucket || "the bucket"}</code>.
+                    <code className="rounded bg-emerald-100/70 px-1 dark:bg-emerald-950/60 dark:text-emerald-200">
+                      {bucket || "the bucket"}
+                    </code>
+                    {"."}
                   </>
                 )
               ) : (

@@ -131,7 +131,7 @@ export function UpdateAppliedBanner() {
   return (
     <div
       role="status"
-      className="fixed bottom-4 left-1/2 z-50 w-[min(92vw,560px)] -translate-x-1/2 rounded-lg border border-teal-300 bg-card px-4 py-3 shadow-lg dark:border-teal-800 print:hidden"
+      className="fixed bottom-24 left-1/2 z-50 w-[min(92vw,560px)] -translate-x-1/2 rounded-lg border border-teal-300 bg-card px-4 py-3 shadow-lg dark:border-teal-800 print:hidden md:bottom-4"
     >
       <div className="flex items-start gap-3">
         <PartyPopper className="mt-0.5 h-5 w-5 shrink-0 text-teal-600 dark:text-teal-400" aria-hidden />

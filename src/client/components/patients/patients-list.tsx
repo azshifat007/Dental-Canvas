@@ -81,19 +81,32 @@ export function PatientsList({ navigate }: { navigate: (to: string) => void }) {
         <Card className="overflow-hidden">
           <Table>
             <TableHeader>
+              {/* Email is the one column that can be dropped on a phone
+                  without losing what the list is for: with it visible the
+                  table scrolled sideways and every row wrapped to three
+                  lines. It stays available on the patient's record. */}
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>DOB</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Phone</TableHead>
-                <TableHead>Alerts</TableHead>
+                {/* Name claims the leftover width so "Villanueva, Marta"
+                    stays on one line on a phone. */}
+                <TableHead className="w-full px-2 sm:px-3">Name</TableHead>
+                <TableHead className="hidden px-2 sm:table-cell sm:px-3">DOB</TableHead>
+                <TableHead className="hidden sm:table-cell">Email</TableHead>
+                <TableHead className="px-2 sm:px-3">Phone</TableHead>
+                <TableHead className="px-2 sm:px-3">Alerts</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading && visible.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
-                    Loading…
+                  <TableCell colSpan={5} aria-hidden className="py-6">
+                    {/* Skeleton rows, matching the list's real rhythm. */}
+                    {[0, 1, 2, 3].map((i) => (
+                      <div key={i} className="flex items-center gap-4 py-2.5">
+                        <div className="h-3 w-40 animate-pulse rounded bg-muted" />
+                        <div className="h-3 w-20 animate-pulse rounded bg-muted" />
+                        <div className="h-3 flex-1 animate-pulse rounded bg-muted" />
+                      </div>
+                    ))}
                   </TableCell>
                 </TableRow>
               ) : visible.length === 0 && !q ? (
@@ -130,37 +143,45 @@ export function PatientsList({ navigate }: { navigate: (to: string) => void }) {
                     onClick={() => navigate(`/patients/${p.id}`)}
                     className="group cursor-pointer"
                   >
-                    <TableCell className="font-medium">
+                    <TableCell className="px-2 font-medium sm:px-3">
                       {p.last_name}, {p.first_name}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">
+                    <TableCell className="hidden whitespace-nowrap px-2 text-muted-foreground sm:table-cell sm:px-3">
                       {p.date_of_birth ? formatDate(p.date_of_birth) : "—"}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{p.email ?? "—"}</TableCell>
-                    <TableCell className="text-muted-foreground">{p.phone ?? "—"}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
+                    <TableCell className="hidden text-muted-foreground sm:table-cell">
+                      {p.email ?? "—"}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap px-2 text-muted-foreground tabular-nums sm:px-3">
+                      {p.phone ?? "—"}
+                    </TableCell>
+                    <TableCell className="px-2 sm:px-3">
+                      {/* Stacked on a phone, inline on a desktop: side by
+                          side they pushed the table into a horizontal
+                          scroll. The pencil is a hover affordance and is
+                          dropped on touch, where the whole row opens the
+                          record anyway. */}
+                      <div className="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-2">
                         {(balances[p.id] ?? 0) > 0 && (
                           <span
-                            className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-800 dark:bg-rose-950 dark:text-rose-200"
+                            className="inline-flex items-center whitespace-nowrap rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-800 dark:bg-rose-950 dark:text-rose-200"
                             title="Outstanding balance"
                           >
                             owes {formatMoney(balances[p.id])}
                           </span>
                         )}
-                        <div className="flex items-center justify-between gap-2">
                         {p.medical_alerts ? (
-                          <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-800 dark:bg-rose-950 dark:text-rose-200">
+                          <span className="inline-flex items-center whitespace-nowrap rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-800 dark:bg-rose-950 dark:text-rose-200">
                             {p.medical_alerts.split(",").length} alert{p.medical_alerts.split(",").length === 1 ? "" : "s"}
                           </span>
                         ) : (
-                          <span className="text-muted-foreground">—</span>
+                          (balances[p.id] ?? 0) <= 0 && <span className="text-muted-foreground">—</span>
                         )}
                         <button
                           type="button"
                           title="Quick edit"
                           aria-label={`Quick edit ${p.first_name} ${p.last_name}`}
-                          className="rounded p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+                          className="hidden rounded p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 sm:inline-flex"
                           onClick={(e) => {
                             e.stopPropagation();
                             setEditing(p);
@@ -169,7 +190,6 @@ export function PatientsList({ navigate }: { navigate: (to: string) => void }) {
                         >
                           <Pencil className="h-3.5 w-3.5" />
                         </button>
-                        </div>
                       </div>
                     </TableCell>
                   </TableRow>

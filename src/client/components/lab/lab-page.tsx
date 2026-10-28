@@ -88,7 +88,7 @@ export function LabPage({ navigate }: { navigate: (to: string) => void }) {
         </h1>
         <div className="ml-auto flex items-center gap-2">
           {overdueCount > 0 && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-800">
+            <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-800 dark:bg-rose-950 dark:text-rose-200">
               <AlertTriangle className="h-3 w-3" />
               {overdueCount} overdue
             </span>

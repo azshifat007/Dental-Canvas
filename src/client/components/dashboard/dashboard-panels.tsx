@@ -101,22 +101,25 @@ interface ListAppointment {
   patient_last_name: string | null;
 }
 
+// Each status carries a tint that also works on the dark card: the 700 steps
+// are unreadable there (sky-700 on oklch(0.2) is under 3:1), so every entry
+// pairs a light and a dark shade.
 const STATUS_LABELS: Record<string, { label: string; classes: string }> = {
-  scheduled: { label: "Weekly Visit", classes: "text-sky-700" },
-  confirmed: { label: "Confirmed",    classes: "text-teal-700" },
-  arrived:   { label: "Arrived",       classes: "text-emerald-700" },
-  in_chair:  { label: "In Chair",      classes: "text-violet-700" },
-  completed: { label: "Completed",     classes: "text-emerald-700" },
-  no_show:   { label: "No-show",       classes: "text-rose-700" },
-  cancelled: { label: "Cancelled",     classes: "text-muted-foreground" },
+  scheduled: { label: "Scheduled",  classes: "text-sky-700 dark:text-sky-300" },
+  confirmed: { label: "Confirmed",  classes: "text-teal-700 dark:text-teal-300" },
+  arrived:   { label: "Arrived",    classes: "text-emerald-700 dark:text-emerald-300" },
+  in_chair:  { label: "In Chair",   classes: "text-violet-700 dark:text-violet-300" },
+  completed: { label: "Completed",  classes: "text-emerald-700 dark:text-emerald-300" },
+  no_show:   { label: "No-show",    classes: "text-rose-700 dark:text-rose-300" },
+  cancelled: { label: "Cancelled",  classes: "text-muted-foreground" },
 };
 
 const AVATAR_TONES = [
-  "bg-amber-200 text-amber-900",
-  "bg-emerald-200 text-emerald-900",
-  "bg-violet-200 text-violet-900",
-  "bg-rose-200 text-rose-900",
-  "bg-sky-200 text-sky-900",
+  "bg-amber-200 text-amber-900 dark:bg-amber-400/20 dark:text-amber-200",
+  "bg-emerald-200 text-emerald-900 dark:bg-emerald-400/20 dark:text-emerald-200",
+  "bg-violet-200 text-violet-900 dark:bg-violet-400/20 dark:text-violet-200",
+  "bg-rose-200 text-rose-900 dark:bg-rose-400/20 dark:text-rose-200",
+  "bg-sky-200 text-sky-900 dark:bg-sky-400/20 dark:text-sky-200",
 ];
 
 function Avatar({ name, index }: { name: string; index: number }) {
@@ -191,11 +194,27 @@ export function PatientListPanel({ navigate }: { navigate: (to: string) => void 
 
       <div className="mt-3 space-y-1.5">
         {loading ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">Loading…</p>
+          <div className="space-y-1.5" aria-hidden>
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="flex items-center gap-3 px-2 py-2">
+                <div className="h-9 w-9 shrink-0 animate-pulse rounded-full bg-muted" />
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <div className="h-3 w-1/2 animate-pulse rounded bg-muted" />
+                  <div className="h-2.5 w-1/3 animate-pulse rounded bg-muted" />
+                </div>
+              </div>
+            ))}
+          </div>
         ) : items.length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">
-            No visits {filter === "today" ? "today" : "this week"}.
-          </p>
+          <div className="flex flex-col items-center gap-2.5 px-2 py-6 text-center">
+            <p className="text-sm text-muted-foreground">
+              No visits {filter === "today" ? "today" : "this week"}.
+            </p>
+            <Button variant="outline" size="sm" onClick={openQuickRegister}>
+              <UserPlus className="h-4 w-4" />
+              Book a patient
+            </Button>
+          </div>
         ) : (
           items.slice(0, 6).map((a, i) => {
             const name = [a.patient_first_name, a.patient_last_name].filter(Boolean).join(" ") || "Walk-in";
@@ -217,7 +236,10 @@ export function PatientListPanel({ navigate }: { navigate: (to: string) => void 
                   <span className="block truncate text-sm font-semibold">{name}</span>
                   <span className={cn("block text-xs font-medium", status.classes)}>{status.label}</span>
                 </span>
-                <span className="rounded-md bg-foreground px-2 py-1 text-[11px] font-semibold tabular-nums text-white">
+                {/* text-background, not text-white: the chip is an inverted
+                    surface, and in dark mode the foreground is near-white, so
+                    white text on it was invisible. */}
+                <span className="shrink-0 rounded-md bg-foreground px-2 py-1 text-[11px] font-semibold tabular-nums text-background">
                   {time}
                 </span>
               </button>
@@ -269,11 +291,17 @@ export function ConsultationPanel({ navigate }: { navigate: (to: string) => void
   const [patient, setPatient] = useState<Patient | null>(null);
   const [data, setData] = useState<ConsultationData | null>(null);
   const [loading, setLoading] = useState(true);
+  /** True when the request itself failed — different from "no patient yet",
+   *  which used to be shown for both and hid real server errors. */
+  const [failed, setFailed] = useState(false);
+  /** Bumped by the Retry button to re-run patient discovery. */
+  const [retry, setRetry] = useState(0);
   /** Whether the prescription editor is open for the selected patient. */
   const [rxOpen, setRxOpen] = useState(false);
 
   const loadFor = useCallback(async (pid: number | null) => {
     setLoading(true);
+    setFailed(false);
     try {
       if (pid) {
         // The endpoint returns the consultation object flat ({patient, ...}),
@@ -287,6 +315,8 @@ export function ConsultationPanel({ navigate }: { navigate: (to: string) => void
       }
     } catch {
       setData(null);
+      setPatient(null);
+      setFailed(true);
     } finally {
       setLoading(false);
     }
@@ -320,13 +350,16 @@ export function ConsultationPanel({ navigate }: { navigate: (to: string) => void
           }
         }
       } catch {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setFailed(true);
+          setLoading(false);
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [loadFor]);
+  }, [loadFor, retry]);
 
   const age = ageFromDob(patient?.date_of_birth ?? null);
 
@@ -338,7 +371,7 @@ export function ConsultationPanel({ navigate }: { navigate: (to: string) => void
           <div className="flex items-center gap-1.5">
             <Button
               size="sm"
-              className="h-8 rounded-lg bg-sky-600 text-white hover:bg-sky-700 dark:bg-sky-500 dark:text-sky-950 dark:hover:bg-sky-400"
+              className="h-8 rounded-lg"
               onClick={() => setRxOpen(true)}
             >
               <FilePlus2 className="h-4 w-4" /> New Prescription
@@ -367,6 +400,16 @@ export function ConsultationPanel({ navigate }: { navigate: (to: string) => void
           <div className="h-14 animate-pulse rounded-xl bg-muted" />
           <div className="h-20 animate-pulse rounded-xl bg-muted" />
           <div className="h-24 animate-pulse rounded-xl bg-muted" />
+        </div>
+      ) : failed ? (
+        <div className="flex flex-col items-center gap-3 py-10 text-center" role="alert">
+          <p className="text-sm font-medium">Couldn't load this patient's details.</p>
+          <p className="text-xs text-muted-foreground">
+            The record is still there — this panel just couldn't read it.
+          </p>
+          <Button variant="outline" size="sm" onClick={() => setRetry((n) => n + 1)}>
+            Try again
+          </Button>
         </div>
       ) : !patient || !data ? (
         <div className="flex flex-col items-center gap-3 py-10 text-center">
@@ -592,7 +635,8 @@ export function DentistNotesPanel() {
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold tracking-tight">Dentist Notes</h2>
         <Button
-          size="sm"           className="h-8 rounded-lg bg-sky-600 text-white hover:bg-sky-700 dark:bg-sky-500 dark:text-sky-950 dark:hover:bg-sky-400"
+          size="sm"
+          className="h-8 rounded-lg"
           onClick={() => setDialogOpen(true)}
         >
           <Plus className="h-4 w-4" /> Add new note
@@ -608,13 +652,13 @@ export function DentistNotesPanel() {
           notes.slice(0, 5).map((n) => (
             <div
               key={n.id}
-              className="group flex items-start gap-2 rounded-xl bg-sky-50/80 px-3 py-2.5 text-sm text-sky-950"
+              className="group flex items-start gap-2 rounded-xl bg-sky-50/80 px-3 py-2.5 text-sm text-sky-950 dark:bg-sky-950/30 dark:text-sky-100"
             >
               <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{n.body}</span>
               <button
                 type="button"
                 onClick={() => remove(n.id)}
-                className="shrink-0 rounded p-1 text-sky-700/50 opacity-0 transition-opacity hover:bg-sky-100 hover:text-rose-600 focus:opacity-100 group-hover:opacity-100"
+                className="shrink-0 rounded p-1 text-sky-700/50 opacity-0 transition-opacity hover:bg-sky-100 hover:text-rose-600 focus:opacity-100 group-hover:opacity-100 dark:text-sky-300/60 dark:hover:bg-sky-900/60 dark:hover:text-rose-300"
                 aria-label="Delete note"
               >
                 <Trash2 className="h-3.5 w-3.5" />

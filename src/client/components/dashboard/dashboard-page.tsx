@@ -76,7 +76,9 @@ export function DashboardPage({
     let cancelled = false;
     (async () => {
       try {
-        const res = await api<DashboardSummary>("GET", "/api/dashboard/summary");
+        // The server's clock is UTC; send the clinic's own calendar day so a
+        // 9am appointment in UTC+6 is not counted against yesterday.
+        const res = await api<DashboardSummary>("GET", `/api/dashboard/summary?today=${toIsoDate(new Date())}`);
         if (!cancelled) setSummary(res);
       } catch (err) {
         app.setError((err as Error).message);
@@ -109,12 +111,13 @@ export function DashboardPage({
           size="icon"
           className="h-11 w-11 rounded-xl bg-card shadow-sm"
           onClick={() => navigate("/agenda")}
-          aria-label="Notifications"
+          aria-label="Open the agenda"
+          title="Open the agenda"
         >
           <Bell className="h-4 w-4" />
         </Button>
         <Button
-          className="h-11 rounded-xl bg-sky-600 shadow-sm hover:bg-sky-700 dark:bg-sky-500 dark:text-sky-950 dark:hover:bg-sky-400"
+          className="h-11 rounded-xl shadow-sm"
           onClick={openQuickRegister}
         >
           <UserPlus className="h-4 w-4" />
@@ -126,7 +129,7 @@ export function DashboardPage({
       {/* Greeting */}
       <div className="px-4 pb-4 pt-5 md:px-6">
         <h1 className="text-2xl font-bold tracking-tight">
-          {greeting()}, <span className="text-sky-600">{doctorDisplayName(app.profile.doctor_name)}</span>{" "}
+          {greeting()}, <span className="text-primary">{doctorDisplayName(app.profile.doctor_name)}</span>{" "}
           <span aria-hidden>👋🦷</span>
         </h1>
       </div>
@@ -139,14 +142,20 @@ export function DashboardPage({
             <PatientListPanel navigate={navigate} />
             <ConsultationPanel navigate={navigate} />
           </div>
+          {/* Stock alerts and notes sit under the lists rather than at the
+              bottom of the rail: the rail's three dated cards already run
+              longer, and keeping all five there left half the left column
+              empty on a wide screen. */}
+          <div className="stagger grid min-w-0 gap-4 lg:grid-cols-2">
+            <InventoryAlertsPanel navigate={navigate} />
+            <DentistNotesPanel />
+          </div>
         </div>
 
         <div className="stagger flex min-w-0 flex-col gap-4">
           <ScheduleCard navigate={navigate} />
           <UpcomingCard summary={summary} loading={loading} navigate={navigate} />
           <BirthdaysCard navigate={navigate} />
-          <InventoryAlertsPanel navigate={navigate} />
-          <DentistNotesPanel />
         </div>
       </div>
     </div>
@@ -174,7 +183,7 @@ function AvatarBadge({ navigate }: { navigate: (to: string) => void }) {
       type="button"
       onClick={() => navigate("/settings")}
       title="Open settings"
-      className="flex h-11 w-11 items-center justify-center rounded-full bg-sky-600 text-sm font-semibold text-white shadow-sm transition-transform hover:scale-105 dark:bg-sky-500 dark:text-sky-950"
+      className="flex h-11 w-11 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground shadow-sm transition-transform hover:scale-105"
     >
       {initial}
     </button>
@@ -212,7 +221,7 @@ function VisitsCard({ summary, loading }: { summary: DashboardSummary | null; lo
           <h2 className="text-lg font-semibold tracking-tight">Patient Visits</h2>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <span className="hidden text-[11px] font-medium text-muted-foreground sm:inline">vs last month</span>
+          <span className="text-[11px] font-medium text-muted-foreground">vs last month</span>
           <DeltaBadge pct={m.visitsDelta} />
         </div>
       </div>
@@ -289,7 +298,7 @@ function VisitsCard({ summary, loading }: { summary: DashboardSummary | null; lo
               ? "Returning patients today: loading"
               : `Returning patients: ${m.returningToday} of today's ${m.visits} visits, ${Math.round(m.returningShare)} percent`
           }
-          tone="rose"
+          tone="violet"
         />
         <MiniStatRing
           icon={<Armchair className="h-4 w-4" />}
@@ -407,12 +416,18 @@ function ScheduleCard({ navigate }: { navigate: (to: string) => void }) {
               type="button"
               onClick={() => navigate(`/agenda?date=${iso}`)}
               style={{ "--stagger-i": Math.min(i, 30) } as React.CSSProperties}
+              aria-label={`${new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
+                weekday: "long",
+                day: "numeric",
+                month: "long",
+                year: "numeric",
+              })}${isToday ? ", today" : ""}${hasVisits ? ", appointments booked" : ""}`}
               className={cn(
                 "animate-day mx-auto flex h-8 w-8 items-center justify-center rounded-lg text-sm transition-colors",
                 isToday
-                  ? "bg-sky-500 font-semibold text-white"
+                  ? "bg-primary font-semibold text-primary-foreground"
                   : hasVisits
-                    ? "bg-sky-100 font-medium text-sky-900 hover:bg-sky-200"
+                    ? "bg-primary/10 font-medium text-primary hover:bg-primary/20"
                     : "hover:bg-accent",
               )}
             >
@@ -434,7 +449,10 @@ function BirthdaysCard({ navigate }: { navigate: (to: string) => void }) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await api<{ birthdays: Birthday[] }>("GET", "/api/dashboard/birthdays?days=30");
+        const res = await api<{ birthdays: Birthday[] }>(
+          "GET",
+          `/api/dashboard/birthdays?days=30&today=${toIsoDate(new Date())}`,
+        );
         if (!cancelled) setBirthdays(res.birthdays);
       } catch {
         if (!cancelled) setBirthdays([]); // non-critical panel — fail quiet
@@ -483,9 +501,9 @@ function BirthdaysCard({ navigate }: { navigate: (to: string) => void }) {
                 key={b.id}
                 type="button"
                 onClick={() => navigate(`/patients/${b.id}`)}
-                className="flex w-full items-center gap-3 rounded-xl border bg-sky-50/60 px-3 py-2.5 text-left transition-colors hover:bg-sky-100/60"
+                className="flex w-full items-center gap-3 rounded-xl border bg-sky-50/60 px-3 py-2.5 text-left transition-colors hover:bg-sky-100/60 dark:border-sky-900/60 dark:bg-sky-950/30 dark:hover:bg-sky-950/60"
               >
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky-500 text-white">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky-500/15 text-sky-700 dark:text-sky-300">
                   <Cake className="h-4 w-4" />
                 </span>
                 <span className="min-w-0 flex-1">
@@ -504,6 +522,40 @@ function BirthdaysCard({ navigate }: { navigate: (to: string) => void }) {
 }
 
 // ── Upcoming ───────────────────────────────────────────────────────
+
+/** "29 Oct, 9:00 AM" — the year only appears when it is not the current one,
+ *  so rows stay one line in a 360px column. */
+export function formatEventWhen(iso: string): string {
+  const dateOnly = iso.length <= 10;
+  const d = new Date(dateOnly ? `${iso}T00:00:00` : iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  const day = d.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+  if (dateOnly) return day;
+  return `${day}, ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+}
+
+/** Placeholder rows while the summary loads — same rhythm as the real rows so
+ *  the panel does not jump when the data lands. */
+function UpcomingSkeleton() {
+  return (
+    <div className="space-y-2" aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="flex items-center gap-3 rounded-xl border px-3 py-2.5">
+          <div className="h-9 w-9 shrink-0 animate-pulse rounded-lg bg-muted" />
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <div className="h-3 w-2/3 animate-pulse rounded bg-muted" />
+            <div className="h-2.5 w-1/2 animate-pulse rounded bg-muted" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function UpcomingCard({
   summary,
@@ -529,36 +581,36 @@ function UpcomingCard({
       </div>
       <div className="stagger mt-3 space-y-2">
         {loading ? (
-          <p className="py-2 text-sm text-muted-foreground">Loading…</p>
+          <UpcomingSkeleton />
         ) : events.length === 0 ? (
           <p className="py-2 text-sm text-muted-foreground">Nothing scheduled — enjoy the calm.</p>
         ) : (
           events.map((ev) => {
-            const d = new Date(ev.start_time.length <= 10 ? `${ev.start_time}T00:00:00` : ev.start_time);
-            const valid = !Number.isNaN(d.getTime());
-            const dateLabel = valid
-              ? ev.start_time.length <= 10
-                ? `${d.getDate()} ${d.toLocaleDateString(undefined, { month: "long" })}, ${d.getFullYear()}`
-                : `${d.getDate()} ${d.toLocaleDateString(undefined, { month: "long" })}, ${d.getFullYear()} | ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true })}`
-              : ev.start_time;
-            const name =
-              ev.kind === "recall"
-                ? "Recall"
-                : [ev.first_name, ev.last_name].filter(Boolean).join(" ") || "Appointment";
+            const patientName = [ev.first_name, ev.last_name].filter(Boolean).join(" ");
+            const isRecall = ev.kind === "recall";
+            // The headline is the patient (or the free-text title for a block
+            // like "Lunch"); everything else moves to the second line. Before,
+            // the patient name was printed on both lines.
+            const title = ev.title ?? (isRecall ? "Recall" : patientName || "Appointment");
+            const detail = [
+              ev.title ? patientName : "",
+              ev.treatment_name ?? "",
+              `${isRecall ? "Recall due" : ""} ${formatEventWhen(ev.start_time)}`.trim(),
+            ].filter(Boolean);
             return (
               <button
                 key={`${ev.kind}-${ev.id}`}
                 type="button"
                 onClick={() => navigate(ev.kind === "recall" ? "/patients" : "/agenda")}
-                className="flex w-full items-center gap-3 rounded-xl border bg-sky-50/60 px-3 py-2.5 text-left transition-colors hover:bg-sky-100/60"
+                className="flex w-full items-center gap-3 rounded-xl border bg-sky-50/60 px-3 py-2.5 text-left transition-colors hover:bg-sky-100/60 dark:border-sky-900/60 dark:bg-sky-950/30 dark:hover:bg-sky-950/60"
               >
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky-500 text-white">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky-500/15 text-sky-700 dark:text-sky-300">
                   <CalendarIcon className="h-4 w-4" />
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-semibold">{ev.title ?? name}</span>
+                  <span className="block truncate text-sm font-semibold">{title}</span>
                   <span className="block truncate text-xs text-muted-foreground">
-                    {name} · {dateLabel}
+                    {detail.join(" · ")}
                   </span>
                 </span>
               </button>

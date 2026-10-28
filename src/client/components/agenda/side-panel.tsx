@@ -41,24 +41,27 @@ export function AgendaSidePanel() {
         </Button>
       </div>
       <Tabs defaultValue="waiting" className="flex flex-1 flex-col">
-        <TabsList className="mx-3 mt-3">
-          <TabsTrigger value="waiting" className="flex-1">
-            <ListChecks className="h-3.5 w-3.5" /> Waiting list
+        {/* Six tabs cannot fit one 320px row: in a single row the last two
+            were clipped ("Rev…") and the labels were cut off at the top.
+            Two rows of three fit at every panel width. */}
+        <TabsList className="mx-3 mt-3 grid h-auto grid-cols-3 gap-1 p-1">
+          <TabsTrigger value="waiting" className="gap-1.5 px-1.5 py-1.5 text-[11px]">
+            <ListChecks className="h-3.5 w-3.5 shrink-0" /> Waiting
           </TabsTrigger>
-          <TabsTrigger value="to-make" className="flex-1">
-            <CalendarPlus className="h-3.5 w-3.5" /> To make
+          <TabsTrigger value="to-make" className="gap-1.5 px-1.5 py-1.5 text-[11px]">
+            <CalendarPlus className="h-3.5 w-3.5 shrink-0" /> To make
           </TabsTrigger>
-          <TabsTrigger value="reminders" className="flex-1">
-            <BellRing className="h-3.5 w-3.5" /> Remind
+          <TabsTrigger value="reminders" className="gap-1.5 px-1.5 py-1.5 text-[11px]">
+            <BellRing className="h-3.5 w-3.5 shrink-0" /> Remind
           </TabsTrigger>
-          <TabsTrigger value="followups" className="flex-1">
-            <PhoneCall className="h-3.5 w-3.5" /> Follow up
+          <TabsTrigger value="followups" className="gap-1.5 px-1.5 py-1.5 text-[11px]">
+            <PhoneCall className="h-3.5 w-3.5 shrink-0" /> Follow up
           </TabsTrigger>
-          <TabsTrigger value="reviews" className="flex-1">
-            <Star className="h-3.5 w-3.5" /> Reviews
+          <TabsTrigger value="reviews" className="gap-1.5 px-1.5 py-1.5 text-[11px]">
+            <Star className="h-3.5 w-3.5 shrink-0" /> Reviews
           </TabsTrigger>
-          <TabsTrigger value="recall" className="flex-1">
-            <CalendarClock className="h-3.5 w-3.5" /> Recall
+          <TabsTrigger value="recall" className="gap-1.5 px-1.5 py-1.5 text-[11px]">
+            <CalendarClock className="h-3.5 w-3.5 shrink-0" /> Recall
           </TabsTrigger>
         </TabsList>
         <TabsContent value="waiting" className="flex-1 overflow-auto px-3 pb-3">

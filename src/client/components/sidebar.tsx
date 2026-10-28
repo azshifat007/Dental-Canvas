@@ -141,6 +141,7 @@ export function Sidebar({
                       type="button"
                       disabled={isDisabled}
                       onClick={() => item.path && navigate(item.path)}
+                      aria-current={active ? "page" : undefined}
                       className={cn(
                         "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                         active && "bg-sidebar-accent text-sidebar-accent-foreground",

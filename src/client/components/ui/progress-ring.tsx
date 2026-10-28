@@ -16,15 +16,19 @@ import { cn } from "@/lib/utils";
  * so a screen reader hears "Chair utilization, 65 percent" once, not twice.
  */
 
-export type RingTone = "brand" | "teal" | "amber" | "rose";
+export type RingTone = "brand" | "teal" | "amber" | "rose" | "violet";
 
 /** Arc colour per tone. Kept on the text colour and painted with
- *  `currentColor`, so dark mode and the brand-accent setting both apply. */
+ *  `currentColor`, so dark mode and the brand-accent setting both apply.
+ *  `rose` is the danger colour; neutral metrics use `violet` so a gauge that
+ *  reports "25% of today's visits are returning patients" does not read as
+ *  an error. */
 const TONE_TEXT: Record<RingTone, string> = {
   brand: "text-primary",
   teal: "text-teal-500",
   amber: "text-amber-500",
   rose: "text-rose-500",
+  violet: "text-violet-500",
 };
 
 /** Clamp to a real percentage: NaN (an empty practice divides by zero) and
