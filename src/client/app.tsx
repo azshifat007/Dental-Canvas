@@ -16,6 +16,7 @@ import { setUpdateMode, startUpdatePoller } from "./lib/updater";
 import { useDailyInventoryScan } from "./hooks/use-daily-inventory-scan";
 import { useDailyDigest } from "./hooks/use-daily-digest";
 import { useAppointmentReminders } from "./hooks/use-appointment-reminders";
+import { useChairsideTimerAlert } from "./hooks/use-chairside-timer-alert";
 import { useTheme } from "./hooks/use-theme";
 import { useAccessibility } from "./hooks/use-accessibility";
 import { useBrandAccent } from "./hooks/use-brand-accent";
@@ -111,6 +112,10 @@ export function App() {
   // each of today's appointments (Settings → Notifications). Timers re-arm
   // whenever the reminder settings change.
   useAppointmentReminders(state.settings.reminders_enabled, state.settings.reminder_minutes);
+
+  // Chairside timer: a native alert at zero even when the dashboard is not on
+  // screen (the timer card itself only shows a toast while mounted).
+  useChairsideTimerAlert();
 
   // Theme: follows the OS dark mode by default, with a manual override.
   useTheme();

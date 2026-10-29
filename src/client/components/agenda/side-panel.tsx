@@ -24,7 +24,7 @@ export function AgendaSidePanel() {
       <button
         type="button"
         onClick={() => setCollapsed(false)}
-        className="flex h-full w-8 items-center justify-center border-l bg-card text-muted-foreground transition-colors hover:bg-accent"
+        className="flex h-full w-8 items-center justify-center border-t border-border/50 bg-card/80 text-muted-foreground backdrop-blur transition-colors hover:bg-accent lg:border-l lg:border-t-0"
         aria-label="Expand side panel"
       >
         <ChevronLeft className="h-4 w-4" />
@@ -33,9 +33,13 @@ export function AgendaSidePanel() {
   }
 
   return (
-    <aside className="flex h-full w-80 shrink-0 flex-col border-l bg-card">
-      <div className="flex items-center justify-between border-b px-3 py-2">
-        <span className="text-sm font-semibold">Side panel</span>
+    /* Below lg the desk panels sit under the grid instead of squeezing it to
+       a 70px sliver; from lg up they are the familiar right-hand rail. */
+    <aside className="flex h-[46%] min-h-0 w-full shrink-0 flex-col border-t border-border/50 bg-card/80 backdrop-blur-md lg:h-full lg:w-80 lg:border-l lg:border-t-0">
+      <div className="flex items-center justify-between border-b border-border/50 px-3 py-2">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+          Side panel
+        </span>
         <Button variant="ghost" size="icon" onClick={() => setCollapsed(true)} aria-label="Collapse side panel">
           <ChevronRight className="h-4 w-4" />
         </Button>
@@ -44,7 +48,7 @@ export function AgendaSidePanel() {
         {/* Six tabs cannot fit one 320px row: in a single row the last two
             were clipped ("Rev…") and the labels were cut off at the top.
             Two rows of three fit at every panel width. */}
-        <TabsList className="mx-3 mt-3 grid h-auto grid-cols-3 gap-1 p-1">
+        <TabsList className="dc-tabbar mx-3 mt-3 grid h-auto grid-cols-3 gap-1 rounded-2xl border border-border/60 bg-card/70 p-1 shadow-sm backdrop-blur">
           <TabsTrigger value="waiting" className="gap-1.5 px-1.5 py-1.5 text-[11px]">
             <ListChecks className="h-3.5 w-3.5 shrink-0" /> Waiting
           </TabsTrigger>
@@ -98,7 +102,7 @@ function WaitingListPanel() {
       <div className="text-xs text-muted-foreground">
         Patients ready to be slotted into a sooner opening.
       </div>
-      <Button size="sm" variant="outline" onClick={() => setAdding(true)} className="w-full">
+      <Button size="sm" variant="outline" onClick={() => setAdding(true)} className="w-full rounded-full">
         <Plus className="h-4 w-4" /> Add to waiting list
       </Button>
       {adding && <AddWaitingListForm onClose={() => setAdding(false)} />}

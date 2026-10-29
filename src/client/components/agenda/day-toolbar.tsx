@@ -22,62 +22,71 @@ export function DayToolbar({ date, onChange, onCreate, children }: Props) {
   };
 
   return (
-    <div className="flex items-center gap-3 border-b bg-white px-6 py-4 dark:bg-card">
-      <div>
-        <h2 className="text-lg font-semibold tracking-tight">
-          {formatDate(date, { month: "long", year: "numeric" })}
-        </h2>
-        <p className="text-xs text-muted-foreground">
-          {formatDate(date, { weekday: "long", day: "numeric" })}
-        </p>
-      </div>
-
-      <div className="ml-auto flex items-center gap-3">
-        {/* Prev | Today | Next pill */}
-        <div className="inline-flex items-center gap-0.5 rounded-lg border bg-background p-0.5">
-          <button
-            type="button"
-            onClick={() => shift(-1)}
-            aria-label="Previous day"
-            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => onChange(today)}
-            className={
-              "rounded-md px-3 py-1 text-sm font-medium transition-colors " +
-              (isToday ? "bg-primary text-primary-foreground hover:bg-primary/90" : "hover:bg-accent")
-            }
-          >
-            Today
-          </button>
-          <button
-            type="button"
-            onClick={() => shift(1)}
-            aria-label="Next day"
-            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </button>
+    <div className="shrink-0 px-4 pb-3 pt-5 md:px-6">
+      <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary/80">
+            {isToday ? "Today" : "Chairside schedule"}
+          </p>
+          <h1 className="mt-1 text-[26px] font-bold leading-tight tracking-tight md:text-[30px]">
+            {formatDate(date, { month: "long", year: "numeric" })}
+          </h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            {formatDate(date, { weekday: "long", day: "numeric" })}
+            {isToday ? " — the chairs are live" : ""}
+          </p>
         </div>
 
-        {/* Date picker */}
-        <input
-          type="date"
-          value={date}
-          onChange={(e) => onChange(e.target.value)}
-          className="h-9 rounded-lg border bg-background px-3 text-sm font-medium outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-        />
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {/* Prev | Today | Next pill */}
+          <div className="inline-flex items-center gap-0.5 rounded-full border border-border/60 bg-card/85 p-1 shadow-sm backdrop-blur">
+            <button
+              type="button"
+              onClick={() => shift(-1)}
+              aria-label="Previous day"
+              className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onChange(today)}
+              className={
+                "rounded-full px-3.5 py-1 text-sm font-semibold transition-colors " +
+                (isToday
+                  ? "bg-primary text-primary-foreground shadow-sm shadow-primary/25 hover:bg-primary/90"
+                  : "hover:bg-accent")
+              }
+            >
+              Today
+            </button>
+            <button
+              type="button"
+              onClick={() => shift(1)}
+              aria-label="Next day"
+              className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
 
-        <div className="h-6 w-px bg-border" />
+          {/* Date picker */}
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => onChange(e.target.value)}
+            aria-label="Pick a day"
+            className="h-10 rounded-full border border-border/60 bg-card/85 px-4 text-sm font-medium shadow-sm outline-none backdrop-blur focus:ring-2 focus:ring-primary/40 focus:ring-offset-2 focus:ring-offset-background"
+          />
 
-        {children}
+          <div className="mx-1 hidden h-6 w-px bg-border/70 sm:block" />
 
-        <Button onClick={onCreate} size="sm">
-          <Plus className="h-4 w-4" /> Add appointment
-        </Button>
+          {children}
+
+          <Button onClick={onCreate} className="h-10 rounded-full px-4 shadow-lg shadow-primary/20">
+            <Plus className="h-4 w-4" /> Add appointment
+          </Button>
+        </div>
       </div>
     </div>
   );

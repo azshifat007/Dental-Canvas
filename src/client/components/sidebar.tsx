@@ -3,7 +3,6 @@ import {
   Calendar,
   Users,
   Settings,
-  Stethoscope,
   FileBarChart2,
   FlaskConical,
   Pill,
@@ -22,10 +21,13 @@ import {
 import { cn } from "@/lib/utils";
 import { openQuickRegister } from "@/lib/quick-register";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
+import { ToothGlyph } from "@/components/dental-art";
 import type { Route } from "@/hooks/use-router";
 
 interface NavItem {
   label: string;
+  /** Short label under the rail icon — the rail is 88px wide. */
+  rail?: string;
   icon: typeof Calendar;
   path?: string;
   match?: (r: Route) => boolean;
@@ -36,28 +38,28 @@ const sections: { heading: string; items: NavItem[] }[] = [
   {
     heading: "Practice",
     items: [
-      { label: "Dashboard", icon: LayoutDashboard, path: "/dashboard", match: (r) => r.name === "dashboard" },
-      { label: "Agenda",     icon: Calendar,      path: "/agenda",   match: (r) => r.name === "agenda" },
-      { label: "Patients",   icon: Users,         path: "/patients", match: (r) => r.name === "patients" || r.name === "patient" },
-      { label: "Lab cases",  icon: FlaskConical,  path: "/lab",      match: (r) => r.name === "lab" },
-      { label: "Medicines",  icon: Pill,          path: "/medicines", match: (r) => r.name === "medicines" },
-      { label: "Inventory",  icon: Boxes,         path: "/inventory", match: (r) => r.name === "inventory" },
+      { label: "Dashboard", rail: "Home", icon: LayoutDashboard, path: "/dashboard", match: (r) => r.name === "dashboard" },
+      { label: "Agenda",     rail: "Agenda", icon: Calendar,      path: "/agenda",   match: (r) => r.name === "agenda" },
+      { label: "Patients",   rail: "Patients", icon: Users,         path: "/patients", match: (r) => r.name === "patients" || r.name === "patient" },
+      { label: "Lab cases",  rail: "Lab", icon: FlaskConical,  path: "/lab",      match: (r) => r.name === "lab" },
+      { label: "Medicines",  rail: "Meds", icon: Pill,          path: "/medicines", match: (r) => r.name === "medicines" },
+      { label: "Inventory",  rail: "Stock", icon: Boxes,         path: "/inventory", match: (r) => r.name === "inventory" },
     ],
   },
   {
     heading: "Finance",
     items: [
-      { label: "Billing Record",         icon: Receipt,      path: "/finance/billing-record",        match: (r) => r.name === "finance-billing" },
-      { label: "Revenue Breakdown",      icon: TrendingUp,   path: "/finance/revenue-breakdown",     match: (r) => r.name === "finance-revenue" },
-      { label: "Appointment Overview",  icon: CalendarClock, path: "/finance/appointment-overview",  match: (r) => r.name === "finance-appointments" },
+      { label: "Billing Record",         rail: "Billing", icon: Receipt,      path: "/finance/billing-record",        match: (r) => r.name === "finance-billing" },
+      { label: "Revenue Breakdown",      rail: "Revenue", icon: TrendingUp,   path: "/finance/revenue-breakdown",     match: (r) => r.name === "finance-revenue" },
+      { label: "Appointment Overview",   rail: "Appts", icon: CalendarClock, path: "/finance/appointment-overview",  match: (r) => r.name === "finance-appointments" },
     ],
   },
   {
     heading: "Admin",
     items: [
-      { label: "Reports",  icon: FileBarChart2, path: "/reports",  match: (r) => r.name === "reports" },
-      { label: "Settings", icon: Settings,      path: "/settings", match: (r) => r.name === "settings" },
-      { label: "What's new", icon: Sparkles,   path: "/whats-new", match: (r) => r.name === "whats-new" },
+      { label: "Reports",  rail: "Reports", icon: FileBarChart2, path: "/reports",  match: (r) => r.name === "reports" },
+      { label: "Settings", rail: "Settings", icon: Settings,      path: "/settings", match: (r) => r.name === "settings" },
+      { label: "What's new", rail: "Updates", icon: Sparkles,   path: "/whats-new", match: (r) => r.name === "whats-new" },
     ],
   },
 ];
@@ -83,55 +85,32 @@ export function Sidebar({
   }
 
   return (
-    <aside aria-label="Practice navigation" className="hidden w-60 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground md:flex">
-      <div className="flex h-14 items-center gap-2 border-b px-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
-          <Stethoscope className="h-4 w-4" />
-        </div>
-        <span className="flex-1 text-base font-semibold tracking-tight">Dental Canvas</span>
+    <aside
+      aria-label="Practice navigation"
+      className="hidden w-[88px] shrink-0 flex-col border-r border-sidebar-border/70 bg-sidebar/80 text-sidebar-foreground backdrop-blur md:flex"
+    >
+      <div className="flex h-[72px] shrink-0 items-center justify-center border-b border-sidebar-border/60">
         <button
           type="button"
-          onClick={cycleTheme}
-          title={themeLabel(theme)}
-          aria-label={`Theme: ${themeLabel(theme)} — click to change`}
-          className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          onClick={() => navigate("/dashboard")}
+          title="Dental Canvas — dashboard"
+          aria-label="Dental Canvas — go to dashboard"
+          className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-teal-600 text-primary-foreground shadow-lg shadow-primary/25 transition-transform hover:scale-105"
         >
-          {theme === "system" ? <Monitor className="h-4 w-4" /> : theme === "light" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          <ToothGlyph className="h-6 w-6" />
         </button>
       </div>
 
-
-      <div className="flex gap-2 px-2 pt-3">
-        <button
-          type="button"
-          onClick={() => onOpenSearch?.()}
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-        >
-          <Search className="h-4 w-4 shrink-0" />
-          <span className="flex-1 truncate text-left">Search…</span>
-          <kbd className="hidden shrink-0 rounded border bg-muted px-1.5 py-0.5 text-[10px] font-semibold lg:block">⌘K</kbd>
-        </button>
-        <button
-          type="button"
-          onClick={openQuickRegister}
-          title="Register patient (N)"
-          aria-label="Register patient"
-          className="flex shrink-0 items-center justify-center rounded-md border bg-primary px-3 py-2 text-primary-foreground transition-colors hover:bg-primary/90"
-        >
-          <UserPlus className="h-4 w-4" />
-        </button>
-      </div>
-
-      {/* min-h-0 + force-scrollbar: the nav must always scroll inside the
-          sidebar on short windows, with a visible scrollbar (Windows 11
-          hides overlay scrollbars until hover). */}
+      {/* min-h-0 + force-scrollbar: the nav must always scroll inside the rail
+          on short windows, with a visible scrollbar (Windows 11 hides overlay
+          scrollbars until hover). */}
       <nav className="force-scrollbar min-h-0 flex-1 overflow-y-auto px-2 py-3">
-        {sections.map((section) => (
-          <div key={section.heading} className="mb-4">
-            <div className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-              {section.heading}
-            </div>
-            <ul className="space-y-0.5">
+        {sections.map((section, si) => (
+          <div
+            key={section.heading}
+            className={cn(si > 0 && "mt-2 border-t border-sidebar-border/60 pt-2")}
+          >
+            <ul className="space-y-1">
               {section.items.map((item) => {
                 const active = item.match ? item.match(route) : false;
                 const isDisabled = !!item.disabled;
@@ -142,20 +121,17 @@ export function Sidebar({
                       disabled={isDisabled}
                       onClick={() => item.path && navigate(item.path)}
                       aria-current={active ? "page" : undefined}
+                      title={item.label}
                       className={cn(
-                        "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                        active && "bg-sidebar-accent text-sidebar-accent-foreground",
-                        !active && !isDisabled && "hover:bg-sidebar-accent/60",
-                        isDisabled && "cursor-not-allowed text-muted-foreground/60",
+                        "flex w-full flex-col items-center gap-1 rounded-2xl px-1 py-2 text-[9px] font-semibold leading-tight transition-all",
+                        active
+                          ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25"
+                          : !isDisabled && "text-muted-foreground hover:bg-primary/[0.07] hover:text-primary",
+                        isDisabled && "cursor-not-allowed text-muted-foreground/50",
                       )}
                     >
-                      <item.icon className="h-4 w-4 shrink-0" />
-                      <span className="flex-1 text-left">{item.label}</span>
-                      {isDisabled && (
-                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                          Soon
-                        </span>
-                      )}
+                      <item.icon className="h-[18px] w-[18px] shrink-0" />
+                      <span className="max-w-full truncate">{item.rail ?? item.label}</span>
                     </button>
                   </li>
                 );
@@ -164,6 +140,36 @@ export function Sidebar({
           </div>
         ))}
       </nav>
+
+      <div className="flex shrink-0 flex-col items-center gap-1 border-t border-sidebar-border/60 p-2">
+        <button
+          type="button"
+          onClick={() => onOpenSearch?.()}
+          title="Search (Ctrl K)"
+          aria-label="Search"
+          className="flex h-10 w-10 items-center justify-center rounded-2xl text-muted-foreground transition-colors hover:bg-primary/[0.07] hover:text-primary"
+        >
+          <Search className="h-[18px] w-[18px]" />
+        </button>
+        <button
+          type="button"
+          onClick={openQuickRegister}
+          title="Register patient (N)"
+          aria-label="Register patient"
+          className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-primary transition-colors hover:bg-primary/20"
+        >
+          <UserPlus className="h-[18px] w-[18px]" />
+        </button>
+        <button
+          type="button"
+          onClick={cycleTheme}
+          title={themeLabel(theme)}
+          aria-label={`Theme: ${themeLabel(theme)} — click to change`}
+          className="flex h-10 w-10 items-center justify-center rounded-2xl text-muted-foreground transition-colors hover:bg-primary/[0.07] hover:text-primary"
+        >
+          {theme === "system" ? <Monitor className="h-[18px] w-[18px]" /> : theme === "light" ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
+        </button>
+      </div>
     </aside>
   );
 }

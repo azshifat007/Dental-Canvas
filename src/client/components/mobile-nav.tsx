@@ -9,7 +9,6 @@ import {
   Moon,
   Search,
   Settings,
-  Stethoscope,
   Sun,
   UserPlus,
   Users,
@@ -22,6 +21,7 @@ import {
 import { cn } from "@/lib/utils";
 import { openQuickRegister } from "@/lib/quick-register";
 import { useTheme } from "@/hooks/use-theme";
+import { ToothGlyph } from "@/components/dental-art";
 import type { Route } from "@/hooks/use-router";
 
 /**
@@ -66,8 +66,8 @@ export function MobileTopBar({ onOpenSearch }: { onOpenSearch?: () => void }) {
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-sidebar px-3 text-sidebar-foreground md:hidden">
-      <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-        <Stethoscope className="h-4 w-4" />
+      <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-teal-600 text-primary-foreground shadow-sm shadow-primary/25">
+        <ToothGlyph className="h-4 w-4" />
       </div>
       <span className="flex-1 truncate text-sm font-semibold tracking-tight">Dental Canvas</span>
       <button

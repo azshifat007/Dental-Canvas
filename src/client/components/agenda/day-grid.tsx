@@ -72,7 +72,7 @@ export function DayGrid({ date, operatories, appointments, onSlotClick, onAppoin
   }
 
   return (
-    <div className="relative flex-1 overflow-auto bg-white dark:bg-background">
+    <div className="relative mx-4 mb-4 flex-1 overflow-auto rounded-2xl border border-border/60 bg-white shadow-sm dark:bg-card md:mx-6 md:mb-6">
       <div className="flex min-w-fit">
         {/* Hour gutter */}
         <div className="sticky left-0 z-20 w-16 shrink-0 bg-white dark:bg-card">
@@ -187,7 +187,7 @@ export function DayGrid({ date, operatories, appointments, onSlotClick, onAppoin
 
         {/* Filler column — fills any remaining horizontal space when there are
             few operatories so the right side reads as the same canvas. */}
-        <div className="flex min-w-0 flex-1 flex-col border-l border-border/50 bg-white dark:bg-background">
+        <div className="flex min-w-0 flex-1 flex-col border-l border-border/50 bg-white dark:bg-card">
           <div className="sticky top-0 z-10 border-b border-border/50 bg-white dark:bg-card" style={{ height: HEADER_H }} />
           <div className="relative" style={{ height: totalHeight }}>
             {hourLabels.map(({ hour, topPx }) => (

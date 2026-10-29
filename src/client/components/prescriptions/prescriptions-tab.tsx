@@ -774,7 +774,7 @@ export function PrescriptionDialog({
           {/* Medication rows — bounded scroll so the list never overflows the dialog on long prescriptions. */}
           <div className="space-y-2">
             <Label className="text-xs">Medications *</Label>
-            <div className="max-h-[44vh] overflow-y-auto space-y-2 rounded-md border border-border/40 bg-muted/20 p-2">
+            <div className="force-scrollbar max-h-[44vh] space-y-2 overflow-y-auto rounded-xl border border-border/40 bg-muted/20 p-2">
               {items.map((item, i) => (
                 <div key={i} className="grid gap-2 rounded-md border border-border/60 bg-background p-2 sm:grid-cols-[2fr_1fr_1fr_1fr_1.5fr_auto]">
                   <DrugAutocomplete
@@ -788,13 +788,21 @@ export function PrescriptionDialog({
                   <Input value={item.frequency} onChange={(e) => setItem(i, { frequency: e.target.value })} placeholder="3x daily" className="h-9" />
                   <Input value={item.duration} onChange={(e) => setItem(i, { duration: e.target.value })} placeholder="5 days" className="h-9" />
                   <Input value={item.instructions} onChange={(e) => setItem(i, { instructions: e.target.value })} placeholder="after meals" className="h-9" />
-                  <Button type="button" variant="ghost" size="icon" onClick={() => removeRow(i)} className="h-9 w-9 text-muted-foreground" title="Remove">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => removeRow(i)}
+                    className="h-9 w-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    title="Remove"
+                    aria-label={`Remove medication ${i + 1}`}
+                  >
                     ✕
                   </Button>
                 </div>
               ))}
             </div>
-            <Button type="button" variant="outline" size="sm" onClick={addRow}>
+            <Button type="button" variant="outline" size="sm" className="rounded-full" onClick={addRow}>
               <Plus className="h-3.5 w-3.5" /> Add medication
             </Button>
           </div>

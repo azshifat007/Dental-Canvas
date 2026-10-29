@@ -1,14 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
-import { Pencil, Plus, Search, UserPlus } from "lucide-react";
+import { Pencil, Plus, Search, UserPlus, Users } from "lucide-react";
 import { useApp } from "@/context";
 import { api } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { PageHeader, PageShell } from "@/components/page-shell";
+import { ToothGlyph } from "@/components/dental-art";
 import { formatDate, formatMoney } from "@/lib/utils";
 import type { Patient } from "@/types";
 import { PatientDialog } from "./patient-dialog";
+
+/** Two initials on the row avatar — the same visual rhythm as the dashboard. */
+function initials(p: Patient): string {
+  const a = p.first_name.trim()[0] ?? "";
+  const b = p.last_name.trim()[0] ?? "";
+  return `${a}${b}`.toUpperCase() || "?";
+}
 
 export function PatientsList({ navigate }: { navigate: (to: string) => void }) {
   const app = useApp();
@@ -52,47 +61,70 @@ export function PatientsList({ navigate }: { navigate: (to: string) => void }) {
 
   const visible = useMemo(() => patients, [patients]);
 
-  return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="flex flex-wrap items-center gap-3 border-b bg-card px-4 py-3">
-        <h1 className="text-lg font-semibold tracking-tight">Patients</h1>
-        <div className="relative ml-auto w-full max-w-sm">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search by name, email, phone…"
-            className="pl-9"
-          />
-        </div>
-        <Button
-          onClick={() => {
-            setEditing(null);
-            setDialogOpen(true);
-          }}
-          size="sm"
-        >
-          <Plus className="h-4 w-4" />
-          New patient
-        </Button>
-      </div>
+  const count = visible.length;
+  const countLabel = loading
+    ? "Patient records"
+    : `${count} ${count === 1 ? "patient" : "patients"}${q.trim() ? " matched" : " on file"}`;
 
-      <div className="flex-1 overflow-auto p-4">
-        <Card className="overflow-hidden">
+  return (
+    <PageShell>
+      <PageHeader
+        icon={<Users className="h-5 w-5" />}
+        eyebrow={countLabel}
+        title="Patients"
+        description="Search the list, register someone new, or open a chart."
+        actions={
+          <>
+            <div className="relative min-w-0 flex-1 sm:w-80 sm:flex-none">
+              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search patients…"
+                aria-label="Search patients"
+                className="h-11 rounded-full border-border/60 bg-card/85 pl-11 pr-4 shadow-sm backdrop-blur focus-visible:ring-primary/40"
+              />
+            </div>
+            <Button
+              className="h-11 rounded-full px-5 shadow-lg shadow-primary/20"
+              onClick={() => {
+                setEditing(null);
+                setDialogOpen(true);
+              }}
+            >
+              <Plus className="h-4 w-4" />
+              New patient
+            </Button>
+          </>
+        }
+      />
+
+      <div className="min-h-0 flex-1 overflow-auto px-4 pb-8 md:px-6">
+        <Card className="animate-rise overflow-hidden">
           <Table>
             <TableHeader>
               {/* Email is the one column that can be dropped on a phone
                   without losing what the list is for: with it visible the
                   table scrolled sideways and every row wrapped to three
                   lines. It stays available on the patient's record. */}
-              <TableRow>
+              <TableRow className="border-b border-border/50 bg-muted/40 hover:bg-muted/40">
                 {/* Name claims the leftover width so "Villanueva, Marta"
                     stays on one line on a phone. */}
-                <TableHead className="w-full px-2 sm:px-3">Name</TableHead>
-                <TableHead className="hidden px-2 sm:table-cell sm:px-3">DOB</TableHead>
-                <TableHead className="hidden sm:table-cell">Email</TableHead>
-                <TableHead className="px-2 sm:px-3">Phone</TableHead>
-                <TableHead className="px-2 sm:px-3">Alerts</TableHead>
+                <TableHead className="h-10 w-full px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground sm:px-4">
+                  Name
+                </TableHead>
+                <TableHead className="hidden h-10 whitespace-nowrap px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground sm:table-cell sm:px-4">
+                  Date of birth
+                </TableHead>
+                <TableHead className="hidden h-10 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground sm:table-cell">
+                  Email
+                </TableHead>
+                <TableHead className="h-10 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground sm:px-4">
+                  Phone
+                </TableHead>
+                <TableHead className="h-10 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground sm:px-4">
+                  Alerts
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -102,6 +134,7 @@ export function PatientsList({ navigate }: { navigate: (to: string) => void }) {
                     {/* Skeleton rows, matching the list's real rhythm. */}
                     {[0, 1, 2, 3].map((i) => (
                       <div key={i} className="flex items-center gap-4 py-2.5">
+                        <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-muted" />
                         <div className="h-3 w-40 animate-pulse rounded bg-muted" />
                         <div className="h-3 w-20 animate-pulse rounded bg-muted" />
                         <div className="h-3 flex-1 animate-pulse rounded bg-muted" />
@@ -110,15 +143,18 @@ export function PatientsList({ navigate }: { navigate: (to: string) => void }) {
                   </TableCell>
                 </TableRow>
               ) : visible.length === 0 && !q ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="py-12 text-center">
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={5} className="py-14 text-center">
                     <div className="mx-auto flex max-w-sm flex-col items-center gap-3">
-                      <UserPlus className="h-8 w-8 text-muted-foreground/60" />
+                      <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/15 to-teal-500/10 text-primary">
+                        <ToothGlyph className="h-7 w-7" />
+                      </span>
                       <p className="text-sm text-muted-foreground">
                         No patients yet. Register your first patient — a name is all it takes.
                       </p>
                       <Button
                         size="sm"
+                        className="rounded-full"
                         onClick={() => {
                           setEditing(null);
                           setDialogOpen(true);
@@ -131,9 +167,14 @@ export function PatientsList({ navigate }: { navigate: (to: string) => void }) {
                   </TableCell>
                 </TableRow>
               ) : visible.length === 0 && q ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
-                    No patients match your search.
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={5} className="py-14 text-center">
+                    <div className="mx-auto flex max-w-sm flex-col items-center gap-2">
+                      <Search className="h-7 w-7 text-muted-foreground/50" />
+                      <p className="text-sm text-muted-foreground">
+                        No patients match “{q.trim()}”. Try a surname, phone number or email.
+                      </p>
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : (
@@ -141,21 +182,28 @@ export function PatientsList({ navigate }: { navigate: (to: string) => void }) {
                   <TableRow
                     key={p.id}
                     onClick={() => navigate(`/patients/${p.id}`)}
-                    className="group cursor-pointer"
+                    className="group cursor-pointer border-b border-border/40 transition-colors last:border-0 hover:bg-primary/[0.05]"
                   >
-                    <TableCell className="px-2 font-medium sm:px-3">
-                      {p.last_name}, {p.first_name}
+                    <TableCell className="px-3 py-3 sm:px-4">
+                      <div className="flex items-center gap-2.5">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">
+                          {initials(p)}
+                        </span>
+                        <span className="min-w-0 truncate font-medium">
+                          {p.last_name}, {p.first_name}
+                        </span>
+                      </div>
                     </TableCell>
-                    <TableCell className="hidden whitespace-nowrap px-2 text-muted-foreground sm:table-cell sm:px-3">
+                    <TableCell className="hidden whitespace-nowrap px-3 text-muted-foreground sm:table-cell sm:px-4">
                       {p.date_of_birth ? formatDate(p.date_of_birth) : "—"}
                     </TableCell>
                     <TableCell className="hidden text-muted-foreground sm:table-cell">
                       {p.email ?? "—"}
                     </TableCell>
-                    <TableCell className="whitespace-nowrap px-2 text-muted-foreground tabular-nums sm:px-3">
+                    <TableCell className="whitespace-nowrap px-3 text-muted-foreground tabular-nums sm:px-4">
                       {p.phone ?? "—"}
                     </TableCell>
-                    <TableCell className="px-2 sm:px-3">
+                    <TableCell className="px-3 sm:px-4">
                       {/* Stacked on a phone, inline on a desktop: side by
                           side they pushed the table into a horizontal
                           scroll. The pencil is a hover affordance and is
@@ -181,7 +229,7 @@ export function PatientsList({ navigate }: { navigate: (to: string) => void }) {
                           type="button"
                           title="Quick edit"
                           aria-label={`Quick edit ${p.first_name} ${p.last_name}`}
-                          className="hidden rounded p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 sm:inline-flex"
+                          className="hidden rounded-full p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 sm:inline-flex"
                           onClick={(e) => {
                             e.stopPropagation();
                             setEditing(p);
@@ -198,6 +246,13 @@ export function PatientsList({ navigate }: { navigate: (to: string) => void }) {
             </TableBody>
           </Table>
         </Card>
+
+        {visible.length > 0 && (
+          <p className="mt-3 flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
+            <UserPlus className="h-3.5 w-3.5" />
+            Showing {visible.length} {visible.length === 1 ? "record" : "records"} — click a row to open the chart.
+          </p>
+        )}
       </div>
 
       {/* Quick register / row quick-edit. Creating keeps you on the list; the
@@ -221,6 +276,6 @@ export function PatientsList({ navigate }: { navigate: (to: string) => void }) {
         onOpenPatient={(p) => navigate(`/patients/${p.id}`)}
         openPatientLabel="Open record"
       />
-    </div>
+    </PageShell>
   );
 }

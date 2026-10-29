@@ -99,6 +99,8 @@ interface ListAppointment {
   status: string;
   patient_first_name: string | null;
   patient_last_name: string | null;
+  /** Treatment booked for the visit — the row's subtitle when present. */
+  treatment_name?: string | null;
 }
 
 // Each status carries a tint that also works on the dark card: the 700 steps
@@ -173,7 +175,7 @@ export function PatientListPanel({ navigate }: { navigate: (to: string) => void 
   }, [filter]);
 
   return (
-    <div className="card-lift animate-rise min-w-0 rounded-2xl border bg-card p-5 shadow-sm">
+    <section className="dc-card card-lift animate-rise min-w-0 p-5">
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-lg font-semibold tracking-tight">Patient List</h2>
         <DropdownMenu>
@@ -229,17 +231,19 @@ export function PatientListPanel({ navigate }: { navigate: (to: string) => void 
                 key={a.id}
                 type="button"
                 onClick={() => (a.patient_id ? navigate(`/patients/${a.patient_id}`) : navigate("/agenda"))}
-                className="flex w-full items-center gap-3 rounded-xl border border-transparent px-2 py-2 text-left transition-colors hover:border-border hover:bg-accent/40"
+                className="group flex w-full items-center gap-3 rounded-2xl border border-transparent px-2 py-2 text-left transition-colors hover:border-primary/15 hover:bg-primary/[0.04]"
               >
                 <Avatar name={name} index={i} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-semibold">{name}</span>
-                  <span className={cn("block text-xs font-medium", status.classes)}>{status.label}</span>
+                  <span className={cn("block truncate text-xs font-medium", a.treatment_name ? "text-primary/80" : status.classes)}>
+                    {a.treatment_name ?? status.label}
+                  </span>
                 </span>
                 {/* text-background, not text-white: the chip is an inverted
                     surface, and in dark mode the foreground is near-white, so
                     white text on it was invisible. */}
-                <span className="shrink-0 rounded-md bg-foreground px-2 py-1 text-[11px] font-semibold tabular-nums text-background">
+                <span className="shrink-0 rounded-xl bg-foreground px-2.5 py-1.5 text-[11px] font-semibold tabular-nums text-background shadow-sm">
                   {time}
                 </span>
               </button>
@@ -247,7 +251,7 @@ export function PatientListPanel({ navigate }: { navigate: (to: string) => void 
           })
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -364,18 +368,11 @@ export function ConsultationPanel({ navigate }: { navigate: (to: string) => void
   const age = ageFromDob(patient?.date_of_birth ?? null);
 
   return (
-    <div className="card-lift animate-rise min-w-0 rounded-2xl border bg-card p-5 shadow-sm">
+    <section className="dc-card card-lift animate-rise min-w-0 p-5">
       <div className="flex items-start justify-between gap-2">
         <h2 className="text-lg font-semibold tracking-tight">Consultation</h2>
         {patient && (
           <div className="flex items-center gap-1.5">
-            <Button
-              size="sm"
-              className="h-8 rounded-lg"
-              onClick={() => setRxOpen(true)}
-            >
-              <FilePlus2 className="h-4 w-4" /> New Prescription
-            </Button>
             <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" aria-label={`More actions for ${patient.first_name} ${patient.last_name}`}>
@@ -421,8 +418,9 @@ export function ConsultationPanel({ navigate }: { navigate: (to: string) => void
         </div>
       ) : (
         <>
-          {/* Identity row with quick patient switcher */}
-          <div className="flex items-center gap-3">
+          {/* Identity row: who is in the panel, then the two actions that
+              apply to them (issue a prescription, switch patient). */}
+          <div className="flex items-center gap-2.5">
             <Avatar name={`${patient.first_name} ${patient.last_name}`} index={patient.id} />
             <div className="min-w-0 flex-1">
               <div className="truncate text-base font-semibold">
@@ -432,6 +430,14 @@ export function ConsultationPanel({ navigate }: { navigate: (to: string) => void
                 {age !== null ? `${age} years old` : "Age unknown"}
               </div>
             </div>
+            <Button
+              size="sm"
+              className="h-8 shrink-0 rounded-xl px-2.5"
+              title="New prescription"
+              onClick={() => setRxOpen(true)}
+            >
+              <FilePlus2 className="h-4 w-4" /> Rx
+            </Button>
             <PatientSwitcher onPick={(p) => loadFor(p.id)} currentId={patient.id} />
           </div>
 
@@ -449,13 +455,15 @@ export function ConsultationPanel({ navigate }: { navigate: (to: string) => void
                   type="button"
                   onClick={() => navigate(`/patients/${patient.id}`)}
                   className={cn(
-                    "flex flex-col items-center gap-1 rounded-xl border py-3 text-xs font-medium transition-colors hover:bg-accent/50",
-                    hit ? "border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-100" : "text-muted-foreground",
+                    "flex flex-col items-center gap-1 rounded-2xl border py-3 text-xs font-semibold transition-all hover:-translate-y-0.5 hover:shadow-sm",
+                    hit
+                      ? "border-primary/25 bg-primary/[0.06] text-primary"
+                      : "border-border/60 bg-card/60 text-muted-foreground hover:bg-accent/50",
                   )}
                 >
                   <span className="text-lg" aria-hidden>{chip.icon}</span>
                   {chip.label}
-                  {hit && <span className="text-[10px] text-sky-600">{hit.n} noted</span>}
+                  {hit && <span className="text-[10px] font-medium opacity-75">{hit.n} noted</span>}
                 </button>
               );
             })}
@@ -515,7 +523,7 @@ export function ConsultationPanel({ navigate }: { navigate: (to: string) => void
           )}
         </>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -631,7 +639,7 @@ export function DentistNotesPanel() {
   }
 
   return (
-    <div className="card-lift animate-rise rounded-2xl border bg-card p-5 shadow-sm">
+    <section className="dc-card card-lift animate-rise min-w-0 p-5">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold tracking-tight">Dentist Notes</h2>
         <Button
@@ -652,13 +660,13 @@ export function DentistNotesPanel() {
           notes.slice(0, 5).map((n) => (
             <div
               key={n.id}
-              className="group flex items-start gap-2 rounded-xl bg-sky-50/80 px-3 py-2.5 text-sm text-sky-950 dark:bg-sky-950/30 dark:text-sky-100"
+              className="group flex items-start gap-2 rounded-2xl bg-primary/[0.05] px-3 py-2.5 text-sm text-foreground/90 dark:bg-primary/10"
             >
               <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{n.body}</span>
               <button
                 type="button"
                 onClick={() => remove(n.id)}
-                className="shrink-0 rounded p-1 text-sky-700/50 opacity-0 transition-opacity hover:bg-sky-100 hover:text-rose-600 focus:opacity-100 group-hover:opacity-100 dark:text-sky-300/60 dark:hover:bg-sky-900/60 dark:hover:text-rose-300"
+                className="shrink-0 rounded-lg p-1 text-muted-foreground/60 opacity-0 transition-opacity hover:bg-rose-500/10 hover:text-rose-600 focus:opacity-100 group-hover:opacity-100"
                 aria-label="Delete note"
               >
                 <Trash2 className="h-3.5 w-3.5" />
@@ -669,6 +677,6 @@ export function DentistNotesPanel() {
       </div>
 
       <AddNoteDialog open={dialogOpen} onOpenChange={setDialogOpen} onSaved={(n) => setNotes((prev) => [n, ...prev])} />
-    </div>
+    </section>
   );
 }

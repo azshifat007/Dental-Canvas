@@ -8,6 +8,8 @@ import { UpdateCard } from "./app-update-card";
 import { BookingTab } from "./booking-tab";
 import { StorageTab } from "./storage-tab";
 import { StartupCard } from "./startup-card";
+import { PageHeader, PageShell } from "@/components/page-shell";
+import { ToothGlyph } from "@/components/dental-art";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
 import { useRouter } from "@/hooks/use-router";
 import { useAccessibility, type A11yPreference } from "@/hooks/use-accessibility";
@@ -34,16 +36,21 @@ const ROLES: PractitionerRole[] = ["dentist", "hygienist", "assistant"];
 
 export function SettingsPage() {
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="border-b bg-card px-4 py-3">
-        <h1 className="text-lg font-semibold tracking-tight">Settings</h1>
-      </div>
-      <div className="flex-1 overflow-auto p-4">
+    <PageShell>
+      <PageHeader
+        icon={<ToothGlyph className="h-5 w-5" />}
+        eyebrow="Clinic setup"
+        title="Settings"
+        description="The profile, schedule and money rules behind every chart, letterhead and invoice."
+      />
+      <div className="min-h-0 flex-1 overflow-auto px-4 pb-8 md:px-6">
         <Tabs defaultValue="profile">
           {/* Scrollable tab bar: 13+ tabs overflow on narrow windows, so the
               list wraps instead of clipping (and scrolls horizontally as a
-              last resort on very small screens). */}
-          <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 overflow-x-auto">
+              last resort on very small screens). The pill styling lives in
+              styles.css (.dc-tabbar) so every trigger — including the ones
+              added later — picks it up from the list alone. */}
+          <TabsList className="dc-tabbar flex h-auto w-full flex-wrap justify-start gap-1 rounded-2xl border border-border/60 bg-card/70 p-1.5 shadow-sm backdrop-blur">
             <TabsTrigger value="profile">Profile</TabsTrigger>
             <TabsTrigger value="appearance">Appearance</TabsTrigger>
             <TabsTrigger value="operatories">Operatories</TabsTrigger>
@@ -122,7 +129,7 @@ export function SettingsPage() {
           </TabsContent>
         </Tabs>
       </div>
-    </div>
+    </PageShell>
   );
 }
 

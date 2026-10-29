@@ -3,7 +3,17 @@ import { cn } from "@/lib/utils";
 
 const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
-    <div ref={ref} className={cn("rounded-lg border bg-card text-card-foreground shadow-sm", className)} {...props} />
+    <div
+      ref={ref}
+      className={cn(
+        // `dc-paper` is the hook the mint page surface styles (styles.css):
+        // inside a .dc-page a card becomes dashboard paper, elsewhere this
+        // class does nothing.
+        "dc-paper rounded-2xl border border-border/70 bg-card text-card-foreground shadow-sm",
+        className,
+      )}
+      {...props}
+    />
   ),
 );
 Card.displayName = "Card";

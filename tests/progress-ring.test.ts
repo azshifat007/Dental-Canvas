@@ -1,12 +1,8 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { clampPercent, ringGeometry, MiniStatRing, ProgressRing } from "@/components/ui/progress-ring";
-import {
-  DAILY_VISIT_CAPACITY,
-  NEW_PATIENT_DAILY_TARGET,
-  visitMetrics,
-} from "@/components/dashboard/visits-metrics";
+import { clampPercent, ringGeometry, ProgressRing } from "@/components/ui/progress-ring";
+import { NEW_PATIENT_DAILY_TARGET, visitMetrics } from "@/components/dashboard/visits-metrics";
 
 describe("progress ring geometry", () => {
   it("clamps values that cannot be drawn", () => {
@@ -43,13 +39,13 @@ describe("progress ring geometry", () => {
 describe("ProgressRing markup", () => {
   it("exposes the value to assistive technology exactly once", () => {
     const html = renderToStaticMarkup(
-      createElement(ProgressRing, { value: 65, label: "Chair utilization" }),
+      createElement(ProgressRing, { value: 65, label: "Session timer" }),
     );
     expect(html).toContain('role="progressbar"');
     expect(html).toContain('aria-valuenow="65"');
     expect(html).toContain('aria-valuemin="0"');
     expect(html).toContain('aria-valuemax="100"');
-    expect(html).toContain('aria-label="Chair utilization"');
+    expect(html).toContain('aria-label="Session timer"');
     // The visible number is decoration; the role and label above carry the value.
     expect(html).toContain('aria-hidden="true"');
     expect(html).toContain("dc-ring-arc");
@@ -72,35 +68,22 @@ describe("ProgressRing markup", () => {
     expect(html).not.toContain('aria-valuenow="240"');
   });
 
-  it("renders the mini gauge with its icon, percentage and label", () => {
+  it("renders caller-supplied content over the gauge", () => {
+    // The chairside timer puts its clock in the middle instead of a percentage.
     const html = renderToStaticMarkup(
-      createElement(MiniStatRing, {
-        icon: createElement("span", null, "x"),
-        value: 74,
-        label: "New patients",
-      }),
+      createElement(
+        ProgressRing,
+        { value: 40, label: "Chairside timer: 6:00 remaining of 10 minutes", tone: "teal" },
+        createElement("span", null, "6:00"),
+      ),
     );
-    expect(html).toContain('aria-label="New patients: 74 percent"');
-    expect(html).toContain("74");
-    expect(html).toContain("New patients");
-  });
-
-  it("shows a goal counter instead of the percentage when asked", () => {
-    // A ring measured against a target is only meaningful with both numbers
-    // visible — "30%" says nothing about 3 of 10 patients.
-    const html = renderToStaticMarkup(
-      createElement(MiniStatRing, {
-        icon: createElement("span", null, "x"),
-        value: 30,
-        label: "New patients",
-        display: "3/10",
-        ariaLabel: "New patients today: 3 of 10",
-      }),
-    );
-    expect(html).toContain("3/10");
-    expect(html).toContain('aria-label="New patients today: 3 of 10"');
-    // The ring itself still carries the clamped percentage.
-    expect(html).toContain('aria-valuenow="30"');
+    expect(html).toContain("6:00");
+    expect(html).toContain('aria-label="Chairside timer: 6:00 remaining of 10 minutes"');
+    expect(html).toContain("dc-ring-arc");
+    // The caption/percentage is replaced, not duplicated: the arc still carries
+    // the value for assistive tech, but no "%" caption is rendered.
+    expect(html).toContain('aria-valuenow="40"');
+    expect(html).not.toContain("%</span>");
   });
 });
 
@@ -109,27 +92,19 @@ describe("dashboard visit metrics", () => {
     const m = visitMetrics(null);
     expect(m).toMatchObject({
       visits: 0,
-      fillPercent: 0,
       newToday: 0,
       returningToday: 0,
       newGoalPercent: 0,
       newGoalRemaining: NEW_PATIENT_DAILY_TARGET,
       returningShare: 0,
-      openPercent: 100,
     });
     expect(m.newGoal).toBe(10);
     expect(m.visitsDelta).toBeNull();
+    expect(m.newDelta).toBeNull();
+    expect(m.returningDelta).toBeNull();
     for (const value of Object.values(m)) {
       expect(Number.isNaN(value)).toBe(false);
     }
-  });
-
-  it("measures today's visits against the day's chair slots", () => {
-    const m = visitMetrics({ total_visits: 12 });
-    expect(m.capacity).toBe(DAILY_VISIT_CAPACITY);
-    expect(m.fillPercent).toBe(60);
-    expect(m.openSlots).toBe(8);
-    expect(m.openPercent).toBe(40);
   });
 
   it("measures new patients against the ten-a-day goal", () => {
@@ -155,13 +130,6 @@ describe("dashboard visit metrics", () => {
     expect(visitMetrics({ total_visits: 0, returning_patients_today: 2 }).returningShare).toBe(0);
   });
 
-  it("never shows more than a full ring when the day is overbooked", () => {
-    const m = visitMetrics({ total_visits: 26 });
-    expect(m.fillPercent).toBe(100);
-    expect(m.openSlots).toBe(0);
-    expect(m.openPercent).toBe(0);
-  });
-
   it("ignores malformed summary values instead of rendering NaN", () => {
     const m = visitMetrics({
       total_visits: Number.NaN,
@@ -171,14 +139,24 @@ describe("dashboard visit metrics", () => {
     expect(m.visits).toBe(0);
     expect(m.newToday).toBe(0);
     expect(m.returningToday).toBe(0);
-    expect(m.fillPercent).toBe(0);
     expect(m.newGoalPercent).toBe(0);
     expect(m.returningShare).toBe(0);
   });
 
-  it("passes the month-over-month delta through for the header chip", () => {
-    expect(visitMetrics({ total_visits: 4, visits_delta_pct: 12 }).visitsDelta).toBe(12);
-    expect(visitMetrics({ total_visits: 4, visits_delta_pct: 0 }).visitsDelta).toBe(0);
+  it("passes the month-over-month deltas through for the three chips", () => {
+    const m = visitMetrics({
+      total_visits: 8,
+      visits_delta_pct: 12,
+      new_patients_today: 2,
+      new_patients_delta_pct: -25,
+      returning_patients_today: 6,
+      returning_patients_delta_pct: 0,
+    });
+    expect(m.visitsDelta).toBe(12);
+    expect(m.newDelta).toBe(-25);
+    expect(m.returningDelta).toBe(0);
     expect(visitMetrics({ total_visits: 4, visits_delta_pct: null }).visitsDelta).toBeNull();
+    // A non-numeric delta is "nothing to compare", not zero.
+    expect(visitMetrics({ total_visits: 4, visits_delta_pct: Number.NaN }).visitsDelta).toBeNull();
   });
 });

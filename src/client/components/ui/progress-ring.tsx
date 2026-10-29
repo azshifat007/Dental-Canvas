@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
  *
  * Accessibility: the `<svg>` is a single `role="progressbar"` with its value
  * and a caller-supplied label; the visible number and caption are aria-hidden
- * so a screen reader hears "Chair utilization, 65 percent" once, not twice.
+ * so a screen reader hears "Session timer, 65 percent" once, not twice.
  */
 
 export type RingTone = "brand" | "teal" | "amber" | "rose" | "violet";
@@ -68,7 +68,7 @@ export function ProgressRing({
   /** Stroke width in viewBox units (1–40). */
   thickness?: number;
   tone?: RingTone;
-  /** Accessible name, e.g. "Chair utilization". */
+  /** Accessible name, e.g. "Session timer". */
   label: string;
   /** Small caption under the number (not rendered when `children` is given). */
   caption?: string;
@@ -141,55 +141,3 @@ export function ProgressRing({
   );
 }
 
-/** Compact ring with an icon in the middle and its figure + label beneath —
- *  the small stat gauges under the dashboard's headline ring. */
-export function MiniStatRing({
-  icon,
-  value,
-  label,
-  display,
-  detail,
-  ariaLabel,
-  tone = "brand",
-  size = 58,
-  thickness = 9,
-}: {
-  icon: ReactNode;
-  value: number;
-  label: string;
-  /** Text under the ring — defaults to the percentage. Pass "3/10" when the
-   *  ring measures progress toward a goal, so the real numbers are visible
-   *  without hovering (there is no hover on a phone). */
-  display?: string;
-  /** Hover text spelling out the real numbers behind the percentage. */
-  detail?: string;
-  /** Accessible name; defaults to "<label>: <n> percent". */
-  ariaLabel?: string;
-  tone?: RingTone;
-  size?: number;
-  thickness?: number;
-}) {
-  const percent = clampPercent(value);
-  return (
-    <div className="group flex min-w-0 flex-1 flex-col items-center gap-1.5" title={detail ?? label}>
-      <ProgressRing
-        value={percent}
-        size={size}
-        thickness={thickness}
-        tone={tone}
-        label={ariaLabel ?? `${label}: ${Math.round(percent)} percent`}
-        className="transition-transform duration-200 group-hover:scale-105"
-      >
-        <span className={cn("flex items-center justify-center", TONE_TEXT[tone])}>
-          {icon}
-        </span>
-      </ProgressRing>
-      <div className="min-w-0 text-center leading-tight">
-        <div className="text-sm font-bold tabular-nums">{display ?? `${Math.round(percent)}%`}</div>
-        <div className="truncate text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          {label}
-        </div>
-      </div>
-    </div>
-  );
-}

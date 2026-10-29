@@ -59,31 +59,35 @@
   --brand-hue: 195;
   --brand-chroma-scale: 1;
 
-  --background: oklch(0.99 0.005 calc(var(--brand-hue) + 5));
-  --foreground: oklch(0.18 0.02 240);
+  --background: oklch(0.985 0.012 175);
+  --foreground: oklch(0.2 0.03 245);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.18 0.02 240);
+  --card-foreground: oklch(0.2 0.03 245);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.18 0.02 240);
+  --popover-foreground: oklch(0.2 0.03 245);
   --primary: oklch(0.55 calc(0.13 * var(--brand-chroma-scale)) var(--brand-hue));
   --primary-foreground: oklch(0.99 0 0);
-  --secondary: oklch(0.96 0.01 200);
-  --secondary-foreground: oklch(0.22 0.03 240);
-  --muted: oklch(0.96 0.005 220);
-  --muted-foreground: oklch(0.52 0.02 240);
-  --accent: oklch(0.94 calc(0.02 * var(--brand-chroma-scale)) var(--brand-hue));
-  --accent-foreground: oklch(0.22 calc(0.06 * var(--brand-chroma-scale)) var(--brand-hue));
+  --secondary: oklch(0.96 0.015 190);
+  --secondary-foreground: oklch(0.24 0.03 245);
+  --muted: oklch(0.96 0.01 190);
+  --muted-foreground: oklch(0.52 0.02 235);
+  --accent: oklch(0.945 calc(0.025 * var(--brand-chroma-scale)) var(--brand-hue));
+  --accent-foreground: oklch(0.24 calc(0.06 * var(--brand-chroma-scale)) var(--brand-hue));
   --destructive: oklch(0.6 0.22 27);
   --destructive-foreground: oklch(0.99 0 0);
-  --border: oklch(0.91 0.01 220);
-  --input: oklch(0.91 0.01 220);
+  --border: oklch(0.915 0.012 190);
+  --input: oklch(0.915 0.012 190);
   --ring: oklch(0.55 calc(0.13 * var(--brand-chroma-scale)) var(--brand-hue));
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0.005 calc(var(--brand-hue) + 5));
-  --sidebar-foreground: oklch(0.22 0.02 240);
-  --sidebar-accent: oklch(0.94 calc(0.03 * var(--brand-chroma-scale)) var(--brand-hue));
+  --radius: 0.875rem;
+  /* Soft mint canvas used by the app shell and the dashboard backdrop. */
+  --mint-1: oklch(0.965 0.035 175);
+  --mint-2: oklch(0.975 0.02 195);
+  --mint-ink: oklch(0.28 0.045 250);
+  --sidebar: oklch(0.99 0.008 175);
+  --sidebar-foreground: oklch(0.24 0.03 245);
+  --sidebar-accent: oklch(0.945 calc(0.03 * var(--brand-chroma-scale)) var(--brand-hue));
   --sidebar-accent-foreground: oklch(0.3 calc(0.1 * var(--brand-chroma-scale)) var(--brand-hue));
-  --sidebar-border: oklch(0.91 0.01 220);
+  --sidebar-border: oklch(0.915 0.012 190);
 }
 
 /* Dark palette — activated by the .dark class on <html> (see use-theme.ts).
@@ -114,6 +118,9 @@
   --sidebar-accent: oklch(0.28 calc(0.03 * var(--brand-chroma-scale)) var(--brand-hue));
   --sidebar-accent-foreground: oklch(0.88 calc(0.04 * var(--brand-chroma-scale)) var(--brand-hue));
   --sidebar-border: oklch(0.28 0.015 240);
+  --mint-1: oklch(0.24 0.03 190);
+  --mint-2: oklch(0.2 0.02 245);
+  --mint-ink: oklch(0.9 0.02 200);
 }
 
 /* ── Always-visible scrollbars ──────────────────────────────────────────
@@ -396,6 +403,168 @@ html.a11y-reduce-motion *::after {
     transparent 70%
   );
   background-size: 200% 100%;
+}
+
+/* ── Mint dashboard surface (v1.4.26) ────────────────────────────────
+   The dashboard's soft clinic canvas: a mint-to-sky wash with blurred
+   colour blooms, so cards read as floating paper rather than boxes drawn on
+   a flat page. Purely decorative; the backdrop layer is aria-hidden and the
+   reduced-motion block above freezes its drift. */
+.dc-page {
+  background-color: var(--background);
+  background-image:
+    radial-gradient(60rem 36rem at 8% -8%, var(--mint-1), transparent 62%),
+    radial-gradient(48rem 32rem at 96% 4%, oklch(0.95 0.04 230 / 0.55), transparent 60%),
+    radial-gradient(40rem 30rem at 62% 108%, oklch(0.96 0.035 330 / 0.45), transparent 62%),
+    linear-gradient(to bottom, var(--background), var(--background));
+}
+.dark .dc-page {
+  background-image:
+    radial-gradient(60rem 36rem at 8% -8%, oklch(0.26 0.04 190 / 0.7), transparent 62%),
+    radial-gradient(48rem 32rem at 96% 4%, oklch(0.24 0.04 245 / 0.65), transparent 60%),
+    radial-gradient(40rem 30rem at 62% 108%, oklch(0.24 0.03 300 / 0.45), transparent 62%),
+    linear-gradient(to bottom, var(--background), var(--background));
+}
+
+/* Card surface shared by every dashboard panel: translucent white, a hairline
+   border that disappears into the mint wash, and a low, wide shadow. */
+.dc-card {
+  border-radius: 1.25rem;
+  border: 1px solid color-mix(in oklab, var(--border) 55%, transparent);
+  background-color: color-mix(in oklab, var(--card) 88%, transparent);
+  box-shadow:
+    0 1px 2px rgb(15 42 66 / 0.04),
+    0 18px 40px -28px rgb(15 42 66 / 0.28);
+  backdrop-filter: blur(6px);
+}
+.dark .dc-card {
+  border-color: color-mix(in oklab, var(--border) 90%, transparent);
+  background-color: color-mix(in oklab, var(--card) 92%, transparent);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.4),
+    0 18px 40px -28px rgb(0 0 0 / 0.8);
+}
+
+/* High contrast asks for flat, high-separation surfaces: drop the decorative
+   wash and the translucency so text sits on the solid card colour. */
+html.a11y-contrast .dc-page {
+  background-image: none;
+}
+html.a11y-contrast .dc-card {
+  background-color: var(--card);
+  backdrop-filter: none;
+}
+
+/* Cards on a mint page (Patients, Agenda, Settings) inherit the dashboard's
+   floating-paper surface. The hook lives on the Card component so a settings
+   pane built from nested Cards matches without repeating the styling, while
+   pages still on the flat canvas keep their plain card. */
+.dc-page .dc-paper {
+  border-radius: 1.25rem;
+  border-color: color-mix(in oklab, var(--border) 55%, transparent);
+  background-color: color-mix(in oklab, var(--card) 88%, transparent);
+  box-shadow:
+    0 1px 2px rgb(15 42 66 / 0.04),
+    0 18px 40px -28px rgb(15 42 66 / 0.28);
+  backdrop-filter: blur(6px);
+}
+.dark .dc-page .dc-paper {
+  border-color: color-mix(in oklab, var(--border) 90%, transparent);
+  background-color: color-mix(in oklab, var(--card) 92%, transparent);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.4),
+    0 18px 40px -28px rgb(0 0 0 / 0.8);
+}
+html.a11y-contrast .dc-page .dc-paper {
+  background-color: var(--card);
+  backdrop-filter: none;
+}
+
+/* Tab bars on a mint page (Settings, patient record): the active tab becomes a
+   primary pill instead of a raised white chip, so the navigation reads as one
+   surface with the page. Declared here rather than per-trigger so new tabs
+   inherit it automatically. */
+.dc-tabbar > button[role="tab"] {
+  border-radius: 0.75rem;
+  transition: background-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+.dc-tabbar > button[role="tab"][data-state="active"] {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: 0 6px 14px -6px color-mix(in oklab, var(--primary) 70%, transparent);
+}
+.dc-tabbar > button[role="tab"]:not([data-state="active"]):hover {
+  background: color-mix(in oklab, var(--primary) 10%, transparent);
+  color: var(--primary);
+}
+html.a11y-contrast .dc-tabbar > button[role="tab"][data-state="active"] {
+  box-shadow: none;
+}
+
+/* Hero metric tiles — the blue/pink pair from the reference design. */
+.dc-tile-new {
+  background-image: linear-gradient(135deg, oklch(0.72 0.13 250), oklch(0.62 0.16 260));
+  color: oklch(0.99 0 0);
+}
+.dc-tile-returning {
+  background-image: linear-gradient(135deg, oklch(0.78 0.12 350), oklch(0.68 0.15 330));
+  color: oklch(0.99 0 0);
+}
+
+/* Segmented day-goal bar inside the New Patients tile. */
+.dc-tile-bar {
+  background-image: linear-gradient(90deg, oklch(1 0 0 / 0.95), oklch(1 0 0 / 0.65));
+  transition: width 900ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Floating dental glyphs behind the dashboard content. Each tooth gets a
+   position/scale/rotation from inline styles; this only carries the drift. */
+.dc-tooth-float {
+  animation: dc-tooth-drift 22s ease-in-out infinite;
+  animation-delay: calc(var(--drift-i, 0) * -3.1s);
+  will-change: transform;
+}
+@keyframes dc-tooth-drift {
+  0%, 100% { transform: translate3d(0, 0, 0) rotate(var(--drift-rot, 0deg)); }
+  35% { transform: translate3d(10px, -16px, 0) rotate(calc(var(--drift-rot, 0deg) + 5deg)); }
+  70% { transform: translate3d(-8px, 10px, 0) rotate(calc(var(--drift-rot, 0deg) - 4deg)); }
+}
+
+/* Sparkle that fades in and out on a different, slower rhythm than the
+   teeth so the backdrop never looks like one looping animation. */
+.dc-sparkle {
+  animation: dc-twinkle 7s ease-in-out infinite;
+  animation-delay: calc(var(--sparkle-i, 0) * -1.7s);
+}
+@keyframes dc-twinkle {
+  0%, 100% { opacity: 0.15; transform: scale(0.8); }
+  50% { opacity: 0.7; transform: scale(1.1); }
+}
+
+/* Rotating dental tip: the key is remounted per tip so this replays. */
+.dc-tip-in {
+  animation: dc-tip-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes dc-tip-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Chairside timer heartbeat while it is counting down. */
+.dc-timer-live {
+  animation: dc-timer-live 2.4s ease-in-out infinite;
+}
+@keyframes dc-timer-live {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(20 184 166 / 0.32); }
+  55% { box-shadow: 0 0 0 10px rgb(20 184 166 / 0); }
+}
+
+/* Soft mint halo behind the hero illustration. */
+.dc-hero-glow {
+  background: radial-gradient(closest-side, oklch(0.92 0.06 175 / 0.85), transparent 78%);
+}
+.dark .dc-hero-glow {
+  background: radial-gradient(closest-side, oklch(0.4 0.06 190 / 0.5), transparent 78%);
 }
 
 /* Striped pattern used for past/closed time slots in the agenda.

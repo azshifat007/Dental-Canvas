@@ -5,6 +5,7 @@ import { useApp } from "@/context";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { PageShell } from "@/components/page-shell";
 import { formatDate } from "@/lib/utils";
 import type { Patient } from "@/types";
 import { PatientOverview } from "./patient-overview";
@@ -88,15 +89,29 @@ export function PatientPage({ id, navigate }: Props) {
   if (!patient.address) missing.push("address");
   const profileIncomplete = missing.length > 0;
 
+  const patientInitials = `${patient.first_name.trim()[0] ?? ""}${patient.last_name.trim()[0] ?? ""}`.toUpperCase() || "?";
+
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="border-b bg-card px-4 py-3">
+    <PageShell>
+      <div className="shrink-0 px-4 pb-4 pt-5 md:px-6">
         <div className="flex flex-wrap items-start gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate("/patients")} aria-label="Back">
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => navigate("/patients")}
+            aria-label="Back"
+            className="h-10 w-10 shrink-0 rounded-full border-border/60 bg-card/85 shadow-sm backdrop-blur"
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <div className="flex-1">
-            <h1 className="text-xl font-semibold tracking-tight">
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-teal-600 text-sm font-bold text-primary-foreground shadow-lg shadow-primary/25">
+            {patientInitials}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary/80">
+              Patient record
+            </p>
+            <h1 className="mt-1 text-[24px] font-bold leading-tight tracking-tight md:text-[28px]">
               {patient.first_name} {patient.last_name}
             </h1>
             <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
@@ -114,32 +129,37 @@ export function PatientPage({ id, navigate }: Props) {
               )}
             </div>
           </div>
-          <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setEditing(true)}
+            className="h-9 rounded-full border-border/60 bg-card/85 shadow-sm backdrop-blur"
+          >
             <Pencil className="h-4 w-4" />
             Edit
           </Button>
-          <Button variant="ghost" size="sm" onClick={deletePatient} className="text-destructive hover:bg-destructive/10 hover:text-destructive">
+          <Button variant="ghost" size="sm" onClick={deletePatient} className="h-9 rounded-full text-destructive hover:bg-destructive/10 hover:text-destructive">
             <Trash2 className="h-4 w-4" />
             Delete
           </Button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto p-4">
+      <div className="min-h-0 flex-1 overflow-auto px-4 pb-8 md:px-6">
         {profileIncomplete && (
-          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-dashed bg-muted/40 px-4 py-3">
+          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-dashed border-primary/30 bg-card/70 px-4 py-3 shadow-sm backdrop-blur">
             <UserRound className="h-4 w-4 shrink-0 text-muted-foreground" />
             <p className="min-w-0 flex-1 text-sm text-muted-foreground">
               <span className="font-medium text-foreground">Profile is {100 - Math.round((missing.length / 4) * 100)}% complete.</span>{" "}
               Missing: {missing.join(", ")}.
             </p>
-            <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+            <Button variant="outline" size="sm" className="rounded-full" onClick={() => setEditing(true)}>
               Complete profile
             </Button>
           </div>
         )}
         <Tabs defaultValue="overview">
-          <TabsList>
+          <TabsList className="dc-tabbar flex h-auto w-full flex-wrap justify-start gap-1 rounded-2xl border border-border/60 bg-card/70 p-1.5 shadow-sm backdrop-blur">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="prescriptions">Prescriptions</TabsTrigger>
             <TabsTrigger value="imaging">Imaging</TabsTrigger>
@@ -182,6 +202,6 @@ export function PatientPage({ id, navigate }: Props) {
         patient={patient}
         onSaved={(p) => setPatient(p)}
       />
-    </div>
+    </PageShell>
   );
 }

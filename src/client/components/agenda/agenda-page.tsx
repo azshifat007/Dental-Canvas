@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { UserPlus } from "lucide-react";
 import { useApp } from "@/context";
 import { Button } from "@/components/ui/button";
+import { PageShell } from "@/components/page-shell";
 import { toIsoDate } from "@/lib/utils";
 import type { Appointment, Patient } from "@/types";
 import { DayToolbar } from "./day-toolbar";
@@ -55,10 +56,15 @@ export function AgendaPage() {
   }
 
   return (
-    <div className="flex flex-1 overflow-hidden">
-      <div className="flex flex-1 flex-col overflow-hidden">
+    <PageShell contentClassName="flex-col lg:flex-row">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <DayToolbar date={date} onChange={setDate} onCreate={() => openCreate()}>
-          <Button variant="outline" size="sm" onClick={() => setRbOpen(true)}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-10 rounded-full border-border/60 bg-card/85 shadow-sm backdrop-blur"
+            onClick={() => setRbOpen(true)}
+          >
             <UserPlus className="h-4 w-4" /> Register &amp; book
           </Button>
           {justBooked && (
@@ -69,7 +75,7 @@ export function AgendaPage() {
                 window.history.pushState(null, "", `/patients/${justBooked.id}`);
                 window.dispatchEvent(new PopStateEvent("popstate"));
               }}
-              className="rounded-md bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800 transition-colors hover:bg-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:hover:bg-emerald-900"
+              className="rounded-full border border-emerald-200/70 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800 shadow-sm transition-colors hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200 dark:hover:bg-emerald-900"
               title="Open the new patient's record"
             >
               {justBooked.first_name} {justBooked.last_name} registered &amp; booked — open record
@@ -98,6 +104,6 @@ export function AgendaPage() {
         date={date}
         onBooked={handleBooked}
       />
-    </div>
+    </PageShell>
   );
 }

@@ -35,6 +35,16 @@ async function ensurePermission(): Promise<boolean> {
   return resolved;
 }
 
+/**
+ * Ask for notification permission ahead of the first alert. Called when a
+ * chairside timer starts, so the OS prompt appears at a deliberate moment
+ * rather than the instant the cycle ends.
+ */
+export async function primeNotifications(): Promise<void> {
+  if (!isTauriDesktop()) return;
+  await ensurePermission();
+}
+
 /** Fire a native notification; resolves once delivered (or dropped). */
 export async function notify(title: string, opts: NotifyOptions = {}): Promise<void> {
   if (!isTauriDesktop()) return;
