@@ -1,3 +1,54 @@
+# Dental Canvas v1.4.26
+
+Released 2026-10-30.
+
+## One clinic, one surface
+
+The dashboard's mint wash, translucent paper cards and large eyebrow headings
+now carry through **Patients**, **Agenda** and **Settings**, so moving between
+the home screen and the working screens no longer feels like changing apps.
+Every page gets the same header rhythm (eyebrow, title, one line of context,
+primary actions on the right), cards lift on hover, and the table, day grid and
+settings panes sit on the same paper. Settings and patient records use pill tab
+bars with the active tab in the clinic's brand colour.
+
+On a phone, the agenda's desk panel used to hold a fixed 320 px rail beside the
+grid, leaving the schedule a 70 px sliver. Below tablet width the panel now sits
+under the grid with every tab (Waiting, To make, Remind, Follow up, Reviews,
+Recall) intact.
+
+## Chairside tools on the dashboard
+
+The dashboard gained the things a chair actually needs between patients:
+
+- **Chairside timer** — Etch, Rinse, Whitening and Set presets, a progress ring
+  and a wall-clock finish time. It keeps counting when you leave the dashboard
+  and restores the running cycle when you come back.
+- **Desktop alert when it finishes** — the timer now raises an OS notification
+  (plus an in-app toast) even if you are on another page. Starting a cycle asks
+  for notification permission then, not at the moment the alert should fire.
+  Pausing or resetting cancels the pending alert so a paused cycle stays quiet.
+- **Next patient** — a live countdown to the next appointment with its treatment
+  and start time, drawn from the same day's list as the agenda.
+- **Sterilization checklist** — a four-step cycle check (pouches, autoclave log,
+  indicator strip, handpieces) with progress, saved per day on the device. It is
+  a chairside reminder, not the clinical log.
+- **Dental wisdom** — short preventive-care tips that rotate on a timer, in the
+  right rail beside Upcoming.
+- **New-patient goal** — the count on the headline tiles now targets ten new
+  patients a day, so the bar measures progress instead of decorating the card.
+
+## The medication picker shows the whole drug
+
+The prescription drug field opened a suggestion list clipped to the width of
+its own column and the height of the medications scroller: names read "Azi…",
+doses read "500…", and only a row and a half were reachable. It is now a
+floating panel wide enough for the full name, group, dose line and instruction,
+with two-line names, a slim scrollbar and the highlighted row scrolled into
+view. Arrow keys move the highlight, Enter fills dosage/frequency/duration/
+instructions, Escape closes only the list, and choosing a suggestion no longer
+pops the panel straight back open.
+
 # Dental Canvas v1.4.25
 
 Released 2026-10-29.
