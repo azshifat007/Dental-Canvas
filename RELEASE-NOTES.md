@@ -1,3 +1,43 @@
+# Dental Canvas v1.4.27
+
+Released 2026-10-31.
+
+## Prescriptions you can reuse
+
+A prescription that worked is now a thing you can keep. **Save as template**
+sits beside the medication list and turns the open Rx — diagnosis, examination,
+history, advice and every drug line — into a template in one click, named after
+the diagnosis. The template menu applies one back onto a new prescription, and
+**Settings → Rx templates** lets you edit the built-ins and compose your own
+layouts from the sections you actually write on.
+
+The shipped layouts also stopped repeating themselves: the default template no
+longer prints a section twice.
+
+## Updates that finish installing
+
+On Windows the in-app update downloaded and then did nothing. Installing now
+flushes pending database writes and waits for the worker to confirm them before
+the installer takes over — the Tauri plugin hard-exits the app, so the last few
+seconds of clinical data used to be the thing at risk. After the relaunch the
+app checks that the new build actually booted and falls back to the previous
+version if it did not, instead of leaving you on a silent no-op.
+
+## Phones
+
+- **Medication rows** stack into labelled fields (Drug, Dose, Frequency,
+  Duration, Instructions) with a numbered row header and its own Remove action.
+  The six-column row returns on wide screens.
+- **Saving** no longer needs a scroll hunt: the Rx dialog's actions stick to the
+  bottom edge while the long form scrolls.
+- **Finance** reopens the tab you were on instead of always starting at Billing
+  Record, from the rail and from the mobile More sheet alike.
+- The More sheet used to close itself a moment after opening, and on pages with
+  raised panels it was painted *behind* the content, so its entries could not be
+  tapped. Both are fixed.
+- Agenda day controls are 36 px on a phone, and the therapy-plan and settings
+  add-rows no longer misalign their labelless fields.
+
 # Dental Canvas v1.4.26
 
 Released 2026-10-30.
