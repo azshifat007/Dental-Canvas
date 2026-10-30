@@ -142,7 +142,9 @@ export function BookingTab() {
               <Label htmlFor="bk-label">Label</Label>
               <Input id="bk-label" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Website / Facebook / WhatsApp" />
             </div>
-            <div className="space-y-1.5">
+            {/* flex+gap, not space-y — see the note in settings-page's FieldGroup:
+                space-y + Radix's hidden <select> adds 6px under the trigger. */}
+            <div className="flex flex-col gap-1.5">
               <Label>Practitioner</Label>
               <Select value={practitionerId} onValueChange={setPractitionerId}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -154,7 +156,7 @@ export function BookingTab() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1.5">
+            <div className="flex flex-col gap-1.5">
               <Label>Treatment menu</Label>
               <Select value={treatmentId} onValueChange={setTreatmentId}>
                 <SelectTrigger><SelectValue /></SelectTrigger>

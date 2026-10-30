@@ -285,6 +285,15 @@ async function ensureColumnMigrations(): Promise<void> {
     if (!medCols.some((c) => c.name === "meal_relation")) {
       await run("ALTER TABLE medicines ADD COLUMN meal_relation TEXT");
     }
+    // Clinical templates saved from a finished prescription gained the Rx's
+    // diagnosis / O/E / H/O so a reused template pre-fills the whole clinical
+    // note, not just the medications. Databases created before that.
+    const templateCols = await query<{ name: string }>("PRAGMA table_info(prescription_templates)");
+    for (const column of ["diagnosis", "on_examination", "history"] as const) {
+      if (!templateCols.some((c) => c.name === column)) {
+        await run(`ALTER TABLE prescription_templates ADD COLUMN ${column} TEXT`);
+      }
+    }
     // Databases created before the image module existed need the table.
     await run(`CREATE TABLE IF NOT EXISTS patient_images (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -340,6 +349,16 @@ async function ensureColumnMigrations(): Promise<void> {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`);
     await run("CREATE INDEX IF NOT EXISTS idx_prescription_templates_name ON prescription_templates(name)");
+    // Doctor-defined prescription template skins (Settings → Rx templates).
+    await run(`CREATE TABLE IF NOT EXISTS prescription_layouts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      base TEXT NOT NULL DEFAULT 'chamber',
+      config TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    await run("CREATE INDEX IF NOT EXISTS idx_prescription_layouts_name ON prescription_layouts(name)");
     await run(`CREATE TABLE IF NOT EXISTS prescription_advice_presets (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       text TEXT NOT NULL,
@@ -864,13 +883,148 @@ app.delete("/api/patients/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+// ── Practice-defined prescription templates (Settings → Rx templates) ──
+//
+// A layout is the printable sheet itself: structure, palette, typography and
+// which clinical blocks print. It is stored as JSON so the doctor can edit a
+// copy of any built-in template or build their own. A prescription stores the
+// sheet id `custom-<id>`; the config is attached on read so print, PDF and the
+// public share page render the saved skin without extra lookups.
+
+const BUILTIN_TEMPLATE_IDS = [
+  "chamber",
+  "classic",
+  "modern",
+  "compact",
+  "elegant",
+  "minimal",
+  "bold",
+  "watermark",
+  "two-column",
+] as const;
+
+const HexColorInput = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Colors must be six-digit hex, e.g. #0e7490");
+
+const RxSheetSectionInput = z.object({
+  key: z.enum([
+    "diagnosis",
+    "on_examination",
+    "history",
+    "treatment_plan",
+    "complaints",
+    "investigations",
+    "vitals",
+    "xray",
+  ]),
+  label: z.string().max(40).default(""),
+  enabled: z.boolean(),
+});
+
+const RxTemplateConfigInput = z.object({
+  layout: z.enum(["sidebar", "stacked"]),
+  accent: HexColorInput,
+  header_bg: HexColorInput,
+  header_text: HexColorInput,
+  font: z.enum(["sans", "serif"]),
+  show_rule: z.boolean(),
+  show_logo: z.boolean(),
+  show_bangla: z.boolean(),
+  show_watermark: z.boolean(),
+  show_signature: z.boolean(),
+  footer_note: z.string().max(600).default(""),
+  sections: z.array(RxSheetSectionInput).max(12),
+});
+
+const RxLayoutInput = z.object({
+  name: z.string().min(1).max(60),
+  base: z.enum(BUILTIN_TEMPLATE_IDS).default("chamber"),
+  config: RxTemplateConfigInput,
+});
+
+type RxLayoutRow = { id: number; name: string; base: string; config: string };
+
+/** A saved layout row shaped for the client (slug = the prescription template id). */
+function shapeRxLayout(r: RxLayoutRow) {
+  let config: unknown = null;
+  try {
+    config = JSON.parse(r.config);
+  } catch {
+    /* a corrupt row must not take the list down — the client falls back */
+  }
+  return { id: r.id, slug: `custom-${r.id}`, name: r.name, based_on: r.base, config };
+}
+
+async function listRxLayouts(): Promise<RxLayoutRow[]> {
+  return query<RxLayoutRow>("SELECT id, name, base, config FROM prescription_layouts ORDER BY name COLLATE NOCASE");
+}
+
+/** True when `id` names a template a prescription may be printed with. */
+async function isKnownTemplateId(id: string): Promise<boolean> {
+  if ((BUILTIN_TEMPLATE_IDS as readonly string[]).includes(id)) return true;
+  const m = /^custom-(\d+)$/.exec(id);
+  if (!m) return false;
+  const row = await get<{ id: number }>("SELECT id FROM prescription_layouts WHERE id = ?", [Number(m[1])]);
+  return Boolean(row);
+}
+
+/** The saved skin behind a prescription's template id: only custom ids have one. */
+async function templateConfigFor(template: unknown): Promise<unknown> {
+  if (typeof template !== "string") return null;
+  const m = /^custom-(\d+)$/.exec(template);
+  if (!m) return null;
+  const row = await get<RxLayoutRow>("SELECT id, name, base, config FROM prescription_layouts WHERE id = ?", [Number(m[1])]);
+  return row ? shapeRxLayout(row).config : null;
+}
+
+app.get("/api/prescription-layouts", async (c) => {
+  return c.json({ layouts: (await listRxLayouts()).map(shapeRxLayout) });
+});
+
+app.post("/api/prescription-layouts", async (c) => {
+  const parsed = await parseJson(c, RxLayoutInput);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const d = parsed.data;
+  const result = await run(
+    "INSERT INTO prescription_layouts (name, base, config) VALUES (?, ?, ?)",
+    [d.name.trim(), d.base, JSON.stringify(d.config)],
+  );
+  const row = await get<RxLayoutRow>("SELECT id, name, base, config FROM prescription_layouts WHERE id = ?", [result.lastInsertRowid]);
+  if (!row) return c.json({ error: "Could not read back the created template" }, 500);
+  return c.json({ layout: shapeRxLayout(row) }, 201);
+});
+
+app.put("/api/prescription-layouts/:id", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const parsed = await parseJson(c, RxLayoutInput);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const d = parsed.data;
+  const exists = await get<{ id: number }>("SELECT id FROM prescription_layouts WHERE id = ?", [id]);
+  if (!exists) return c.json({ error: "Not found" }, 404);
+  await run(
+    "UPDATE prescription_layouts SET name = ?, base = ?, config = ?, updated_at = datetime('now') WHERE id = ?",
+    [d.name.trim(), d.base, JSON.stringify(d.config), id],
+  );
+  const row = await get<RxLayoutRow>("SELECT id, name, base, config FROM prescription_layouts WHERE id = ?", [id]);
+  if (!row) return c.json({ error: "Could not read back the template" }, 500);
+  return c.json({ layout: shapeRxLayout(row) });
+});
+
+app.delete("/api/prescription-layouts/:id", async (c) => {
+  const id = intParam(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+  const r = await run("DELETE FROM prescription_layouts WHERE id = ?", [id]);
+  if (!r.changes) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true });
+});
+
 // ── Prescriptions ──────────────────────────────────────────────────
 
 const PrescriptionInput = z.object({
   patient_id: z.number().int(),
   practitioner_id: z.number().int().nullable().optional(),
   issued_date: z.string().optional().nullable(),
-  template: z.enum(["chamber", "classic", "modern", "compact", "elegant", "minimal", "bold", "watermark"]).optional(),
+  template: z.string().max(40).optional(),
   large_print: z.boolean().optional(),
   tooth: z.string().max(32).optional().nullable(),
   plan_item_id: z.number().int().nullable().optional(),
@@ -951,7 +1105,10 @@ async function loadPrescription(id: number) {
   );
   const imageIds = parseImageIds(rx.image_ids);
   const images = imageIds.length ? await resolveImageRows(imageIds) : [];
-  return { ...rx, image_ids: imageIds.length ? imageIds : null, items, images };
+  // A custom template's saved skin travels with the prescription so print/PDF
+  // and the public share page render it without a second request.
+  const templateConfig = await templateConfigFor(rx.template);
+  return { ...rx, image_ids: imageIds.length ? imageIds : null, items, images, template_config: templateConfig };
 }
 
 app.get("/api/patients/:id/prescriptions", async (c) => {
@@ -1035,7 +1192,8 @@ app.get("/api/prescriptions/share/:token", async (c) => {
   );
   const imageIds = parseImageIds(rx.image_ids);
   const images = imageIds.length ? await resolveImageRows(imageIds) : [];
-  const out = { ...rx, id, image_ids: imageIds.length ? imageIds : null, items, images };
+  const templateConfig = await templateConfigFor(rx.template);
+  const out = { ...rx, id, image_ids: imageIds.length ? imageIds : null, items, images, template_config: templateConfig };
   return c.json({ prescription: out });
 });
 
@@ -1344,6 +1502,9 @@ app.post("/api/prescriptions", async (c) => {
   const parsed = await parseJson(c, PrescriptionInput);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   const d = parsed.data;
+  if (d.template !== undefined && !(await isKnownTemplateId(d.template))) {
+    return c.json({ error: "Unknown prescription template" }, 400);
+  }
   const result = await run(
     `INSERT INTO prescriptions (patient_id, practitioner_id, issued_date, template, large_print, tooth, plan_item_id, diagnosis, on_examination, history, advice, follow_up, follow_up_date, patient_gender, complaints, vitals, investigations)
      VALUES (?, ?, COALESCE(?, date('now')), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1387,6 +1548,9 @@ app.put("/api/prescriptions/:id", async (c) => {
   const d = parsed.data;
   const existing = await get<{ id: number; patient_id: number }>("SELECT id, patient_id FROM prescriptions WHERE id = ?", [id]);
   if (!existing) return c.json({ error: "Not found" }, 404);
+  if (d.template !== undefined && !(await isKnownTemplateId(d.template))) {
+    return c.json({ error: "Unknown prescription template" }, 400);
+  }
 
   const sets: string[] = [];
   const params: unknown[] = [];
@@ -1493,9 +1657,15 @@ app.delete("/api/prescriptions/advice-presets/:id", async (c) => {
 });
 
 // ── Prescription clinical templates (save/load reusable clinical bundles) ──
+// Mounted at /api/prescription-templates, beside /api/prescription-layouts:
+// under /api/prescriptions/... a sibling GET would be captured first by
+// /api/prescriptions/:id and rejected as an invalid id.
 
 const PrescriptionTemplateInput = z.object({
   name: z.string().min(1).max(120),
+  diagnosis: z.string().max(400).optional().nullable(),
+  on_examination: z.string().max(2000).optional().nullable(),
+  history: z.string().max(2000).optional().nullable(),
   complaints: z.string().optional().nullable(),
   vitals: z.string().optional().nullable(),
   investigations: z.string().optional().nullable(),
@@ -1512,36 +1682,82 @@ const PrescriptionTemplateInput = z.object({
   })).optional(),
 });
 
-app.get("/api/prescriptions/templates", async (c) => {
-  const rows = await query<{ id: number; name: string; complaints: string | null; vitals: string | null; investigations: string | null; advice: string | null; items: string | null; created_at: string }>(
-    "SELECT id, name, complaints, vitals, investigations, advice, items, created_at FROM prescription_templates ORDER BY created_at DESC",
-  );
-  return c.json({ templates: rows.map((r) => ({
+interface RxClinicalTemplateRow {
+  id: number;
+  name: string;
+  diagnosis: string | null;
+  on_examination: string | null;
+  history: string | null;
+  complaints: string | null;
+  vitals: string | null;
+  investigations: string | null;
+  advice: string | null;
+  items: string | null;
+  created_at: string;
+}
+
+/** A saved clinical template shaped for the client, with its JSON columns parsed. */
+function shapeRxClinicalTemplate(r: RxClinicalTemplateRow) {
+  const json = (v: string | null) => {
+    if (!v) return null;
+    try {
+      return JSON.parse(v);
+    } catch {
+      return null; // a corrupt column must not take the picker down
+    }
+  };
+  return {
     id: r.id,
     name: r.name,
-    complaints: r.complaints,
-    vitals: r.vitals,
-    investigations: r.investigations,
+    diagnosis: r.diagnosis,
+    on_examination: r.on_examination,
+    history: r.history,
+    complaints: json(r.complaints),
+    vitals: json(r.vitals),
+    investigations: json(r.investigations),
     advice: r.advice,
-    items: r.items,
-  })) });
+    items: json(r.items) ?? [],
+    created_at: r.created_at,
+  };
+}
+
+app.get("/api/prescription-templates", async (c) => {
+  const rows = await query<RxClinicalTemplateRow>(
+    `SELECT id, name, diagnosis, on_examination, history, complaints, vitals, investigations, advice, items, created_at
+     FROM prescription_templates ORDER BY created_at DESC, id DESC`,
+  );
+  return c.json({ templates: rows.map(shapeRxClinicalTemplate) });
 });
 
-app.post("/api/prescriptions/templates", async (c) => {
+app.post("/api/prescription-templates", async (c) => {
   const parsed = await parseJson(c, PrescriptionTemplateInput);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   const d = parsed.data;
   const result = await run(
-    `INSERT INTO prescription_templates (name, complaints, vitals, investigations, advice, items)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [d.name.trim(), d.complaints ?? null, d.vitals ?? null, d.investigations ?? null, d.advice ?? null, d.items ? JSON.stringify(d.items) : null],
+    `INSERT INTO prescription_templates (name, diagnosis, on_examination, history, complaints, vitals, investigations, advice, items)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      d.name.trim(),
+      d.diagnosis ?? null,
+      d.on_examination ?? null,
+      d.history ?? null,
+      d.complaints ?? null,
+      d.vitals ?? null,
+      d.investigations ?? null,
+      d.advice ?? null,
+      d.items ? JSON.stringify(d.items) : null,
+    ],
   );
-  const row = await get<{ id: number; name: string }>("SELECT id, name FROM prescription_templates WHERE id = ?", [result.lastInsertRowid]);
+  const row = await get<RxClinicalTemplateRow>(
+    `SELECT id, name, diagnosis, on_examination, history, complaints, vitals, investigations, advice, items, created_at
+     FROM prescription_templates WHERE id = ?`,
+    [result.lastInsertRowid],
+  );
   if (!row) return c.json({ error: "Could not read back the created template" }, 500);
-  return c.json({ template: { id: row.id, name: row.name } }, 201);
+  return c.json({ template: shapeRxClinicalTemplate(row) }, 201);
 });
 
-app.delete("/api/prescriptions/templates/:id", async (c) => {
+app.delete("/api/prescription-templates/:id", async (c) => {
   const id = intParam(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid ID" }, 400);
   const r = await run("DELETE FROM prescription_templates WHERE id = ?", [id]);

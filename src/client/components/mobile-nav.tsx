@@ -15,13 +15,12 @@ import {
   Boxes,
   Ellipsis,
   Receipt,
-  TrendingUp,
-  CalendarClock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { openQuickRegister } from "@/lib/quick-register";
 import { useTheme } from "@/hooks/use-theme";
 import { ToothGlyph } from "@/components/dental-art";
+import { lastFinanceTabPath } from "@/lib/finance-tab";
 import type { Route } from "@/hooks/use-router";
 
 /**
@@ -41,7 +40,14 @@ interface NavItem {
   label: string;
   icon: typeof Calendar;
   path: string;
+  /** Resolved at tap time when one entry stands for several routes. */
+  resolvePath?: () => string;
   match: (r: Route) => boolean;
+}
+
+/** Where an entry actually goes — its fixed path, or its remembered view. */
+function targetOf(item: NavItem): string {
+  return item.resolvePath ? item.resolvePath() : item.path;
 }
 
 const PRIMARY_ITEMS: NavItem[] = [
@@ -52,9 +58,15 @@ const PRIMARY_ITEMS: NavItem[] = [
 ];
 
 const MORE_ITEMS: NavItem[] = [
-  { label: "Billing Record",        icon: Receipt,      path: "/finance/billing-record",       match: (r) => r.name === "finance-billing" },
-  { label: "Revenue",              icon: TrendingUp,   path: "/finance/revenue-breakdown",    match: (r) => r.name === "finance-revenue" },
-  { label: "Appt. Overview",       icon: CalendarClock, path: "/finance/appointment-overview", match: (r) => r.name === "finance-appointments" },
+  // Finance is one destination; its three views are tabs on the page itself.
+  {
+    label: "Finance",
+    icon: Receipt,
+    path: "/finance/billing-record",
+    // Reopen the tab that was last open, matching the desktop rail.
+    resolvePath: lastFinanceTabPath,
+    match: (r) => r.name === "finance-billing" || r.name === "finance-revenue" || r.name === "finance-appointments",
+  },
   { label: "Medicines", icon: Pill, path: "/medicines", match: (r) => r.name === "medicines" },
   { label: "Inventory", icon: Boxes, path: "/inventory", match: (r) => r.name === "inventory" },
   { label: "Reports", icon: FileBarChart2, path: "/reports", match: (r) => r.name === "reports" },
@@ -125,7 +137,7 @@ export function BottomNav({ route, navigate }: { route: Route; navigate: (to: st
       <button
         key={item.path}
         type="button"
-        onClick={() => navigate(item.path)}
+        onClick={() => navigate(targetOf(item))}
         aria-current={active ? "page" : undefined}
         className={cn(
           "flex min-w-0 flex-1 flex-col items-center gap-0.5 rounded-full px-2 py-1.5 transition-colors",
@@ -142,7 +154,10 @@ export function BottomNav({ route, navigate }: { route: Route; navigate: (to: st
 
   return (
     <nav
-      className="shrink-0 px-3 pt-1 md:hidden"
+      // z-30 lifts the bar (and the More sheet above it) over page content: the
+      // pill's backdrop-blur creates a stacking context, so the sheet's own z-50
+      // is local and pages with `relative z-10` panels would paint over it.
+      className="relative z-30 shrink-0 px-3 pt-1 md:hidden"
       style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
       aria-label="Primary"
     >
@@ -171,7 +186,7 @@ export function BottomNav({ route, navigate }: { route: Route; navigate: (to: st
                     key={item.path}
                     type="button"
                     role="menuitem"
-                    onClick={() => navigate(item.path)}
+                    onClick={() => navigate(targetOf(item))}
                     className={cn(
                       "flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors",
                       item.match(route) ? "bg-primary/10 text-primary" : "text-foreground active:bg-muted",

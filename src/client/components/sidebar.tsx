@@ -14,8 +14,6 @@ import {
   Moon,
   Sun,
   Receipt,
-  TrendingUp,
-  CalendarClock,
   Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -23,6 +21,7 @@ import { openQuickRegister } from "@/lib/quick-register";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
 import { ToothGlyph } from "@/components/dental-art";
 import type { Route } from "@/hooks/use-router";
+import { lastFinanceTabPath } from "@/lib/finance-tab";
 
 interface NavItem {
   label: string;
@@ -30,8 +29,15 @@ interface NavItem {
   rail?: string;
   icon: typeof Calendar;
   path?: string;
+  /** Resolved at navigation time when one entry stands for several routes. */
+  resolvePath?: () => string;
   match?: (r: Route) => boolean;
   disabled?: boolean;
+}
+
+/** Where an entry actually goes — its fixed path, or its remembered view. */
+function targetOf(item: NavItem): string | undefined {
+  return item.resolvePath ? item.resolvePath() : item.path;
 }
 
 const sections: { heading: string; items: NavItem[] }[] = [
@@ -48,10 +54,18 @@ const sections: { heading: string; items: NavItem[] }[] = [
   },
   {
     heading: "Finance",
+    // One entry: Billing Record, Revenue Breakdown and Appointment Overview are
+    // tabs inside the page, so they belong in its tab strip, not the rail.
     items: [
-      { label: "Billing Record",         rail: "Billing", icon: Receipt,      path: "/finance/billing-record",        match: (r) => r.name === "finance-billing" },
-      { label: "Revenue Breakdown",      rail: "Revenue", icon: TrendingUp,   path: "/finance/revenue-breakdown",     match: (r) => r.name === "finance-revenue" },
-      { label: "Appointment Overview",   rail: "Appts", icon: CalendarClock, path: "/finance/appointment-overview",  match: (r) => r.name === "finance-appointments" },
+      {
+        label: "Finance",
+        rail: "Finance",
+        icon: Receipt,
+        path: "/finance/billing-record",
+        // Reopen the tab the doctor was last on, not always Billing Record.
+        resolvePath: lastFinanceTabPath,
+        match: (r) => r.name === "finance-billing" || r.name === "finance-revenue" || r.name === "finance-appointments",
+      },
     ],
   },
   {
@@ -75,11 +89,12 @@ export function Sidebar({
 }) {
   const { pref: theme, cycleTheme } = useTheme();
   if (embedded) {
-    const icons: Record<string, string> = { "/dashboard": "layout-dashboard", "/agenda": "calendar-days", "/patients": "users", "/lab": "package", "/medicines": "clipboard-list", "/inventory": "archive", "/finance/billing-record": "receipt", "/finance/revenue-breakdown": "trending-up", "/finance/appointment-overview": "calendar-clock", "/reports": "bar-chart-3", "/settings": "settings", "/whats-new": "sparkles" };
-    const active = sections.flatMap(section => section.items).find(item => item.match?.(route))?.path;
+    const icons: Record<string, string> = { "/dashboard": "layout-dashboard", "/agenda": "calendar-days", "/patients": "users", "/lab": "package", "/medicines": "clipboard-list", "/inventory": "archive", "/finance/billing-record": "receipt", "/reports": "bar-chart-3", "/settings": "settings", "/whats-new": "sparkles" };
+    const activeItem = sections.flatMap(section => section.items).find(item => item.match?.(route));
+    const active = activeItem && targetOf(activeItem);
     return <AppNav title="Dental Canvas" icon="calendar-days" active={active}
       groups={sections.map(section => ({ label: section.heading, items: section.items.filter(item => item.path && !item.disabled).map(item => ({
-        id: item.path!, label: item.label, href: item.path!, icon: icons[item.path!],
+        id: targetOf(item)!, label: item.label, href: targetOf(item)!, icon: icons[item.path!],
       })) }))}
       onNavigate={item => navigate(item.href ?? "/dashboard")} />;
   }
@@ -119,7 +134,10 @@ export function Sidebar({
                     <button
                       type="button"
                       disabled={isDisabled}
-                      onClick={() => item.path && navigate(item.path)}
+                      onClick={() => {
+                        const target = targetOf(item);
+                        if (target) navigate(target);
+                      }}
                       aria-current={active ? "page" : undefined}
                       title={item.label}
                       className={cn(

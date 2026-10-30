@@ -260,52 +260,66 @@ export function TreatmentPlan({ patientId }: { patientId: number }) {
           <CardTitle>Treatment plan</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <form onSubmit={addItem} className="grid grid-cols-1 items-end gap-2 rounded-md border bg-muted/30 p-3 sm:grid-cols-[2fr_1fr_1fr_auto]">
-            <div className="space-y-1.5">
-              <Label className="text-xs">Treatment</Label>
-              <Select value={treatmentTypeId} onValueChange={setTreatmentTypeId}>
-                <SelectTrigger><SelectValue placeholder="Select…" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">— None —</SelectItem>
-                  {app.treatmentTypes.map((t) => (
-                    <SelectItem key={t.id} value={t.id.toString()}>{t.code} · {t.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {isEndoPick && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                    <Info className="h-3 w-3 shrink-0" />
-                    Root canal usually needs a revisit — add each sitting as its own row.
-                  </p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-7 gap-1 px-2 text-xs"
-                    disabled={adding}
-                    onClick={addRctSeries}
-                  >
-                    <Plus className="h-3 w-3" /> Add 2-visit series
-                  </Button>
-                </div>
-              )}
+          {/* One clean input row: label + control per column, all controls the
+              same height. Helper text lives BELOW the row — inside a column it
+              made that column taller, so `items-end` lifted its label out of
+              line with the others (and its fr width grew to the text). */}
+          <form onSubmit={addItem} className="space-y-2 rounded-md border bg-muted/30 p-3">
+            <div className="grid grid-cols-1 items-end gap-2 sm:grid-cols-[2fr_1fr_1fr_auto]">
+              {/* flex+gap, not space-y: Radix's hidden native <select> is absolutely
+                  positioned but still collects a space-y margin, which made this
+                  column 6px taller and pushed its label out of line. */}
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <Label htmlFor="plan-treatment" className="block text-xs leading-4">Treatment</Label>
+                <Select value={treatmentTypeId} onValueChange={setTreatmentTypeId}>
+                  <SelectTrigger id="plan-treatment"><SelectValue placeholder="Select…" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">— None —</SelectItem>
+                    {app.treatmentTypes.map((t) => (
+                      <SelectItem key={t.id} value={t.id.toString()}>{t.code} · {t.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <Label htmlFor="plan-tooth" className="block text-xs leading-4">Tooth</Label>
+                <Input id="plan-tooth" value={tooth} onChange={(e) => setTooth(e.target.value)} placeholder="e.g. 14" />
+              </div>
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <Label htmlFor="plan-fee" className="block text-xs leading-4">Fee</Label>
+                <Input id="plan-fee" type="number" step="0.01" min="0" value={fee} onChange={(e) => setFee(e.target.value)} placeholder="0.00" />
+              </div>
+              <Button type="submit" disabled={adding} className="h-10">
+                <Plus className="h-4 w-4" />
+                Add
+              </Button>
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Tooth</Label>
-              <Input value={tooth} onChange={(e) => setTooth(e.target.value)} placeholder="e.g. 14" />
-              {toothFinding && (
-                <p className="text-[11px] capitalize text-muted-foreground">Chart: {toothFinding}</p>
-              )}
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Fee</Label>
-              <Input type="number" step="0.01" min="0" value={fee} onChange={(e) => setFee(e.target.value)} placeholder="0.00" />
-            </div>
-            <Button type="submit" disabled={adding}>
-              <Plus className="h-4 w-4" />
-              Add
-            </Button>
+
+            {(toothFinding || isEndoPick) && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                {toothFinding && (
+                  <p className="text-[11px] capitalize text-muted-foreground">Chart: {toothFinding}</p>
+                )}
+                {isEndoPick && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                      <Info className="h-3 w-3 shrink-0" />
+                      Root canal usually needs a revisit — add each sitting as its own row.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 gap-1 px-2 text-xs"
+                      disabled={adding}
+                      onClick={addRctSeries}
+                    >
+                      <Plus className="h-3 w-3" /> Add 2-visit series
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
           </form>
 
           {loading ? (

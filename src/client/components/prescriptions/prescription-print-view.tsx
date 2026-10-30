@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ALargeSmall, ArrowLeft, Download, Eye, Mail, MessageCircle, Printer, Share2 } from "lucide-react";
 import { api } from "@/api";
 import { useApp } from "@/context";
-import type { Prescription, PrescriptionTemplate } from "@/types";
+import type { Prescription } from "@/types";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,6 +18,7 @@ import {
 import { PrescriptionSheet, isPrescriptionTemplate } from "./prescription-sheet";
 import { PrescriptionPreviewModal } from "./prescription-preview-modal";
 import { TemplateDropdown } from "./template-picker";
+import { SaveRxTemplateButton } from "./save-rx-template-dialog";
 import { printSheetHtml, downloadSheetPdf, shareSheetPdf, sheetPdfBase64 } from "@/lib/print";
 import { openExternalUrl } from "@/lib/open-external";
 import { ageFromDob } from "@/lib/utils";
@@ -28,18 +29,6 @@ import { useMaterializedImages } from "@/lib/images";
  * viewport, with a toolbar for printing, PDF download, template switching and
  * PDF-file sharing (native share sheet where available).
  */
-
-const TEMPLATE_LABELS: Record<PrescriptionTemplate, string> = {
-  chamber: "Chamber",
-  classic: "Classic",
-  modern: "Modern",
-  compact: "Compact",
-  elegant: "Elegant",
-  minimal: "Minimal",
-  bold: "Bold",
-  watermark: "Watermark",
-  "two-column": "Two-column",
-};
 
 export function PrescriptionPrintView({
   prescriptionId,
@@ -169,6 +158,17 @@ export function PrescriptionPrintView({
             <ALargeSmall className="h-4 w-4" />
             Large print
           </button>
+          {/* A finished Rx is the practice's real protocol — keep it for reuse. */}
+          <SaveRxTemplateButton
+            source={{
+              diagnosis: rx.diagnosis,
+              on_examination: rx.on_examination,
+              history: rx.history,
+              advice: rx.advice,
+              items: rx.items ?? [],
+            }}
+            className="h-8 rounded-md px-3 text-sm"
+          />
           <SharePdfButton rx={rx} printHostRef={printHostRef} />
           <EmailPdfButton rx={rx} printHostRef={printHostRef} />
           <WhatsAppButton rx={rx} printHostRef={printHostRef} />
@@ -470,7 +470,11 @@ export function buildSheetData(
     patient_medical_alerts: alerts || null,
     practitioner_name: rx.practitioner_name ?? null,
     issued_date: rx.issued_date,
-    template: isPrescriptionTemplate(rx.template) ? rx.template : "chamber",
+    // A custom template keeps its id and carries its saved skin; anything the
+    // practice deleted or renamed falls back to the default pad, so an old
+    // prescription always prints something coherent.
+    template: isPrescriptionTemplate(rx.template) || rx.template_config ? rx.template : "chamber",
+    template_config: rx.template_config ?? null,
     large_print: Boolean(rx.large_print),
     tooth: rx.tooth,
     plan_treatment_name: rx.plan_treatment_name ?? null,

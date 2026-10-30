@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Plus, Trash2, Pencil, Check, X, Clock, UserRound, DatabaseBackup, Palette, Monitor, Sun, Moon, ImageUp, Mail, ReceiptText, MailCheck, QrCode, Printer, Link2, CircleDollarSign, Info, Download, Loader2, RefreshCw, Search, BellRing, Sparkles } from "lucide-react";
+import { Plus, Trash2, Pencil, Check, X, Clock, UserRound, DatabaseBackup, Palette, Monitor, Sun, Moon, ImageUp, Mail, ReceiptText, MailCheck, QrCode, Printer, Link2, CircleDollarSign, Info, Download, Loader2, RefreshCw, Search, BellRing, Sparkles, FileText } from "lucide-react";
 import { useApp } from "@/context";
 import { api } from "@/api";
 import { toast } from "@/components/ui/toast";
 import { BackupTab } from "./backup-tab";
 import { UpdateCard } from "./app-update-card";
 import { BookingTab } from "./booking-tab";
+import { RxTemplatesTab } from "./rx-templates-tab";
 import { StorageTab } from "./storage-tab";
 import { StartupCard } from "./startup-card";
 import { PageHeader, PageShell } from "@/components/page-shell";
@@ -70,6 +71,9 @@ export function SettingsPage() {
             <TabsTrigger value="billing" className="gap-1.5">
               <ReceiptText className="h-3.5 w-3.5" /> Billing
             </TabsTrigger>
+            <TabsTrigger value="rx-templates" className="gap-1.5">
+              <FileText className="h-3.5 w-3.5" /> Rx templates
+            </TabsTrigger>
             <TabsTrigger value="storage" className="gap-1.5">
               <ImageUp className="h-3.5 w-3.5" /> Storage
             </TabsTrigger>
@@ -117,6 +121,9 @@ export function SettingsPage() {
           </TabsContent>
           <TabsContent value="billing" className="mt-4">
             <InvoiceStyleTab />
+          </TabsContent>
+          <TabsContent value="rx-templates" className="mt-4">
+            <RxTemplatesTab />
           </TabsContent>
           <TabsContent value="storage" className="mt-4">
             <StorageTab />
@@ -1586,7 +1593,11 @@ function FieldGroup({
   children: React.ReactNode;
 }) {
   return (
-    <div className={cn("space-y-1.5", className)}>
+    // flex+gap, not space-y: Radix renders a hidden native <select> next to the
+    // trigger, which space-y counts as a sibling and so leaves a 6px bottom
+    // margin on the trigger. Inside an `items-end` row that made the column 6px
+    // taller and lifted its label out of line with the neighbouring inputs.
+    <div className={cn("flex flex-col gap-1.5", className)}>
       <Label className="text-xs">{label}</Label>
       {children}
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}

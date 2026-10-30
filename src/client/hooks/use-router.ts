@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 
 export type Route =
   | { name: "dashboard" }
@@ -65,5 +65,11 @@ export function useRouter() {
     return () => window.removeEventListener("popstate", handler);
   }, []);
 
-  return { path, route: parse(path), navigate };
+  // Memoised: `parse` builds a fresh object every call, so an unmemoised route
+  // gave every `useEffect(..., [route])` a new dependency on each parent render
+  // — the mobile nav's "close the More sheet on navigation" effect was firing
+  // on unrelated re-renders and dismissing the sheet a moment after it opened.
+  const route = useMemo(() => parse(path), [path]);
+
+  return { path, route, navigate };
 }

@@ -47,7 +47,7 @@
 
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { isTauriDesktop, flushDatabase } from "@/offline/activate";
+import { isTauriDesktop, flushDatabase, flushDatabaseAndWait } from "@/offline/activate";
 import { saveUpdateNotesForNextBoot } from "@/components/update-applied-banner";
 import { openExternalUrl } from "@/lib/open-external";
 import { isNewer } from "@/lib/version";
@@ -392,13 +392,33 @@ export async function installStagedUpdate(): Promise<boolean> {
   if (!update) return false;
   staged = null;
   const notes = state?.notes ?? "";
-  flushDatabase();
+  // Record the attempt before anything can kill the process: the next boot
+  // uses it to tell "installed" from "the installer never ran".
+  markPendingInstall(__APP_VERSION__, update.version);
+  // Windows hard-exits this process the instant the installer is launched, so
+  // the pending writes must be on disk *now* — not a fire-and-forget message.
+  await flushDatabaseAndWait();
   saveUpdateNotesForNextBoot(update.version, notes);
   emit({ version: update.version, notes, phase: "ready", progress: 1, mode: "installer" });
-  await update.install();
-  // Windows ended the process above; macOS and Linux only swap the files, so
-  // the new build has to be started explicitly.
-  await relaunch();
+  try {
+    // restartAfterInstall: true is what makes NSIS receive `/R` (and `/ARGS`)
+    // and start the app again on a new version. Stated explicitly because the
+    // whole "the window never comes back" failure hinges on it.
+    await update.install({ restartAfterInstall: true });
+  } catch (err) {
+    // The installer could not even be launched (SmartScreen, antivirus, a
+    // declined elevation prompt). The exe was not replaced: put the staged
+    // package back so the user can retry, and say what happened.
+    clearPendingInstall();
+    staged = update;
+    emit({ version: update.version, notes, phase: "staged", progress: 1, mode: "installer" });
+    emitDiagnostics({ lastError: `the installer could not start: ${errorMessage(err)}` });
+    throw err;
+  }
+  // Windows has already ended this process above (the plugin calls exit(0) as
+  // soon as the installer is spawned). macOS and Linux swap the files under a
+  // live process, so only they need an explicit relaunch.
+  if (!isWindows()) await relaunch();
   return true;
 }
 
@@ -524,6 +544,129 @@ export function __backgroundDownloadForTests(): Promise<void> {
   return backgroundDownload ?? Promise.resolve();
 }
 
+// ── Did the install we launched actually take? ────────────────────────────
+//
+// On Windows the plugin hands the NSIS installer to the shell with `/P
+// /UPDATE /R` and then hard-exits the process — it never reports back, so
+// anything after `install()` (including an error) never runs there. If the
+// installer is blocked (SmartScreen on an unsigned build, an elevation prompt
+// nobody sees, a locked exe) the app simply reopens on the old version with no
+// explanation. That is the "it downloads but nothing changes" report.
+//
+// So every install attempt records what it was trying to do, and the next boot
+// checks whether it happened: the new shell is running (done), the binary is
+// new but this page is old (stale shell cache → repair it), or the binary is
+// still the old one (the installer never completed → hand over the installer
+// instead of silently retrying forever).
+
+const PENDING_INSTALL_KEY = "dental-canvas:pending-update";
+
+interface PendingInstall {
+  /** __APP_VERSION__ of the build that started the install. */
+  from: string;
+  /** Version it tried to install. */
+  to: string;
+  at: number;
+}
+
+function markPendingInstall(from: string, to: string): void {
+  try {
+    window.localStorage.setItem(PENDING_INSTALL_KEY, JSON.stringify({ from, to, at: Date.now() }));
+  } catch {
+    /* no storage — verification is skipped for this attempt */
+  }
+}
+
+function clearPendingInstall(): void {
+  try {
+    window.localStorage.removeItem(PENDING_INSTALL_KEY);
+  } catch {
+    /* best effort */
+  }
+}
+
+function takePendingInstall(): PendingInstall | null {
+  try {
+    const raw = window.localStorage.getItem(PENDING_INSTALL_KEY);
+    if (!raw) return null;
+    window.localStorage.removeItem(PENDING_INSTALL_KEY);
+    const parsed = JSON.parse(raw) as Partial<PendingInstall>;
+    if (!parsed.from || !parsed.to) return null;
+    return { from: parsed.from, to: parsed.to, at: Number(parsed.at) || 0 };
+  } catch {
+    return null;
+  }
+}
+
+function isWindows(): boolean {
+  return typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
+}
+
+/**
+ * Run once at boot on desktop (see app.tsx). Decides what happened to the
+ * update the previous run launched, and recovers from both silent outcomes.
+ *
+ * No-op when no install was pending, or when the running UI is already the
+ * version that was being installed.
+ */
+export async function verifyUpdateOnBoot(): Promise<void> {
+  if (!isUpdateSupported()) return;
+  const pending = takePendingInstall();
+  if (!pending) return;
+  // The new build is loaded — the update applied. The post-update banner
+  // (update-applied-banner) takes it from here.
+  if (__APP_VERSION__ === pending.to) return;
+
+  let binaryStillOld = false;
+  try {
+    // The plugin compares the *binary's* version with the feed. A newer signed
+    // release still on offer means the exe was never replaced.
+    binaryStillOld = Boolean(await check({ timeout: 15_000 }));
+  } catch (err) {
+    // Offline or the endpoint is unreachable: we cannot tell, so keep the
+    // marker and decide on the next launch instead of guessing.
+    markPendingInstall(pending.from, pending.to);
+    emitDiagnostics({ lastError: `could not verify the last update: ${errorMessage(err)}` });
+    return;
+  }
+
+  if (binaryStillOld) {
+    const feed = await fetchFeed();
+    emit({
+      version: pending.to,
+      notes: (feed?.body ?? "").trim(),
+      phase: "available",
+      progress: 0,
+      mode: "manual",
+      downloadUrl: feed ? pickDownloadUrl(feed as Feed) : RELEASES_PAGE,
+    });
+    emitDiagnostics({
+      lastCheckedAt: Date.now(),
+      lastError:
+        "The last update downloaded but the installer did not finish, so the app is still on the previous version. Download the installer once to complete it.",
+      feedVersion: (feed?.tag_name ?? "").replace(/^v/i, "") || pending.to,
+      selfInstall: false,
+    });
+    return;
+  }
+
+  // The binary is current but this page still runs the old build: the app
+  // shell came from the previous release's cache. Clear it and reload into the
+  // installed UI (once per session, so a failing purge cannot loop).
+  try {
+    if (sessionStorage.getItem("dental-canvas:auto-repaired") === "1") return;
+    sessionStorage.setItem("dental-canvas:auto-repaired", "1");
+  } catch {
+    return;
+  }
+  emitDiagnostics({
+    lastCheckedAt: Date.now(),
+    lastError: "The update was installed, but this window was still running the previous shell — clearing the cache.",
+    selfInstall: true,
+  });
+  await repairCachedAppFiles();
+}
+
 /**
  * Download and install the pending update via the signed in-app updater, then
  * relaunch. The returned promise resolves when the installer has been launched
@@ -552,8 +695,12 @@ export async function installUpdate(): Promise<void> {
     emitDiagnostics({ lastError: "the update feed no longer offers this version" });
     return;
   }
+  // Download, then install through the same verified path as a staged update:
+  // that is what flushes the database to disk and records the attempt before
+  // Windows terminates the process. `downloadAndInstall` would do both in one
+  // go, which leaves no chance to flush or to notice a silent failure.
   let total = 0;
-  await update.downloadAndInstall((event) => {
+  await update.download((event) => {
     switch (event.event) {
       case "Started":
         total = event.data.contentLength ?? 0;
@@ -571,14 +718,9 @@ export async function installUpdate(): Promise<void> {
         break;
     }
   });
-  // The NSIS installer is about to terminate this process on Windows; push
-  // any debounced DB writes to IndexedDB first (best effort, fire-and-forget).
-  flushDatabase();
-  // Save the changelog so the post-update banner can greet the user with it
-  // after the relaunch (the fresh process has no in-memory update state).
-  saveUpdateNotesForNextBoot(update.version, current.notes);
-  emit({ version: update.version, notes: current.notes, phase: "ready", progress: 1, mode: "installer" });
-  await relaunch();
+  staged = update;
+  emit({ version: update.version, notes: current.notes, phase: "staged", progress: 1, mode: "installer" });
+  await installStagedUpdate();
 }
 
 /** Open the installer for a machine that cannot self-install. */

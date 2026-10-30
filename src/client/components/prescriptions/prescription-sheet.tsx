@@ -1,4 +1,4 @@
-import type { PrescriptionTemplate } from "@/types";
+import type { PrescriptionTemplate, PrescriptionTemplateId, RxSheetSectionKey, RxTemplateConfig } from "@/types";
 import { DOSE_SCHEDULE_LABELS, MEAL_RELATION_LABELS } from "@/types";
 
 /**
@@ -39,7 +39,9 @@ export interface PrescriptionSheetData {
   patient_medical_alerts?: string | null;
   practitioner_name?: string | null;
   issued_date: string;
-  template: PrescriptionTemplate;
+  template: PrescriptionTemplateId;
+  /** Resolved skin for a custom template id (see PrescriptionLayout). */
+  template_config?: RxTemplateConfig | null;
   /** Enlarged type for visually impaired patients — scales the clinical content. */
   large_print?: boolean;
   /** Tooth the prescription relates to, rendered beside the linked procedure. */
@@ -779,44 +781,6 @@ export function ChamberSheet({ data }: { data: PrescriptionSheetData }) {
               </svg>
             )}
           </div>
-          <div>
-            <div style={sideLabel}>Complaints <span style={bnSub}>কারণ / শিকয়ত</span></div>
-            {data.complaints && data.complaints.items.length > 0 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: "1.5mm" }}>
-                {data.complaints.items.map((c, i) => (
-                  <div key={i} style={{ display: "flex", flexWrap: "wrap", gap: "1mm", alignItems: "baseline" }}>
-                    <span style={{ fontWeight: 600, color: "#1f2937" }}>{c.label}</span>
-                    {c.duration && <span style={{ color: "#6b7280", fontSize: "8.5pt" }}>· {c.duration}</span>}
-                    {c.site && <span style={{ color: "#6b7280", fontSize: "8.5pt" }}>· {c.site}</span>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-          <div>
-            <div style={sideLabel}>Investigations <span style={bnSub}>পরীক্ষা</span></div>
-            {data.investigations && data.investigations.items.length > 0 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: "1mm" }}>
-                {data.investigations.items.map((inv, i) => (
-                  <div key={i} style={{ ...sideValue, display: "flex", justifyContent: "space-between", gap: "3mm" }}>
-                    <span>{inv.label}</span>
-                    {inv.result ? <span style={{ color: "#0e7490" }}>{inv.result}</span> : <span style={{ color: "#9ca3af" }}>ordered</span>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-          <div>
-            <div style={sideLabel}>Vitals <span style={bnSub}>স্বাস্থ্য তথ্য</span></div>
-            {(data.vitals?.bp || data.vitals?.temperature || data.vitals?.pulse || data.vitals?.spo2) && (
-              <div style={{ display: "flex", flexDirection: "column", gap: "1mm" }}>
-                {data.vitals?.bp && <div style={sideValue}>Blood pressure : {data.vitals.bp} mmHg</div>}
-                {data.vitals?.temperature && <div style={sideValue}>Temperature : {data.vitals.temperature}</div>}
-                {data.vitals?.pulse && <div style={sideValue}>Pulse : {data.vitals.pulse}</div>}
-                {data.vitals?.spo2 && <div style={sideValue}>SpO₂ : {data.vitals.spo2}</div>}
-              </div>
-            )}
-          </div>
         </div>
 
         {/* ℞ panel */}
@@ -965,12 +929,452 @@ export function ChamberSheet({ data }: { data: PrescriptionSheetData }) {
   );
 }
 
+// ── Practice-defined templates (Settings → Rx templates) ────────────
+//
+// A custom template is data, not code: the doctor saves an RxTemplateConfig
+// (layout, palette, typography, which clinical blocks print) and CustomSheet
+// renders it. Two structures: "sidebar" is the chamber pad (clinical column
+// beside the ℞ panel), "stacked" is a full-width page.
+
+const CUSTOM_SANS = 'Inter, "Segoe UI", system-ui, -apple-system, sans-serif';
+const CUSTOM_SERIF = 'Georgia, "Times New Roman", serif';
+const CUSTOM_BN = "'Noto Sans Bengali', 'Hind Siliguri', 'SolaimanLipi', 'Kalpurush', 'Vrinda', system-ui, sans-serif";
+
+const SECTION_LABELS: Record<RxSheetSectionKey, string> = {
+  diagnosis: "C/C",
+  on_examination: "O/E",
+  history: "H/O",
+  treatment_plan: "Treatment Plan",
+  complaints: "Complaints",
+  investigations: "Investigations",
+  vitals: "Vitals",
+  xray: "X-ray",
+};
+
+const SECTION_BANGLA: Record<RxSheetSectionKey, string> = {
+  diagnosis: "রোগের বর্ণনা",
+  on_examination: "পরীক্ষায় প্রাপ্ত",
+  history: "রোগের ইতিহাস",
+  treatment_plan: "চিকিৎসা পরিকল্পনা",
+  complaints: "কারণ / শিকয়ত",
+  investigations: "পরীক্ষা",
+  vitals: "স্বাস্থ্য তথ্য",
+  xray: "এক্স-রে",
+};
+
+/** Medication list shared by both custom structures. */
+function CustomMedList({ data, accent, L }: { data: PrescriptionSheetData; accent: string; L: number }) {
+  if (data.items.length === 0) {
+    return <div style={{ color: "#94a3b8", fontSize: `${10 * L}pt` }}>No medications.</div>;
+  }
+  return (
+    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: `${11 * L}pt` }}>
+      <tbody>
+        {data.items.map((item, i) => (
+          <tr key={i}>
+            <td style={{ width: "8mm", verticalAlign: "top", color: accent, fontWeight: 700, padding: `${2.2 * L}mm 0` }}>
+              {i + 1}.
+            </td>
+            <td style={{ verticalAlign: "top", padding: `${2.2 * L}mm 0` }}>
+              <div style={{ fontWeight: 700 }}>
+                {item.drug_name}
+                {item.generic_name ? (
+                  <span style={{ fontWeight: 400, fontStyle: "italic", color: "#6b7280" }}> ({item.generic_name})</span>
+                ) : null}
+                {item.dosage ? <span style={{ fontWeight: 400 }}> {item.dosage}</span> : null}
+              </div>
+              <div style={{ fontSize: `${9.5 * L}pt`, color: "#374151", marginTop: 1 }}>
+                {[
+                  item.schedule ? (DOSE_SCHEDULE_LABELS as Record<string, string>)[item.schedule] : null,
+                  item.frequency,
+                  item.meal_relation ? (MEAL_RELATION_LABELS as Record<string, string>)[item.meal_relation] : null,
+                  item.duration ? `for ${item.duration}` : null,
+                  item.instructions,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </div>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/** A practice-defined template rendered from its saved config. */
+export function CustomSheet({ data, config }: { data: PrescriptionSheetData; config: RxTemplateConfig }) {
+  const doctorLabel = data.doctor_name.startsWith("Dr") ? data.doctor_name : `Dr. ${data.doctor_name}`;
+  const title = data.clinic_name || "Dental Practice";
+  const contactParts = [data.clinic_address, data.clinic_phone].filter(Boolean);
+  const L = data.large_print ? 1.45 : 1;
+  const accent = config.accent;
+  const font = config.font === "serif" ? CUSTOM_SERIF : CUSTOM_SANS;
+  const rule = config.show_rule ? `2px solid ${accent}` : "none";
+  const tint = `${accent}14`;
+  const sidebar = config.layout === "sidebar";
+  const sections = (config.sections ?? []).filter((s) => s.enabled);
+
+  const sideLabel: React.CSSProperties = { fontSize: "10.5pt", fontWeight: 600, color: "#374151", marginBottom: "2mm" };
+  const sideValue: React.CSSProperties = { fontSize: "9.5pt", color: "#1f2937", whiteSpace: "pre-line", lineHeight: 1.45 };
+  const bnSub: React.CSSProperties = { fontFamily: CUSTOM_BN, fontSize: "8pt", fontWeight: 400, color: "#64748b" };
+  const hasVitals = Boolean(data.vitals?.bp || data.vitals?.temperature || data.vitals?.pulse || data.vitals?.spo2);
+
+  /** Whether a block has anything to print. The stacked page drops empty rows
+   *  (a commercial sheet), while the sidebar keeps its headings as a pad form. */
+  function sectionHasData(key: RxSheetSectionKey): boolean {
+    switch (key) {
+      case "diagnosis":
+        return Boolean(data.diagnosis);
+      case "on_examination":
+        return Boolean(data.on_examination || data.tooth || (data.practitioner_name && data.practitioner_name !== data.doctor_name));
+      case "history":
+        return Boolean(data.history || data.patient_medical_alerts);
+      case "treatment_plan":
+        return Boolean(data.plan_treatment_name);
+      case "complaints":
+        return Boolean(data.complaints?.items.length);
+      case "investigations":
+        return Boolean(data.investigations?.items.length);
+      case "vitals":
+        return hasVitals;
+      case "xray":
+        return Boolean(data.images?.some((i) => i.src));
+    }
+  }
+
+  /** Body of one clinical block. Empty blocks still print their heading, so the
+   *  sheet doubles as a handwriting form (the chamber-pad convention). */
+  function sectionBody(key: RxSheetSectionKey) {
+    switch (key) {
+      case "diagnosis":
+        return data.diagnosis ? <div style={sideValue}>{data.diagnosis}</div> : null;
+      case "on_examination":
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: "1mm" }}>
+            {data.on_examination && <div style={sideValue}>{data.on_examination}</div>}
+            {data.tooth && <div style={sideValue}>Tooth {data.tooth}</div>}
+            {data.practitioner_name && data.practitioner_name !== data.doctor_name && (
+              <div style={{ ...sideValue, color: "#6b7280" }}>Seen by {data.practitioner_name}</div>
+            )}
+          </div>
+        );
+      case "history":
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: "1mm" }}>
+            {data.history && <div style={sideValue}>{data.history}</div>}
+            {data.patient_medical_alerts && (
+              <div style={{ ...sideValue, color: "#b45309" }}>{data.patient_medical_alerts}</div>
+            )}
+          </div>
+        );
+      case "treatment_plan":
+        return data.plan_treatment_name ? <div style={sideValue}>{data.plan_treatment_name}</div> : null;
+      case "complaints":
+        return data.complaints && data.complaints.items.length > 0 ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: "1.5mm" }}>
+            {data.complaints.items.map((c, i) => (
+              <div key={i} style={{ display: "flex", flexWrap: "wrap", gap: "1mm", alignItems: "baseline" }}>
+                <span style={{ fontWeight: 600, color: "#1f2937" }}>{c.label}</span>
+                {c.duration && <span style={{ color: "#6b7280", fontSize: "8.5pt" }}>· {c.duration}</span>}
+                {c.site && <span style={{ color: "#6b7280", fontSize: "8.5pt" }}>· {c.site}</span>}
+              </div>
+            ))}
+          </div>
+        ) : null;
+      case "investigations":
+        return data.investigations && data.investigations.items.length > 0 ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: "1mm" }}>
+            {data.investigations.items.map((inv, i) => (
+              <div key={i} style={{ ...sideValue, display: "flex", justifyContent: "space-between", gap: "3mm" }}>
+                <span>{inv.label}</span>
+                {inv.result ? <span style={{ color: accent }}>{inv.result}</span> : <span style={{ color: "#9ca3af" }}>ordered</span>}
+              </div>
+            ))}
+          </div>
+        ) : null;
+      case "vitals":
+        return hasVitals ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: "1mm" }}>
+            {data.vitals?.bp && <div style={sideValue}>Blood pressure : {data.vitals.bp} mmHg</div>}
+            {data.vitals?.temperature && <div style={sideValue}>Temperature : {data.vitals.temperature}</div>}
+            {data.vitals?.pulse && <div style={sideValue}>Pulse : {data.vitals.pulse}</div>}
+            {data.vitals?.spo2 && <div style={sideValue}>SpO₂ : {data.vitals.spo2}</div>}
+          </div>
+        ) : null;
+      case "xray":
+        return data.images && data.images.some((i) => i.src) ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: "2mm" }}>
+            {data.images
+              .filter((i) => i.src)
+              .map((i) => (
+                <img
+                  key={i.id}
+                  src={i.src!}
+                  alt={i.label || "X-ray"}
+                  style={{ width: "100%", border: "1px solid #cbd5e1", borderRadius: "1mm", background: "#ffffff" }}
+                />
+              ))}
+          </div>
+        ) : (
+          <svg width="52" height="52" viewBox="0 0 58 58" aria-hidden style={{ marginTop: "1mm" }}>
+            <path d="M29 6v46M6 29h46" stroke={accent} strokeWidth="1.2" fill="none" opacity="0.55" />
+          </svg>
+        );
+    }
+  }
+
+  const watermark = config.show_watermark ? (
+    <div
+      aria-hidden
+      style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}
+    >
+      {data.clinic_logo ? (
+        <img src={data.clinic_logo} alt="" style={{ width: "85mm", opacity: 0.08, objectFit: "contain" }} />
+      ) : (
+        <svg viewBox="0 0 24 24" style={{ width: "95mm", color: `${accent}12`, fill: "currentColor" }}>
+          <path d={TOOTH_PATH} />
+        </svg>
+      )}
+    </div>
+  ) : null;
+
+  const adviceBlock = data.advice ? (
+    <div style={{ marginTop: `${5 * L}mm`, fontSize: `${9.5 * L}pt`, lineHeight: 1.45 }}>
+      <div style={{ fontWeight: 700, color: accent, fontSize: `${8.5 * L}pt`, letterSpacing: "0.05em", marginBottom: 1 }}>
+        ADVICE
+      </div>
+      <div style={{ whiteSpace: "pre-line" }}>{data.advice}</div>
+    </div>
+  ) : null;
+
+  const followUpBlock =
+    data.follow_up || data.follow_up_date ? (
+      <div style={{ marginTop: "4mm", fontSize: `${9.5 * L}pt`, color: "#1f2937" }}>
+        <span style={{ color: "#6b7280" }}>Follow-up: </span>
+        {data.follow_up_date ? (
+          <>
+            {data.follow_up} · {formatDate(data.follow_up_date)}
+          </>
+        ) : (
+          data.follow_up
+        )}
+      </div>
+    ) : null;
+
+  const qrBlock = data.payment_qr ? (
+    <div style={{ marginTop: "4mm", display: "flex", justifyContent: "flex-end", gap: "2mm", alignItems: "center" }}>
+      <img
+        src={data.payment_qr}
+        alt={data.payment_qr_label || "Payment QR"}
+        style={{ width: "22mm", height: "22mm", objectFit: "contain", border: "1px solid #d1d5db" }}
+      />
+      {data.payment_qr_label && (
+        <div style={{ fontSize: "8pt", color: "#6b7280", lineHeight: 1.3 }}>{data.payment_qr_label}</div>
+      )}
+    </div>
+  ) : null;
+
+  const signature = config.show_signature ? (
+    <div style={{ marginTop: "auto", display: "flex", justifyContent: "flex-end", paddingTop: "6mm" }}>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ borderTop: "1px solid #9ca3af", width: "46mm", paddingTop: "1.5mm", fontSize: "9.5pt", color: "#374151" }}>
+          Signature
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  return (
+    <div style={{ ...BASE_PAGE, fontFamily: font }} data-template={data.template}>
+      {/* ── Letterhead ─────────────────────────────────────── */}
+      <div
+        style={{
+          background: config.header_bg,
+          color: config.header_text,
+          borderTop: `2.5mm solid ${accent}`,
+          borderBottom: rule,
+          padding: "4mm 8mm 3mm",
+          display: "grid",
+          gridTemplateColumns: sidebar && config.show_bangla ? "1fr auto 1fr" : "1fr auto",
+          gap: "5mm",
+          alignItems: "center",
+        }}
+      >
+        {sidebar && config.show_bangla && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "1.2mm" }}>
+            <div style={{ fontFamily: CUSTOM_BN, fontSize: "9.5pt", fontWeight: 700 }}>ডেন্টিস্ট : {doctorLabel}</div>
+            {data.doctor_specialty && <div style={{ fontFamily: CUSTOM_BN, fontSize: "8pt" }}>{data.doctor_specialty}</div>}
+            {data.doctor_license && <div style={{ fontFamily: CUSTOM_BN, fontSize: "8pt" }}>লাইসেন্স : {data.doctor_license}</div>}
+            {data.clinic_phone && <div style={{ fontFamily: CUSTOM_BN, fontSize: "8pt" }}>মোবাইল : {data.clinic_phone}</div>}
+          </div>
+        )}
+
+        <div style={{ textAlign: sidebar && config.show_bangla ? "center" : "left" }}>
+          {config.show_logo && data.clinic_logo && (
+            <div style={{ display: "flex", justifyContent: sidebar && config.show_bangla ? "center" : "flex-start", marginBottom: "1.5mm" }}>
+              <LetterheadLogo src={data.clinic_logo} heightMm={11} />
+            </div>
+          )}
+          <div style={{ fontSize: "14pt", fontWeight: 800, color: config.header_text, letterSpacing: "0.01em" }}>{title}</div>
+          {contactParts.length > 0 && (
+            <div style={{ fontSize: "7.5pt", marginTop: "0.5mm", opacity: 0.85 }}>{contactParts.join(" · ")}</div>
+          )}
+        </div>
+
+        <div style={{ textAlign: "right", display: "flex", flexDirection: "column", gap: "1.2mm" }}>
+          <div style={{ fontSize: "13pt", fontWeight: 700, color: config.header_text }}>{doctorLabel}</div>
+          {data.doctor_qualifications && <div style={{ fontSize: "9pt" }}>{data.doctor_qualifications}</div>}
+          {data.doctor_specialty && <div style={{ fontSize: "9pt" }}>{data.doctor_specialty}</div>}
+          {data.doctor_license && <div style={{ fontSize: "9pt" }}>License {data.doctor_license}</div>}
+        </div>
+      </div>
+
+      {/* ── Patient bar ────────────────────────────────────── */}
+      <div
+        style={{
+          display: "flex",
+          gap: "12mm",
+          padding: "3.5mm 8mm",
+          borderBottom: rule,
+          fontSize: "10pt",
+          color: "#1f2937",
+        }}
+      >
+        <div style={{ flex: 1 }}>
+          <span style={{ color: "#6b7280" }}>Name : </span>
+          <strong>{data.patient_name}</strong>
+        </div>
+        <div style={{ width: "28mm" }}>
+          <span style={{ color: "#6b7280" }}>Patient ID : </span>
+          {data.patient_id ?? ""}
+        </div>
+        <div style={{ width: "22mm" }}>
+          <span style={{ color: "#6b7280" }}>Gender : </span>
+          {data.patient_gender ?? ""}
+        </div>
+        <div style={{ width: "26mm" }}>
+          <span style={{ color: "#6b7280" }}>Age : </span>
+          {data.patient_age ?? ""}
+        </div>
+        <div style={{ width: "34mm" }}>
+          <span style={{ color: "#6b7280" }}>Date : </span>
+          {formatDate(data.issued_date)}
+        </div>
+      </div>
+
+      {sidebar ? (
+        <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+          {sections.length > 0 && (
+            <div
+              style={{
+                width: "27%",
+                background: tint,
+                borderRight: `1px solid ${accent}33`,
+                padding: "7mm 5mm",
+                display: "flex",
+                flexDirection: "column",
+                gap: "7mm",
+              }}
+            >
+              {sections.map((s) => (
+                <div key={s.key}>
+                  <div style={sideLabel}>
+                    {s.label || SECTION_LABELS[s.key]}{" "}
+                    {config.show_bangla && <span style={bnSub}>{SECTION_BANGLA[s.key]}</span>}
+                  </div>
+                  {sectionBody(s.key)}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ flex: 1, position: "relative", padding: "6mm 8mm", display: "flex", flexDirection: "column" }}>
+            {watermark}
+            <div style={{ position: "relative", fontSize: "20pt", fontWeight: 700, color: "#1f2937", margin: "1mm 0 2mm" }}>℞</div>
+            <div style={{ position: "relative" }}>
+              <CustomMedList data={data} accent={accent} L={L} />
+              {adviceBlock}
+              {followUpBlock}
+            </div>
+            <div style={{ position: "relative", marginTop: "auto" }}>
+              {qrBlock}
+              {signature}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div style={{ flex: 1, position: "relative", padding: "6mm 14mm", display: "flex", flexDirection: "column" }}>
+          {watermark}
+
+          {sections.some((s) => sectionHasData(s.key)) && (
+            <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: "2.5mm", marginBottom: "5mm" }}>
+              {sections
+                .filter((s) => sectionHasData(s.key))
+                .map((s) => (
+                  <div
+                    key={s.key}
+                    style={{ fontSize: "9.5pt", color: "#1f2937", borderBottom: "1px solid #eef2f7", paddingBottom: "1.5mm" }}
+                  >
+                    <span style={{ color: "#6b7280", fontWeight: 600 }}>{s.label || SECTION_LABELS[s.key]}: </span>
+                    {sectionBody(s.key)}
+                  </div>
+                ))}
+            </div>
+          )}
+
+          <div style={{ position: "relative", fontSize: "20pt", fontWeight: 700, color: accent, margin: "1mm 0 3mm" }}>℞</div>
+          <div style={{ position: "relative" }}>
+            <CustomMedList data={data} accent={accent} L={L} />
+            {adviceBlock}
+            {followUpBlock}
+          </div>
+          <div style={{ position: "relative", marginTop: "auto" }}>
+            {qrBlock}
+            {signature}
+          </div>
+        </div>
+      )}
+
+      {/* ── Footer ─────────────────────────────────────────── */}
+      <div
+        style={{
+          background: tint,
+          borderTop: rule,
+          padding: "3mm 8mm",
+          display: "flex",
+          justifyContent: "space-between",
+          gap: "8mm",
+          fontSize: "7.5pt",
+          color: accent,
+          lineHeight: 1.4,
+        }}
+      >
+        <div>
+          {title}
+          {contactParts.length > 0 ? ` — ${contactParts.join(" · ")}` : ""}
+          {(config.footer_note || data.chamber_footer_instructions) && (
+            <div style={{ marginTop: "1.5mm", paddingTop: "1.5mm", borderTop: `1px solid ${accent}33`, whiteSpace: "pre-line", fontSize: "7pt" }}>
+              {config.footer_note || data.chamber_footer_instructions}
+            </div>
+          )}
+        </div>
+        <div style={{ textAlign: "right", fontWeight: 600 }}>
+          {doctorLabel}
+          {data.doctor_qualifications ? ` · ${data.doctor_qualifications}` : ""}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** One A4 prescription sheet. Pure presentational — no fetching, no hooks. */
 export function PrescriptionSheet({ data }: { data: PrescriptionSheetData }) {
+  if (data.template_config) return <CustomSheet data={data} config={data.template_config} />;
   if (data.template === "chamber") return <ChamberSheet data={data} />;
   if (data.template === "two-column") return <TwoColumnSheet data={data} />;
 
-  const t = TEMPLATES[data.template] ?? TEMPLATES.classic;
+  const t = isPrescriptionTemplate(data.template) ? TEMPLATES[data.template] : TEMPLATES.classic;
   const doctorLabel = data.doctor_name.startsWith("Dr") ? data.doctor_name : `Dr. ${data.doctor_name}`;
 
   // Large-print mode scales every clinical font size (patient block, ℞,

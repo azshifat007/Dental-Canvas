@@ -16,7 +16,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const checkMock = vi.fn();
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: (...args: unknown[]) => checkMock(...args) }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
-vi.mock("@/offline/activate", () => ({ isTauriDesktop: () => true, flushDatabase: vi.fn() }));
+vi.mock("@/offline/activate", () => ({
+  isTauriDesktop: () => true,
+  flushDatabase: vi.fn(),
+  flushDatabaseAndWait: () => Promise.resolve(),
+}));
 vi.mock("@/components/update-applied-banner", () => ({ saveUpdateNotesForNextBoot: vi.fn() }));
 vi.mock("@/lib/open-external", () => ({ openExternalUrl: vi.fn() }));
 

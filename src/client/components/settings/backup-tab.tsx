@@ -645,7 +645,10 @@ function ScheduleCard() {
       </CardHeader>
       <CardContent>
         <form onSubmit={save} className="grid items-end gap-3 sm:grid-cols-[1fr_1fr_auto]">
-          <div className="space-y-1.5">
+          {/* flex+gap, not space-y: Radix's hidden native <select> is a trailing
+              sibling that space-y gives a margin to, making this column 6px
+              taller than the input beside it in an `items-end` row. */}
+          <div className="flex flex-col gap-1.5">
             <Label className="text-xs">Interval</Label>
             <Select value={interval} onValueChange={setInterval}>
               <SelectTrigger>

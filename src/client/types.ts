@@ -49,6 +49,108 @@ export type PrescriptionTemplate =
   | "watermark"
   | "two-column";
 
+/** A practice-defined template id, allocated by the server (Settings → Rx templates). */
+export type CustomTemplateId = `custom-${number}`;
+
+/** Anything a prescription may be printed with: a built-in layout or a custom one. */
+export type PrescriptionTemplateId = PrescriptionTemplate | CustomTemplateId;
+
+/** Clinical blocks a custom template can print in its sidebar / body. */
+export type RxSheetSectionKey =
+  | "diagnosis"
+  | "on_examination"
+  | "history"
+  | "treatment_plan"
+  | "complaints"
+  | "investigations"
+  | "vitals"
+  | "xray";
+
+/** One configurable block on a custom template, in print order. */
+export interface RxSheetSection {
+  key: RxSheetSectionKey;
+  /** Printed heading. Blank falls back to the built-in English label. */
+  label: string;
+  enabled: boolean;
+}
+
+/**
+ * A doctor-editable prescription template: the sheet layout, its palette and
+ * typography, and which clinical blocks print. Stored as JSON on
+ * `prescription_layouts` and rendered by CustomSheet in prescription-sheet.tsx.
+ */
+export interface RxTemplateConfig {
+  /** "sidebar" = chamber pad (clinical column + ℞ panel); "stacked" = full-width page. */
+  layout: "sidebar" | "stacked";
+  /** #rrggbb — rules, ℞, numbering, sidebar tint. */
+  accent: string;
+  /** #rrggbb — letterhead band. */
+  header_bg: string;
+  /** #rrggbb — letterhead text. */
+  header_text: string;
+  font: "sans" | "serif";
+  /** Rule under the letterhead. */
+  show_rule: boolean;
+  show_logo: boolean;
+  /** Bangla sub-labels beside each sidebar heading (chamber pads). */
+  show_bangla: boolean;
+  show_watermark: boolean;
+  show_signature: boolean;
+  /** Extra line printed in the footer (practice instructions, hours…). */
+  footer_note: string;
+  sections: RxSheetSection[];
+}
+
+/**
+ * A reusable clinical bundle saved from a finished prescription: what the
+ * practice writes again and again (medications + advice + the clinical note),
+ * without the patient-specific bits. Loading one pre-fills a new Rx.
+ */
+export interface RxClinicalTemplate {
+  id: number;
+  name: string;
+  /** C/C — chief complaint / diagnosis text. */
+  diagnosis: string | null;
+  /** O/E — on examination. */
+  on_examination: string | null;
+  /** H/O — history of presenting illness. */
+  history: string | null;
+  advice: string | null;
+  complaints?: RxComplaints | null;
+  vitals?: RxVitals | null;
+  investigations?: RxInvestigations | null;
+  /** Medication skeleton, in print order. */
+  items: PrescriptionItem[];
+  created_at?: string;
+}
+
+/** The clinical shape a template is saved from — an open Rx or the draft. */
+export interface RxTemplateSource {
+  diagnosis?: string | null;
+  on_examination?: string | null;
+  history?: string | null;
+  advice?: string | null;
+  items: {
+    drug_name: string;
+    dosage?: string | null;
+    frequency?: string | null;
+    schedule?: DoseSchedule | null;
+    meal_relation?: MealRelation | null;
+    duration?: string | null;
+    instructions?: string | null;
+  }[];
+}
+
+/** A saved custom prescription template. */
+export interface PrescriptionLayout {
+  id: number;
+  slug: CustomTemplateId;
+  name: string;
+  /** Built-in template the layout started from. */
+  based_on: PrescriptionTemplate;
+  config: RxTemplateConfig;
+}
+
 // Structured clinical fields rendered on the A4 sheet (complaints, vitals,
 // investigations) and the medication schedule/meal-relation model.
 
@@ -157,7 +259,9 @@ export interface Prescription {
   patient_id: number;
   practitioner_id: number | null;
   issued_date: string;
-  template: PrescriptionTemplate;
+  template: PrescriptionTemplateId;
+  /** Resolved skin when `template` is a custom template id (server-attached). */
+  template_config?: RxTemplateConfig | null;
   /** Enlarged type for visually impaired patients — flows to every render surface. */
   large_print: number;
   /** Tooth this prescription relates to, e.g. '14' (FDI). */
@@ -227,7 +331,8 @@ export interface PrescriptionSheetData {
   patient_medical_alerts?: string | null;
   practitioner_name?: string | null;
   issued_date: string;
-  template: PrescriptionTemplate;
+  template: PrescriptionTemplateId;
+  template_config?: RxTemplateConfig | null;
   large_print?: boolean;
   tooth?: string | null;
   chamber_footer_instructions?: string | null;

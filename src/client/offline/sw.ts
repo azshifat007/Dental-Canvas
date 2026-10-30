@@ -119,6 +119,10 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
         serverReady ??= initServer();
         await serverReady.catch(() => undefined);
         await liveDb?.flush().catch(() => undefined);
+        // Acknowledge on the transferred port when the page asked to wait
+        // (see flushDatabaseAndWait): an update install kills the page right
+        // after this, so the reply is how it knows the writes are safe.
+        event.ports?.[0]?.postMessage({ type: "dental-canvas:db-flushed" });
       })(),
     );
   }

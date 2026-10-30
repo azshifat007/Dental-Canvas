@@ -16,6 +16,7 @@ vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
 vi.mock("@/offline/activate", () => ({
   isTauriDesktop: () => true,
   flushDatabase: vi.fn(),
+  flushDatabaseAndWait: () => Promise.resolve(),
 }));
 vi.mock("@/components/update-applied-banner", () => ({ saveUpdateNotesForNextBoot: vi.fn() }));
 

@@ -12,7 +12,7 @@ import { Toaster } from "./components/ui/toast";
 import { useAutoBackup } from "./hooks/use-auto-backup";
 import { isTauriDesktop } from "./offline/activate";
 import { startDesktopBackupScheduler } from "./offline/desktop-backup";
-import { setUpdateMode, startUpdatePoller } from "./lib/updater";
+import { setUpdateMode, startUpdatePoller, verifyUpdateOnBoot } from "./lib/updater";
 import { useDailyInventoryScan } from "./hooks/use-daily-inventory-scan";
 import { useDailyDigest } from "./hooks/use-daily-digest";
 import { useAppointmentReminders } from "./hooks/use-appointment-reminders";
@@ -90,6 +90,16 @@ export function App() {
   useEffect(() => {
     if (!isTauriDesktop()) return;
     return startUpdatePoller();
+  }, []);
+
+  // Desktop only: did the update we launched on the previous run actually
+  // install? On Windows the installer reports nothing back and the process is
+  // gone before an error could be shown, so a blocked installer looked exactly
+  // like success — the app reopened on the old version. This either reloads
+  // into the new shell (cache was stale) or falls back to the installer.
+  useEffect(() => {
+    if (!isTauriDesktop()) return;
+    void verifyUpdateOnBoot();
   }, []);
 
   // How updates are applied comes from Settings → About (`update_mode`). Set

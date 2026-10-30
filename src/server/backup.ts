@@ -42,6 +42,9 @@ export const BACKUP_TABLES = [
   "dentist_notes",
   "prescriptions",
   "prescription_items",
+  // Practice-defined prescription templates (no FK): a restored practice keeps
+  // the letterheads its prescriptions were issued with.
+  "prescription_layouts",
 ] as const;
 
 export type BackupTable = (typeof BACKUP_TABLES)[number];

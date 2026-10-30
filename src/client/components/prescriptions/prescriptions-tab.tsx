@@ -8,7 +8,7 @@ import type {
   PatientImage,
   Prescription,
   PrescriptionItem,
-  PrescriptionTemplate,
+  PrescriptionTemplateId,
   TreatmentPlanItem,
 } from "@/types";
 import type {
@@ -42,7 +42,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { TemplatePickerGrid } from "./template-picker";
 import type { PrescriptionSheetData } from "./prescription-sheet";
 import { DrugAutocomplete } from "./drug-autocomplete";
+import { RxTemplateMenu } from "./rx-template-menu";
+import { SaveRxTemplateButton } from "./save-rx-template-dialog";
 import type { DrugPreset } from "@/lib/dental-drugs";
+import { useTemplateChoices } from "@/lib/prescription-layouts";
+import type { RxClinicalTemplate, RxTemplateSource } from "@/types";
 
 /**
  * Prescriptions tab on the patient record: lists issued prescriptions and
@@ -374,7 +378,9 @@ export function PrescriptionDialog({
   const app = useApp();
   const isEdit = prescription !== null;
   const [issuedDate, setIssuedDate] = useState("");
-  const [template, setTemplate] = useState<PrescriptionTemplate>("chamber");
+  const [template, setTemplate] = useState<PrescriptionTemplateId>("chamber");
+  // Built-in gallery + the practice's own templates (Settings → Rx templates).
+  const templateChoices = useTemplateChoices();
   const [largePrint, setLargePrint] = useState(false);
   const [tooth, setTooth] = useState("");
   const [planItemId, setPlanItemId] = useState<string>("none");
@@ -518,6 +524,51 @@ export function PrescriptionDialog({
     setItems((prev) => (prev.length === 1 ? [{ ...EMPTY_ITEM }] : prev.filter((_, i) => i !== index)));
   }
 
+  /** The clinical content of the draft, for saving it as a reusable template. */
+  function templateSource(): RxTemplateSource {
+    return {
+      diagnosis,
+      on_examination: onExamination,
+      history,
+      advice,
+      items: items.filter((i) => i.drug_name.trim()),
+    };
+  }
+
+  /**
+   * One click from a saved template to a filled draft. Existing medications are
+   * replaced only after an explicit confirmation, so a template can never
+   * silently wipe a prescription that was already half written.
+   */
+  function applyRxTemplate(t: RxClinicalTemplate) {
+    const current = items.filter((i) => i.drug_name.trim()).length;
+    if (
+      current > 0 &&
+      !window.confirm(
+        `Replace the ${current} medication${current === 1 ? "" : "s"} in this prescription with “${t.name}”? Advice and clinical notes are filled in too.`,
+      )
+    ) {
+      return;
+    }
+    const next = t.items.filter((i) => i.drug_name.trim());
+    setItems(
+      next.length > 0
+        ? next.map((i) => ({
+            drug_name: i.drug_name,
+            dosage: i.dosage ?? "",
+            frequency: i.frequency ?? "",
+            duration: i.duration ?? "",
+            instructions: i.instructions ?? "",
+          }))
+        : [{ ...EMPTY_ITEM }],
+    );
+    if (t.advice) setAdvice(t.advice);
+    if (t.diagnosis) setDiagnosis(t.diagnosis);
+    if (t.on_examination) setOnExamination(t.on_examination);
+    if (t.history) setHistory(t.history);
+    toast.success(`Applied “${t.name}”`);
+  }
+
   /** The sheet as it would print right now, from the unsaved draft. */
   function draftSheetData(): PrescriptionSheetData | null {
     const valid = items.filter((i) => i.drug_name.trim());
@@ -539,6 +590,8 @@ export function PrescriptionDialog({
       practitioner_name: prescriber?.name ?? null,
       issued_date: issuedDate,
       template,
+      // Custom ids render from their saved skin; built-ins carry none.
+      template_config: templateChoices.find((c) => c.id === template)?.config ?? null,
       large_print: largePrint,
       tooth: tooth.trim() || null,
       plan_treatment_name: planItems.find((p) => String(p.id) === planItemId)?.treatment_name ?? null,
@@ -773,32 +826,90 @@ export function PrescriptionDialog({
 
           {/* Medication rows — bounded scroll so the list never overflows the dialog on long prescriptions. */}
           <div className="space-y-2">
-            <Label className="text-xs">Medications *</Label>
-            <div className="force-scrollbar max-h-[44vh] space-y-2 overflow-y-auto rounded-xl border border-border/40 bg-muted/20 p-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Label className="text-xs">Medications *</Label>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <RxTemplateMenu onApply={applyRxTemplate} className="h-8 rounded-md px-2.5 text-xs" />
+                <SaveRxTemplateButton source={templateSource()} className="h-8 rounded-md px-2.5 text-xs" />
+              </div>
+            </div>
+            {/* On phones the dialog is one column wide, so this list is long
+                rather than boxed: the dialog itself scrolls and the medication
+                rows stack in full width. */}
+            <div className="force-scrollbar max-h-none space-y-2 overflow-y-auto rounded-xl border border-border/40 bg-muted/20 p-2 sm:max-h-[44vh]">
               {items.map((item, i) => (
-                <div key={i} className="grid gap-2 rounded-md border border-border/60 bg-background p-2 sm:grid-cols-[2fr_1fr_1fr_1fr_1.5fr_auto]">
-                  <DrugAutocomplete
-                    inputId={`drug-${i}`}
-                    value={item.drug_name}
-                    onChange={(v) => setItem(i, { drug_name: v })}
-                    onPick={(preset) => applyPreset(i, preset)}
-                    required
-                  />
-                  <Input value={item.dosage} onChange={(e) => setItem(i, { dosage: e.target.value })} placeholder="500 mg" className="h-9" />
-                  <Input value={item.frequency} onChange={(e) => setItem(i, { frequency: e.target.value })} placeholder="3x daily" className="h-9" />
-                  <Input value={item.duration} onChange={(e) => setItem(i, { duration: e.target.value })} placeholder="5 days" className="h-9" />
-                  <Input value={item.instructions} onChange={(e) => setItem(i, { instructions: e.target.value })} placeholder="after meals" className="h-9" />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => removeRow(i)}
-                    className="h-9 w-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                    title="Remove"
-                    aria-label={`Remove medication ${i + 1}`}
-                  >
-                    ✕
-                  </Button>
+                <div key={i} className="space-y-2 rounded-lg border border-border/60 bg-background p-2.5">
+                  {/* Narrow screens stack the six fields, so the row needs a
+                      header (which one is this?) and the remove action has to
+                      live here instead of at the end of a long column. */}
+                  <div className="flex items-center justify-between gap-2 sm:hidden">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                      Medication {i + 1}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeRow(i)}
+                      className="h-7 gap-1 rounded-md px-2 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      aria-label={`Remove medication ${i + 1}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" /> Remove
+                    </Button>
+                  </div>
+
+                  <div className="grid gap-2 sm:grid-cols-[2fr_1fr_1fr_1fr_1.5fr_auto]">
+                    {/* Each field keeps its own cell at every width; the label is
+                        only rendered when stacked, because a typed value hides
+                        the placeholder that used to identify the field. */}
+                    <div className="min-w-0 space-y-1">
+                      <Label htmlFor={`drug-${i}`} className="text-[11px] font-medium text-muted-foreground sm:hidden">
+                        Drug
+                      </Label>
+                      <DrugAutocomplete
+                        inputId={`drug-${i}`}
+                        value={item.drug_name}
+                        onChange={(v) => setItem(i, { drug_name: v })}
+                        onPick={(preset) => applyPreset(i, preset)}
+                        required
+                      />
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <Label htmlFor={`dosage-${i}`} className="text-[11px] font-medium text-muted-foreground sm:hidden">
+                        Dose
+                      </Label>
+                      <Input id={`dosage-${i}`} value={item.dosage} onChange={(e) => setItem(i, { dosage: e.target.value })} placeholder="500 mg" className="h-9" />
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <Label htmlFor={`frequency-${i}`} className="text-[11px] font-medium text-muted-foreground sm:hidden">
+                        Frequency
+                      </Label>
+                      <Input id={`frequency-${i}`} value={item.frequency} onChange={(e) => setItem(i, { frequency: e.target.value })} placeholder="3x daily" className="h-9" />
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <Label htmlFor={`duration-${i}`} className="text-[11px] font-medium text-muted-foreground sm:hidden">
+                        Duration
+                      </Label>
+                      <Input id={`duration-${i}`} value={item.duration} onChange={(e) => setItem(i, { duration: e.target.value })} placeholder="5 days" className="h-9" />
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <Label htmlFor={`instructions-${i}`} className="text-[11px] font-medium text-muted-foreground sm:hidden">
+                        Instructions
+                      </Label>
+                      <Input id={`instructions-${i}`} value={item.instructions} onChange={(e) => setItem(i, { instructions: e.target.value })} placeholder="after meals" className="h-9" />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => removeRow(i)}
+                      className="hidden h-9 w-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive sm:inline-flex"
+                      title="Remove"
+                      aria-label={`Remove medication ${i + 1}`}
+                    >
+                      ✕
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -822,7 +933,10 @@ export function PrescriptionDialog({
             <Input value={followUp} onChange={(e) => setFollowUp(e.target.value)} placeholder="e.g. Recheck in 2 weeks" />
           </div>
 
-          <DialogFooter className="gap-2">
+          {/* Sticky on phones: the form is several screens tall there, and
+              saving should never need a scroll hunt. Sits flush in the desktop
+              dialog, where the whole form is visible anyway. */}
+          <DialogFooter className="sticky -bottom-6 z-10 -mx-6 -mb-6 gap-2 border-t bg-background px-6 py-3 sm:static sm:bottom-auto sm:mx-0 sm:mb-0 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
               Cancel
             </Button>

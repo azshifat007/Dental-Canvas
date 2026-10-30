@@ -742,6 +742,9 @@ CREATE TABLE IF NOT EXISTS booking_requests (
 CREATE TABLE IF NOT EXISTS prescription_templates (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
+  diagnosis TEXT,                   -- C/C text captured on the saved Rx
+  on_examination TEXT,              -- O/E text
+  history TEXT,                     -- H/O text
   complaints TEXT,                  -- JSON RxComplaints
   vitals TEXT,                      -- JSON RxVitals
   investigations TEXT,              -- JSON RxInvestigations
@@ -751,6 +754,20 @@ CREATE TABLE IF NOT EXISTS prescription_templates (
 );
 
 CREATE INDEX IF NOT EXISTS idx_prescription_templates_name ON prescription_templates(name);
+
+-- Practice-defined prescription template skins (Settings → Rx templates).
+-- `config` is JSON (RxTemplateConfig: layout, palette, typography, sections);
+-- the sheet id stored on a prescription is "custom-" || id.
+CREATE TABLE IF NOT EXISTS prescription_layouts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  base TEXT NOT NULL DEFAULT 'chamber',  -- built-in template it started from
+  config TEXT NOT NULL,                  -- JSON RxTemplateConfig
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_prescription_layouts_name ON prescription_layouts(name);
 
 -- Reusable advice snippets surfaced as chips in the editor's advice picker.
 CREATE TABLE IF NOT EXISTS prescription_advice_presets (

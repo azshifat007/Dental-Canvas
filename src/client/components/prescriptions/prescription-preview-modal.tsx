@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ALargeSmall, Maximize2, Minimize2, Printer, X } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { PrescriptionSheet, PRESCRIPTION_TEMPLATES, type PrescriptionSheetData } from "./prescription-sheet";
-import type { PrescriptionTemplate } from "@/types";
+import { PrescriptionSheet, type PrescriptionSheetData } from "./prescription-sheet";
+import type { PrescriptionTemplateId } from "@/types";
+import { useTemplateChoices } from "@/lib/prescription-layouts";
 import { printSheetHtml } from "@/lib/print";
 import { useMaterializedImages } from "@/lib/images";
 import { cn } from "@/lib/utils";
@@ -28,11 +29,11 @@ export function PrescriptionPreviewModal({
   /** Dialog a11y label, e.g. "Preview — Grace Hopper". */
   title: string;
   /** Present when the template can be switched right inside the preview. */
-  onTemplateChange?: (t: PrescriptionTemplate) => void;
+  onTemplateChange?: (t: PrescriptionTemplateId) => void;
   /** Present when large print can be toggled right inside the preview. */
   onLargePrintChange?: (on: boolean) => void;
 }) {
-  const [template, setTemplate] = useState<PrescriptionTemplate>(data.template);
+  const [template, setTemplate] = useState<PrescriptionTemplateId>(data.template);
   const [largePrint, setLargePrint] = useState(Boolean(data.large_print));
   // Attached X-rays are fetched into data URLs so browser print and PDF
   // export see the bytes even though the URLs are cross-origin/presigned.
@@ -84,15 +85,19 @@ export function PrescriptionPreviewModal({
   }, [open, scrollerEl, measure]);
 
   const scale = zoom ?? fit;
+  const choices = useTemplateChoices();
+  const current = choices.find((t) => t.id === template);
   const effectiveData: PrescriptionSheetData = {
     ...data,
     template,
+    // A custom template's skin comes from the live list, so switching between
+    // a built-in and a custom one inside the preview re-renders correctly.
+    template_config: current?.config ?? null,
     large_print: largePrint,
     images: materialized.images ?? data.images,
   };
-  const current = PRESCRIPTION_TEMPLATES.find((t) => t.id === template);
 
-  function pickTemplate(t: PrescriptionTemplate) {
+  function pickTemplate(t: PrescriptionTemplateId) {
     setTemplate(t);
     onTemplateChange?.(t);
   }
@@ -116,11 +121,11 @@ export function PrescriptionPreviewModal({
           {onTemplateChange && (
             <select
               value={template}
-              onChange={(e) => pickTemplate(e.target.value as PrescriptionTemplate)}
+              onChange={(e) => pickTemplate(e.target.value as PrescriptionTemplateId)}
               className="ml-2 h-7 rounded-md border bg-background px-1.5 text-xs"
               aria-label="Template"
             >
-              {PRESCRIPTION_TEMPLATES.map((t) => (
+              {choices.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.label}
                 </option>

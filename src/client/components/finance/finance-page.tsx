@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { openQuickRegister } from "@/lib/quick-register";
+import { rememberFinanceTab } from "@/lib/finance-tab";
 import { UserPlus } from "lucide-react";
 
 /**
@@ -82,6 +83,12 @@ const STATUS_BADGE: Record<FinanceRow["status"], string> = {
 export function FinancePage({ route, navigate }: { route: Route; navigate: (to: string) => void }) {
   const tab =
     route.name === "finance-billing" ? "billing" : route.name === "finance-revenue" ? "revenue" : "appointments";
+
+  // Keep the rail's single Finance entry pointed at whatever view was open last.
+  useEffect(() => {
+    rememberFinanceTab(tab);
+  }, [tab]);
+
   return <FinanceContent tab={tab} navigate={navigate} />;
 }
 

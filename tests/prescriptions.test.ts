@@ -65,7 +65,7 @@ describe("prescriptions CRUD", () => {
 
   it("accepts every supported template and rejects unknown ones", async () => {
     const pid = await seedPatient();
-    for (const template of ["chamber", "classic", "modern", "compact", "elegant", "minimal", "bold", "watermark"]) {
+    for (const template of ["chamber", "classic", "modern", "compact", "elegant", "minimal", "bold", "watermark", "two-column"]) {
       const { path, init } = jsonRequest("POST", "/api/prescriptions", rxBody(pid, { template }));
       const res = await app.request(path, init, { DB: ctx.db });
       expect(res.status, `template ${template} should be accepted`).toBe(201);
@@ -540,5 +540,153 @@ describe("prescriptions in backups", () => {
     const data = (await again.json()) as { prescription: { id: number; items: unknown[] } };
     expect(data.prescription.id).toBe(prescription.id);
     expect(data.prescription.items).toHaveLength(2);
+  });
+});
+
+describe("practice-defined prescription templates", () => {
+  const CONFIG = {
+    layout: "sidebar",
+    accent: "#166534",
+    header_bg: "#eaf3e2",
+    header_text: "#14532d",
+    font: "sans",
+    show_rule: true,
+    show_logo: true,
+    show_bangla: true,
+    show_watermark: true,
+    show_signature: true,
+    footer_note: "Emergency: +1 555 010 2030",
+    sections: [
+      { key: "diagnosis", label: "", enabled: true },
+      { key: "history", label: "History of complaint", enabled: true },
+      { key: "investigations", label: "", enabled: false },
+    ],
+  };
+
+  async function createLayout(overrides: Record<string, unknown> = {}) {
+    const req = jsonRequest("POST", "/api/prescription-layouts", {
+      name: "Kids letterhead",
+      base: "chamber",
+      config: CONFIG,
+      ...overrides,
+    });
+    const res = await app.request(req.path, req.init, { DB: ctx.db });
+    return res;
+  }
+
+  it("creates, lists, edits and deletes a template", async () => {
+    const created = await createLayout();
+    expect(created.status).toBe(201);
+    const { layout } = (await created.json()) as {
+      layout: { id: number; slug: string; name: string; based_on: string; config: Record<string, unknown> };
+    };
+    expect(layout.slug).toBe(`custom-${layout.id}`);
+    expect(layout.name).toBe("Kids letterhead");
+    expect(layout.based_on).toBe("chamber");
+    expect(layout.config).toEqual(CONFIG);
+
+    const list = await app.request("/api/prescription-layouts", undefined, { DB: ctx.db });
+    const { layouts } = (await list.json()) as { layouts: { slug: string }[] };
+    expect(layouts.map((l) => l.slug)).toContain(layout.slug);
+
+    const put = jsonRequest("PUT", `/api/prescription-layouts/${layout.id}`, {
+      name: "Kids letterhead v2",
+      base: "modern",
+      config: { ...CONFIG, accent: "#1d4ed8", font: "serif" },
+    });
+    const putRes = await app.request(put.path, put.init, { DB: ctx.db });
+    expect(putRes.status).toBe(200);
+    const { layout: updated } = (await putRes.json()) as {
+      layout: { name: string; based_on: string; config: { accent: string; font: string } };
+    };
+    expect(updated.name).toBe("Kids letterhead v2");
+    expect(updated.based_on).toBe("modern");
+    expect(updated.config.accent).toBe("#1d4ed8");
+    expect(updated.config.font).toBe("serif");
+
+    const del = await app.request(`/api/prescription-layouts/${layout.id}`, { method: "DELETE" }, { DB: ctx.db });
+    expect(del.status).toBe(200);
+    expect(await app.request(`/api/prescription-layouts/${layout.id}`, { method: "DELETE" }, { DB: ctx.db })).toHaveProperty(
+      "status",
+      404,
+    );
+  });
+
+  it("prints a prescription with the saved template and falls back once it is deleted", async () => {
+    const pid = await seedPatient();
+    const created = await createLayout();
+    const { layout } = (await created.json()) as { layout: { id: number; slug: string } };
+
+    const rxReq = jsonRequest("POST", "/api/prescriptions", rxBody(pid, { template: layout.slug }));
+    const rxRes = await app.request(rxReq.path, rxReq.init, { DB: ctx.db });
+    expect(rxRes.status).toBe(201);
+    const { prescription } = (await rxRes.json()) as {
+      prescription: { id: number; template: string; template_config: Record<string, unknown> | null };
+    };
+    expect(prescription.template).toBe(layout.slug);
+    expect(prescription.template_config).toEqual(CONFIG);
+
+    // The share page renders the same skin, without a session.
+    const tokenRes = await app.request(
+      `/api/prescriptions/${prescription.id}/share`,
+      { method: "POST", headers: { "Content-Type": "application/json" } },
+      { DB: ctx.db },
+    );
+    const { share_token } = (await tokenRes.json()) as { share_token: string };
+    const shared = await app.request(`/api/prescriptions/share/${share_token}`, undefined, { DB: ctx.db });
+    const { prescription: sharedRx } = (await shared.json()) as {
+      prescription: { template_config: Record<string, unknown> | null };
+    };
+    expect(sharedRx.template_config).toEqual(CONFIG);
+
+    // Deleting the template leaves the prescription readable: no skin, and the
+    // client falls back to the default pad instead of printing nothing.
+    await app.request(`/api/prescription-layouts/${layout.id}`, { method: "DELETE" }, { DB: ctx.db });
+    const after = await app.request(`/api/prescriptions/${prescription.id}`, undefined, { DB: ctx.db });
+    expect(after.status).toBe(200);
+    const { prescription: orphaned } = (await after.json()) as {
+      prescription: { template: string; template_config: unknown };
+    };
+    expect(orphaned.template_config).toBeNull();
+
+    // …and it can no longer be assigned to a new prescription.
+    const gone = jsonRequest("POST", "/api/prescriptions", rxBody(pid, { template: layout.slug }));
+    expect((await app.request(gone.path, gone.init, { DB: ctx.db })).status).toBe(400);
+  });
+
+  it("rejects a template that could not print safely", async () => {
+    // Colors must be six-digit hex.
+    expect((await createLayout({ config: { ...CONFIG, accent: "green" } })).status).toBe(400);
+    // Only known clinical blocks may be printed.
+    expect(
+      (await createLayout({ config: { ...CONFIG, sections: [{ key: "totally-custom", label: "x", enabled: true }] } })).status,
+    ).toBe(400);
+    // A layout needs a name.
+    expect((await createLayout({ name: "" })).status).toBe(400);
+    // Unknown base layouts are refused rather than silently accepted.
+    expect((await createLayout({ base: "neon" })).status).toBe(400);
+  });
+
+  it("survives a backup export → wipe → import round-trip", async () => {
+    const created = await createLayout();
+    const { layout } = (await created.json()) as { layout: { id: number; slug: string; config: unknown } };
+
+    const exported = await app.request("/api/backup/export", undefined, { DB: ctx.db });
+    const backup = (await exported.json()) as { tables: Record<string, { id: number }[]> };
+    expect(backup.tables.prescription_layouts).toHaveLength(1);
+
+    await ctx.db.prepare("DELETE FROM prescription_layouts").run();
+    const imp = await app.request(
+      "/api/backup/import",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(backup) },
+      { DB: ctx.db },
+    );
+    expect(imp.status).toBe(200);
+
+    const list = await app.request("/api/prescription-layouts", undefined, { DB: ctx.db });
+    const { layouts } = (await list.json()) as { layouts: { slug: string; config: unknown }[] };
+    expect(layouts).toHaveLength(1);
+    expect(layouts[0].slug).toBe(layout.slug);
+    expect(layouts[0].config).toEqual(CONFIG);
   });
 });

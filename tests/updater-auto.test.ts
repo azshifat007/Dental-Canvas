@@ -23,6 +23,7 @@ const flushMock = vi.fn();
 vi.mock("@/offline/activate", () => ({
   isTauriDesktop: () => true,
   flushDatabase: (...args: unknown[]) => flushMock(...args),
+  flushDatabaseAndWait: () => Promise.resolve(),
 }));
 
 const saveNotesMock = vi.fn();
@@ -126,11 +127,13 @@ describe("automatic installation", () => {
     await expect(mod.applyStagedUpdateIfSafe()).resolves.toBe(true);
 
     expect(update.install).toHaveBeenCalledTimes(1);
-    // Pending IndexedDB writes must reach the database before the installer
-    // terminates this process, and the changelog must survive for the banner.
-    expect(flushMock).toHaveBeenCalled();
+    // The changelog must survive for the post-update banner.
     expect(saveNotesMock).toHaveBeenCalledWith("1.4.24", "Adds the new recall report");
-    expect(relaunchMock).toHaveBeenCalled();
+    // The installer is asked to restart the app itself (NSIS `/R`), and on
+    // Windows the plugin hard-exits this process right after launching it — a
+    // `relaunch()` there would race the installer for the locked exe.
+    expect(update.install).toHaveBeenCalledWith({ restartAfterInstall: true });
+    expect(relaunchMock).not.toHaveBeenCalled();
     expect(update.download).toHaveBeenCalledTimes(1); // installed, not re-fetched
   });
 
@@ -208,7 +211,10 @@ describe("update_mode = ask", () => {
     expect(mod.getUpdateState()).toMatchObject({ phase: "available", mode: "installer" });
 
     await mod.installUpdate();
-    expect(update.downloadAndInstall).toHaveBeenCalledTimes(1);
+    // Downloaded first, then installed: the database flush and the "attempted"
+    // marker must land before a Windows install can terminate the process.
+    expect(update.download).toHaveBeenCalledTimes(1);
+    expect(update.install).toHaveBeenCalledTimes(1);
   });
 
   it("starts the download when the switch is turned on after a check", async () => {

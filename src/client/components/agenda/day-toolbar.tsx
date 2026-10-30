@@ -39,12 +39,13 @@ export function DayToolbar({ date, onChange, onCreate, children }: Props) {
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {/* Prev | Today | Next pill */}
+          {/* 36px tap targets on phones, back to the compact pill from sm up. */}
           <div className="inline-flex items-center gap-0.5 rounded-full border border-border/60 bg-card/85 p-1 shadow-sm backdrop-blur">
             <button
               type="button"
               onClick={() => shift(-1)}
               aria-label="Previous day"
-              className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              className="rounded-full p-2.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground sm:p-1.5"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
@@ -52,7 +53,7 @@ export function DayToolbar({ date, onChange, onCreate, children }: Props) {
               type="button"
               onClick={() => onChange(today)}
               className={
-                "rounded-full px-3.5 py-1 text-sm font-semibold transition-colors " +
+                "rounded-full px-3.5 py-2 text-sm font-semibold transition-colors sm:py-1 " +
                 (isToday
                   ? "bg-primary text-primary-foreground shadow-sm shadow-primary/25 hover:bg-primary/90"
                   : "hover:bg-accent")
@@ -64,7 +65,7 @@ export function DayToolbar({ date, onChange, onCreate, children }: Props) {
               type="button"
               onClick={() => shift(1)}
               aria-label="Next day"
-              className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              className="rounded-full p-2.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground sm:p-1.5"
             >
               <ChevronRight className="h-4 w-4" />
             </button>

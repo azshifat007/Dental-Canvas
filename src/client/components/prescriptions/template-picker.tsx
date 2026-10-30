@@ -1,13 +1,17 @@
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { PrescriptionTemplate } from "@/types";
-import { PrescriptionSheet, PRESCRIPTION_TEMPLATES, type PrescriptionSheetData } from "./prescription-sheet";
+import type { PrescriptionTemplateId, RxTemplateConfig } from "@/types";
+import { PrescriptionSheet, type PrescriptionSheetData } from "./prescription-sheet";
+import { useTemplateChoices, type TemplateChoice } from "@/lib/prescription-layouts";
 
 /**
  * Template selection with WYSIWYG thumbnails: every option renders the real
  * PrescriptionSheet scaled down, so what you pick is exactly what prints.
  * Thumbnails are static (pointer-events off, aria-hidden) to keep the DOM
- * cheap — 7 tiny sheets render only while a picker is open.
+ * cheap — tiny sheets render only while a picker is open.
+ *
+ * The list is the built-in gallery plus the practice's own templates
+ * (Settings → Rx templates).
  */
 
 const SAMPLE_DATA: PrescriptionSheetData = {
@@ -28,8 +32,13 @@ const SAMPLE_DATA: PrescriptionSheetData = {
   issued_date: new Date().toISOString().slice(0, 10),
   template: "chamber",
   diagnosis: "Periapical abscess, tooth 36",
+  on_examination: "Deep caries, 36; tender to percussion",
+  history: "Pain for 5 days, worse at night",
   advice: "Warm salt-water rinses.",
   follow_up: "Recheck in 2 weeks",
+  complaints: { items: [{ label: "Toothache", duration: "5 days", site: "lower left" }] },
+  investigations: { items: [{ label: "IOPA 36", result: "Periapical radiolucency" }] },
+  vitals: { bp: "120/80", temperature: "98.6°F", pulse: "78", spo2: "98%" },
   chamber_footer_instructions: "In case of bleeding or fever, call +1 555 010 2030",
   items: [
     { drug_name: "Amoxicillin", dosage: "500 mg", frequency: "3x daily", duration: "5 days", instructions: "after meals" },
@@ -40,9 +49,12 @@ const SAMPLE_DATA: PrescriptionSheetData = {
 /** One scaled-down, non-interactive sheet thumbnail. */
 export function TemplateThumbnail({
   template,
+  config,
   width = 96,
 }: {
-  template: PrescriptionTemplate;
+  template: PrescriptionTemplateId;
+  /** The saved skin for a custom template id. */
+  config?: RxTemplateConfig | null;
   width?: number;
 }) {
   // A4 aspect ≈ 1 : 1.414
@@ -59,7 +71,7 @@ export function TemplateThumbnail({
           transform: `scale(${width / (210 * 3.7795)})`,
         }}
       >
-        <PrescriptionSheet data={{ ...SAMPLE_DATA, template }} />
+        <PrescriptionSheet data={{ ...SAMPLE_DATA, template, template_config: config ?? null }} />
       </div>
     </div>
   );
@@ -70,10 +82,11 @@ export function TemplateDropdown({
   value,
   onChange,
 }: {
-  value: PrescriptionTemplate;
-  onChange: (t: PrescriptionTemplate) => void;
+  value: PrescriptionTemplateId;
+  onChange: (t: PrescriptionTemplateId) => void;
 }) {
-  const current = PRESCRIPTION_TEMPLATES.find((t) => t.id === value);
+  const choices = useTemplateChoices();
+  const current = choices.find((t) => t.id === value);
   return (
     <details className="relative">
       <summary className="inline-flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-md border bg-background px-3 text-sm hover:bg-accent [&::-webkit-details-marker]:hidden">
@@ -83,7 +96,7 @@ export function TemplateDropdown({
       <div className="absolute right-0 z-50 mt-2 w-max rounded-lg border bg-popover p-3 text-popover-foreground shadow-lg">
         <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Prescription template</p>
         <div className="grid grid-cols-4 gap-2">
-          {PRESCRIPTION_TEMPLATES.map((t) => (
+          {choices.map((t) => (
             <button
               key={t.id}
               type="button"
@@ -99,7 +112,7 @@ export function TemplateDropdown({
               )}
               title={t.blurb}
             >
-              <TemplateThumbnail template={t.id} width={88} />
+              <TemplateThumbnail template={t.id} config={t.config} width={88} />
               <div className="mt-1 flex items-center gap-1 text-[11px] font-medium">
                 {value === t.id && <Check className="h-3 w-3 text-primary" />}
                 {t.label}
@@ -125,12 +138,13 @@ export function TemplatePickerGrid({
   value,
   onChange,
 }: {
-  value: PrescriptionTemplate;
-  onChange: (t: PrescriptionTemplate) => void;
+  value: PrescriptionTemplateId;
+  onChange: (t: PrescriptionTemplateId) => void;
 }) {
+  const choices = useTemplateChoices();
   return (
     <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
-      {PRESCRIPTION_TEMPLATES.map((t) => (
+      {choices.map((t: TemplateChoice) => (
         <button
           key={t.id}
           type="button"
@@ -144,7 +158,7 @@ export function TemplatePickerGrid({
           )}
           title={t.blurb}
         >
-          <TemplateThumbnail template={t.id} width={64} />
+          <TemplateThumbnail template={t.id} config={t.config} width={64} />
           <span className="flex items-center gap-1 text-[11px] font-medium leading-none">
             {value === t.id && <Check className="h-3 w-3 text-primary" />}
             {t.label}

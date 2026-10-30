@@ -44,6 +44,46 @@ export function flushDatabase(): void {
   navigator.serviceWorker?.controller?.postMessage("dental-canvas:flush-db");
 }
 
+/**
+ * Flush and wait for the worker to confirm it wrote the database image.
+ *
+ * The plain `flushDatabase()` is fine when the page is merely closing — a
+ * message that never arrives costs nothing. An update install is different:
+ * the Tauri plugin launches the NSIS installer and then hard-exits this
+ * process on Windows, so the last debounced writes would be lost unless the
+ * flush has completed first. Resolves on the worker's acknowledgement or after
+ * `timeoutMs`, whichever comes first, so a hung worker cannot block the
+ * install for long.
+ */
+export function flushDatabaseAndWait(timeoutMs = 3000): Promise<void> {
+  const controller = navigator.serviceWorker?.controller;
+  if (!controller) {
+    flushDatabase();
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const channel = new MessageChannel();
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      channel.port1.close();
+      resolve();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    channel.port1.onmessage = () => {
+      clearTimeout(timer);
+      finish();
+    };
+    try {
+      controller.postMessage("dental-canvas:flush-db", [channel.port2]);
+    } catch {
+      clearTimeout(timer);
+      finish();
+    }
+  });
+}
+
 export interface OfflineDbStatus {
   /** Epoch ms of the last successful DB-image persistence (0 = never). */
   lastSavedAt: number;

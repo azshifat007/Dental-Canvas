@@ -17,5 +17,10 @@ export default defineConfig({
     // Miniflare keeps its own module registry; only the code under test is transformed.
     pool: "forks",
     testTimeout: 30_000,
+    // Every DB suite spins a Miniflare/workerd instance and re-applies the
+    // schema in `beforeEach`. At full parallelism that start-up regularly
+    // exceeds Vitest's 10 s default and fails the hook rather than a test, so
+    // give hooks the same budget as the tests they set up.
+    hookTimeout: 30_000,
   },
 });
