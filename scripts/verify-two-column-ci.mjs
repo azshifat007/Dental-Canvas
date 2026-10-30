@@ -92,11 +92,17 @@ check("committed source is internally consistent (template registry + route)", (
     "chamber", "classic", "modern", "compact",
     "elegant", "minimal", "bold", "watermark", "two-column",
   ];
+  // The print view used to keep its own label map, which is what carried the
+  // "two-column" literal here. Labels now come from the registry in the sheet,
+  // so assert the wiring instead: the route prints the shared sheet and takes
+  // its template from the record (switched via the dropdown), while every id
+  // and the two-column body still live in the registry.
   return (
     ids.every((id) => sheet.includes(`"${id}"`)) &&
     sheet.includes("TwoColumnSheet") &&
     types.includes('"two-column"') &&
-    printView.includes('"two-column"') &&
+    printView.includes("<PrescriptionSheet") &&
+    printView.includes("rx.template") &&
     app.includes('"patient-prescription"')
   );
 });
